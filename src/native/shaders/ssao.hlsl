@@ -260,23 +260,35 @@ float4 ps_debug(VSOut i) : SV_Target {
   return float4(ao, ao, ao, 1.0f);
 }
 
-// Tile MAX-reduce of the linear-depth plane (t0) into the small occlusion-
-// attribution grid the per-item profiler reads back to the CPU: a scene
-// item whose nearest bbox corner is farther than the FARTHEST depth in
-// every grid tile it covers cannot contribute pixels. b0 is repurposed for
-// this pass: size.xy = linear-depth dims, size.zw = grid dims. 8x8 point
-// taps spread across each tile's footprint (a ~24x24-texel tile at 4K is
-// sampled at stride ~3, so a sub-3-px background hole can be missed; the
-// consumer is telemetry, not culling, and errs toward "occluded" only
-// through such holes).
+// Tile MAX-reduce of the linear-depth plane (t0) into the small occlusion
+// grid that the occlusion cull and the perf-items attribution read back on
+// the CPU: a scene item whose nearest bbox corner is farther than the
+// FARTHEST depth in every grid tile it covers cannot contribute pixels. b0
+// is repurposed for this pass: size.xy = linear-depth dims, size.zw = grid
+// dims. The cull skips drawing on that proof, so the reduce must be
+// conservative: it reads EVERY texel the tile's footprint touches (partial
+// edge texels included), never a strided subset. A subset misses background
+// seen through gaps narrower than its stride, such as fence slats and
+// railings, and the cull then hides the distant object behind them (KI-51:
+// at resolution_scale 3 a tile is 24x24 texels, and the old 8x8 point taps
+// read one texel in nine). Each Gather fetches a 2x2 quad; with an odd
+// footprint the last quad column/row reaches one texel into the
+// neighbouring tile, which can only raise the max (the safe direction).
+// Total cost is about one read of the linear-depth plane.
 float ps_depth_max(VSOut i) : SV_Target {
-  float2 half_tile = 0.5f / size.zw;
+  const uint2 dims = uint2(size.xy);
+  const uint2 grid = uint2(size.zw);
+  const uint2 tile = uint2(i.pos.xy);
+  const uint2 lo = tile * dims / grid;
+  const uint2 hi = min(((tile + 1u) * dims + grid - 1u) / grid, dims);
+  const float2 inv_dims = 1.0f / size.xy;
   float m = 0.0f;
-  [unroll] for (int ty = 0; ty < 8; ++ty) {
-    [unroll] for (int tx = 0; tx < 8; ++tx) {
-      float2 f = (float2(float(tx), float(ty)) + 0.5f) / 8.0f;
-      float2 uv = i.uv + (f * 2.0f - 1.0f) * half_tile;
-      m = max(m, tex0.SampleLevel(smp_point, uv, 0));
+  for (uint y = lo.y; y < hi.y; y += 2u) {
+    for (uint x = lo.x; x < hi.x; x += 2u) {
+      // uv at the quad's shared corner selects texels (x..x+1, y..y+1).
+      const float4 q =
+          tex0.Gather(smp_point, float2(uint2(x, y) + 1u) * inv_dims);
+      m = max(m, max(max(q.x, q.y), max(q.z, q.w)));
     }
   }
   return m;
