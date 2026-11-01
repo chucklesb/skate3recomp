@@ -594,7 +594,11 @@ std::optional<rex::PathConfig> Skate3BaseApp::OnFinalizePaths(
   profiles_path_ = skate3::ProfilesFilePath(defaults.user_data_root);
 
   auto profiles = skate3::LoadProfiles(profiles_path_);
-  const bool has_profiles_file = std::filesystem::exists(profiles_path_);
+  // After LoadProfiles: a file that didn't parse has been moved aside by now.
+  // An unreadable file sets profiles.save_blocked, so SaveProfiles below
+  // can't replace it either way.
+  std::error_code profiles_exists_ec;
+  const bool has_profiles_file = std::filesystem::exists(profiles_path_, profiles_exists_ec);
   skate3::EnsureUsableProfileStore(profiles, "Player");
   if (auto* profile = skate3::FindSelectedProfile(profiles)) {
     skate3::ApplyProfileCvars(*profile);

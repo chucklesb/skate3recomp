@@ -3,14 +3,16 @@
 #include <algorithm>
 #include <charconv>
 #include <filesystem>
-#include <fstream>
 #include <iomanip>
 #include <sstream>
 #include <string_view>
 
 #include <rex/cvar.h>
+#include <rex/logging.h>
 
 #include <toml++/toml.hpp>
+
+#include "skate3_safe_file.h"
 
 namespace skate3 {
 namespace {
@@ -158,48 +160,99 @@ std::filesystem::path ProfilesFilePath(const std::filesystem::path& user_data_ro
 }
 
 LocalProfileStore LoadProfiles(const std::filesystem::path& profiles_path) {
+  // How many `profiles.toml.bad-*` backups of unparseable files to keep.
+  constexpr std::size_t kMaxBadBackups = 5;
+
   LocalProfileStore store;
-  if (!std::filesystem::exists(profiles_path)) {
+  const std::string log_path = safe_file::PathForLog(profiles_path);
+  auto read = safe_file::ReadWholeFile(profiles_path);
+  if (read.status == safe_file::ReadStatus::kMissing) {
     return store;
   }
+  if (read.status != safe_file::ReadStatus::kOk) {
+    // Locked, permission denied, ...: the file may be perfectly fine, so it
+    // must not be treated as empty and overwritten.
+    REXLOG_ERROR("Profiles: cannot read {}: {}. Using a temporary default profile; "
+                 "profile changes are not saved until the file can be read.",
+                 log_path, read.error);
+    store.save_blocked = true;
+    return store;
+  }
+
+  toml::table table;
   try {
-    auto table = toml::parse_file(profiles_path.string());
-    store.selected_profile = table["selected_profile"].value_or(std::string{});
-    if (auto profiles = table["profiles"].as_array()) {
-      profiles->for_each([&](toml::table& profile_table) {
-        LocalProfile profile;
-        profile.id = profile_table["id"].value_or(std::string{});
-        profile.gamertag = profile_table["gamertag"].value_or(std::string{});
-        profile.signed_in = profile_table["signed_in"].value_or(true);
-        profile.live_signed_in = profile_table["live_signed_in"].value_or(false);
-        if (auto xuid = profile_table["xuid"].value<std::string>()) {
-          profile.xuid = ParseXuidString(*xuid);
-        } else if (auto xuid_int = profile_table["xuid"].value<int64_t>()) {
-          profile.xuid = static_cast<uint64_t>(*xuid_int);
-        }
-        if (!profile.id.empty() && !profile.gamertag.empty() && profile.xuid != 0) {
-          store.profiles.push_back(std::move(profile));
-        }
-      });
+    table = toml::parse(read.bytes, log_path);
+  } catch (const toml::parse_error& err) {
+    const auto& where = err.source().begin;
+    REXLOG_ERROR("Profiles: {} is malformed at line {}, column {}: {}", log_path, where.line,
+                 where.column, err.description());
+    std::string backup_error;
+    if (auto backup = safe_file::QuarantineFile(profiles_path, read.bytes, kMaxBadBackups,
+                                                &backup_error)) {
+      REXLOG_ERROR("Profiles: PROFILES RESET. The unparseable file is backed up as {} "
+                   "(original bytes kept); a default profile replaces it. Fix that file "
+                   "and rename it back to profiles.toml to restore the old profiles.",
+                   safe_file::PathForLog(*backup));
+    } else {
+      REXLOG_ERROR("Profiles: could not back up {} ({}). Using a temporary default profile; "
+                   "the file is left untouched and profile changes are not saved.",
+                   log_path, backup_error);
+      store.save_blocked = true;
     }
-  } catch (const toml::parse_error&) {
-    store = {};
+    return store;
+  }
+
+  store.selected_profile = table["selected_profile"].value_or(std::string{});
+  size_t skipped = 0;
+  if (auto profiles = table["profiles"].as_array()) {
+    for (auto& node : *profiles) {
+      auto* profile_table = node.as_table();
+      if (!profile_table) {
+        ++skipped;
+        continue;
+      }
+      LocalProfile profile;
+      profile.id = (*profile_table)["id"].value_or(std::string{});
+      profile.gamertag = (*profile_table)["gamertag"].value_or(std::string{});
+      profile.signed_in = (*profile_table)["signed_in"].value_or(true);
+      profile.live_signed_in = (*profile_table)["live_signed_in"].value_or(false);
+      if (auto xuid = (*profile_table)["xuid"].value<std::string>()) {
+        profile.xuid = ParseXuidString(*xuid);
+      } else if (auto xuid_int = (*profile_table)["xuid"].value<int64_t>()) {
+        profile.xuid = static_cast<uint64_t>(*xuid_int);
+      }
+      if (!profile.id.empty() && !profile.gamertag.empty() && profile.xuid != 0) {
+        store.profiles.push_back(std::move(profile));
+      } else {
+        ++skipped;
+      }
+    }
+  }
+  if (skipped != 0) {
+    REXLOG_WARN("Profiles: {} skipped {} entr{} without a usable id, gamertag and xuid; "
+                "the next profile save drops them",
+                log_path, skipped, skipped == 1 ? "y" : "ies");
   }
   return store;
 }
 
 bool SaveProfiles(const std::filesystem::path& profiles_path, const LocalProfileStore& store) {
+  const std::string log_path = safe_file::PathForLog(profiles_path);
+  if (store.save_blocked) {
+    REXLOG_WARN("Profiles: not saving {}: it could not be read or backed up this session",
+                log_path);
+    return false;
+  }
+
   std::error_code ec;
   std::filesystem::create_directories(profiles_path.parent_path(), ec);
   if (ec) {
+    REXLOG_ERROR("Profiles: cannot create {}: {}",
+                 safe_file::PathForLog(profiles_path.parent_path()), ec.message());
     return false;
   }
 
-  std::ofstream file(profiles_path, std::ios::trunc);
-  if (!file) {
-    return false;
-  }
-
+  std::ostringstream file;
   file << "selected_profile = " << TomlString(store.selected_profile) << "\n\n";
   for (const auto& profile : store.profiles) {
     file << "[[profiles]]\n";
@@ -208,6 +261,26 @@ bool SaveProfiles(const std::filesystem::path& profiles_path, const LocalProfile
     file << "xuid = " << TomlString(FormatXuid(profile.xuid)) << "\n";
     file << "signed_in = " << (profile.signed_in ? "true" : "false") << "\n";
     file << "live_signed_in = " << (profile.live_signed_in ? "true" : "false") << "\n\n";
+  }
+
+  std::string bytes = file.str();
+#if defined(_WIN32)
+  // Same CRLF line endings as the text-mode stream this used to write with.
+  std::string crlf;
+  crlf.reserve(bytes.size() + bytes.size() / 16);
+  for (char c : bytes) {
+    if (c == '\n') {
+      crlf.push_back('\r');
+    }
+    crlf.push_back(c);
+  }
+  bytes = std::move(crlf);
+#endif
+
+  std::string write_error;
+  if (!safe_file::WriteFileAtomic(profiles_path, bytes, &write_error)) {
+    REXLOG_ERROR("Profiles: save failed, {} left unchanged: {}", log_path, write_error);
+    return false;
   }
   return true;
 }

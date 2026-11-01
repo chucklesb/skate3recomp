@@ -18,6 +18,10 @@ struct LocalProfile {
 struct LocalProfileStore {
   std::string selected_profile;
   std::vector<LocalProfile> profiles;
+  // Set by LoadProfiles when profiles.toml exists but could not be read, or
+  // did not parse and could not be backed up. SaveProfiles then refuses to
+  // write, so the file on disk is never replaced by this store.
+  bool save_blocked = false;
 };
 
 std::filesystem::path ProfilesFilePath(const std::filesystem::path& user_data_root);
