@@ -2195,10 +2195,10 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-80: Profiles with a missing id, gamertag or XUID are lost on the next save
 
-- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested unattended /
+- **Status:** fix in review in rubensteezy/skate3recomp#58, tested unattended /
   awaiting in-game test · **Severity:** low–medium
 - **Area:** profiles
-- **Tracking:** rubensteezy/skate3recomp#PRNUM. Found while fixing KI-59 (#45).
+- **Tracking:** rubensteezy/skate3recomp#58. Found while fixing KI-59 (#45).
 - **Where:** `LoadProfiles` and `SaveProfiles` in
   `src/skate3_user_settings.cpp`, `WriteBackupCopy` in
   `src/skate3_safe_file.cpp`.
