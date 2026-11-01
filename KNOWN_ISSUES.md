@@ -1203,6 +1203,19 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** in the rexglue-skate3 fork, skip or demote the log for faults
   inside `GuestTryCopy`.
 
+### KI-114: Scene ring dump doesn't create `logs/` before writing
+
+- **Status:** open (code reading only) · **Severity:** low
+- **Area:** native renderer, diagnostics
+- **Tracking:** none yet. Found while fixing KI-75 (#64).
+- **Where:** `MaybeDumpSceneRing` in `src/skate3_native_scene_state.h`.
+- **Problem:** it opens `logs/scene_ring_*.csv` relative to the working
+  directory with `std::ofstream` and never creates `logs/`. If the folder is
+  missing the dump fails with only a "native-scene ring: cannot open"
+  warning. Probably harmless, since the logger likely creates `logs/` first.
+- **Next step:** `create_directories` before opening, as `WriteSnapshotLocked`
+  does.
+
 ## Resolved
 
 ### KI-72: The Defender trojan trigger shipped on main
