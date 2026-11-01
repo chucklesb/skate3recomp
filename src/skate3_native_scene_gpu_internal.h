@@ -593,6 +593,11 @@ struct RendererState {
   // game's fixed 1152x640 internal resolution + a view of the guest output
   // (re-created when the output texture changes). Steady state for
   // blur_tex is RENDER_TARGET; blur_format is the format it was built with.
+  // blur_format follows the guest output format, which the photo grab's
+  // readback math (kGrabBytesPerPixel / kGrabRowPitch below) assumes is
+  // 4 bytes per pixel. That holds because the SDK's kGuestOutputFormat is a
+  // compile-time R10G10B10A2 on both backends; skate3_native_scene_gpu.cpp
+  // static_asserts it (KI-77), so changing it breaks the build, not the grab.
   static constexpr uint32_t kBlurWidth = 1152;
   static constexpr uint32_t kBlurHeight = 640;
   nrhi::Texture* blur_tex[2] = {nullptr, nullptr};
@@ -622,8 +627,12 @@ struct RendererState {
   // CPU-tiles the completed one big-endian into the guest grab target. Two
   // buffers so no frame ever waits on the GPU (a full kFull-style drain per
   // frame was the old path's stall). Row pitch 1152*4 = 4608 is already
-  // 256-aligned.
-  static constexpr uint32_t kGrabRowPitch = kBlurWidth * 4;
+  // 256-aligned. Bytes per pixel is the guest output format's (R10G10B10A2,
+  // checked at compile time next to EnsureBlurOutlineTargets).
+  static constexpr uint32_t kGrabBytesPerPixel = 4;
+  static constexpr uint32_t kGrabRowPitch = kBlurWidth * kGrabBytesPerPixel;
+  static_assert(kGrabRowPitch % 256 == 0,
+                "grab readback rows must stay 256-byte aligned");
   nrhi::Buffer* grab_readback[2] = {nullptr, nullptr};
   uint8_t* grab_readback_ptr[2] = {nullptr, nullptr};
   uint64_t grab_submission[2] = {0, 0};
