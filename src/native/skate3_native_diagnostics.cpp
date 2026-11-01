@@ -659,7 +659,7 @@ void OnCaptureFrameEnd(uint8_t* base, uint64_t frame_index,
       REXLOG_INFO("native-render: F8, texture + mesh caches flushed");
     }
     f8_was_down = f8_down;
-    // F7: dump the rolling scene-composition ring (last ~900 frames of
+    // F7: dump the rolling scene-composition ring (last 2400 frames of
     // per-item signatures); press within a few seconds of SEEING a 1-2
     // frame artifact; diffing the artifact frame against neighbors in the
     // CSV names the item that flashed.
