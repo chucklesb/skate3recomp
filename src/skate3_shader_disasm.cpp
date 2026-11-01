@@ -40,7 +40,17 @@ void RunIfRequested() {
     return;
   }
   rex::string::StringBuffer disasm_buffer;
-  for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+  // Step with increment(ec): operator++ throws on a mid-scan error (KI-19).
+  std::filesystem::directory_iterator it(dir, ec);
+  for (;; it.increment(ec)) {
+    if (ec) {
+      REXLOG_WARN("shader-disasm: could not scan {}: {}", dir_str, ec.message());
+      break;
+    }
+    if (it == std::filesystem::directory_iterator()) {
+      break;
+    }
+    const auto& entry = *it;
     if (entry.path().extension() != ".bin") {
       continue;
     }
