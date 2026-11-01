@@ -974,27 +974,6 @@ repro steps; the entry says where the problem is and how it would show.
   That limited the testing of KI-25 (#37) and KI-61 (#50).
 - **Fix:** add stick tokens, for example `rs_left:ms` and `ls_up:ms`.
 
-### KI-95: Shadow-atlas casters don't stamp their mesh entries
-
-- **Status:** open · **Severity:** low–medium
-- **Area:** native renderer, shadows, mesh cache
-- **Tracking:** none yet. Found while fixing KI-41 (#51). The same kind of bug
-  as KI-41, for meshes.
-- **Where:** the caster loop of `RenderShadowAtlas` in
-  `src/skate3_native_scene_gpu.cpp`. It checks `g_r.meshes.contains(item.mesh)`
-  and later does `g_r.meshes.find(...)`, but never sets the mesh's
-  `last_used_frame`. `RenderStaticSunMap` does
-  (`mit->second.last_used_frame = frame_number`).
-- **Problem:** under mesh-store pressure
-  (`skate3_native_render_scene_mesh_store_mb`), the mesh of a caster the main
-  pass doesn't draw can be evicted. The caster then silently drops out of the
-  shadow, because the pass `continue`s on a missing mesh.
-- **Evidence:** a temporary counter found 5,995 to 25,377 caster-frames per
-  150 s run whose mesh hadn't been stamped for more than 5 s. No mesh was
-  actually skipped, because the 1024 MB mesh budget was never under pressure.
-- **Fix:** stamp `mit->second.last_used_frame` in the atlas loop, then test with
-  a small mesh budget.
-
 ### KI-96: The texture store budget can't go below 256 MB for testing
 
 - **Status:** open · **Severity:** low
@@ -2118,6 +2097,29 @@ repro steps; the entry says where the problem is and how it would show.
   all in the top and bottom bands, which is the 16:9 behaviour. Not yet
   watched in play: needs a pan near traffic on an ultrawide output.
 - **In-game test (2026-10-31):** Played on the big rig as one build stacking #37+#50 on main 7e03084, 32:9 window (--skate3_ultrawide=true --skate3_ultrawide_target_aspect=3.56, 3840x1080 windowed, perf log on): one D3D12 run (~3.5 min gameplay, fps min 102 / avg 120) and one Vulkan run (~3.3 min, fps min 89 / avg 119). User saw nothing wrong at the screen edges on either backend. Both logs exited cleanly with no errors besides the known XMA noise. The user approved keeping #37's extra top/bottom (vertical plane) static-retention change. No log line proves the ultrawide path ran, so the evidence is visual; 21:9 was not run; this PR was not tested on its own.
+
+### KI-95: Shadow-atlas casters didn't stamp their mesh entries
+
+- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested unattended / awaiting in-game test · **Severity:** low–medium
+- **Area:** native renderer, shadows, mesh cache
+- **Where:** the caster loop of `RenderShadowAtlas` in
+  `src/skate3_native_scene_gpu.cpp`.
+- **Problem:** the loop checked `g_r.meshes.contains(item.mesh)` but never set
+  the mesh's `last_used_frame` (`RenderStaticSunMap` does). Under mesh-store
+  pressure (`skate3_native_render_scene_mesh_store_mb`), `EvictMeshStore`
+  evicts entries idle for more than 5 s (at least 240 frames), so the mesh of a
+  caster the main pass doesn't draw could be evicted while it was still
+  casting. The caster then silently dropped out of the shadow.
+- **Evidence:** temporary counters (not committed) on unattended
+  `--skate3_demo_path=true` boots (D3D12, about 29 fps on this PC), with the
+  mesh budget forced to 16 MB (the cvar floor is 256 MB; the working set here
+  is about 40 MB, so 256 MB never starts the LRU). Over 240 s, caster lookups
+  that missed a mesh the atlas had drawn within the last 240 frames: 262 of
+  325,561 without the stamp, 0 of 359,429 with it. Misses of meshes idle for
+  longer (normal LRU behaviour, re-decoded by the workers) remained in both
+  (341 and 52). The store stayed at about 550 entries either way.
+- **Fix:** the gather loop does `find` instead of `contains` and sets
+  `mit->second.last_used_frame = frame_number` for every caster it keeps.
 
 ### Reviewed and ruled out (code review)
 
