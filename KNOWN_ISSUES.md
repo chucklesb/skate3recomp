@@ -1170,6 +1170,22 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** record the failure in `g_mesh_miss_fail` when the entry is
   dropped.
 
+### KI-113: SDK logs caught guest faults as "Unhandled guest access violation"
+
+- **Status:** open · **Severity:** low
+- **Area:** SDK memory, diagnostics
+- **Tracking:** none yet. Found while investigating KI-110 (#62).
+- **Where:** `Memory::AccessViolationCallback` in rexglue-sdk
+  `src/system/xmemory.cpp`.
+- **Problem:** on Windows the SDK's exception handler runs before the
+  `GuestTryCopy` guard and logs every guest-range fault as an error, including
+  faults the guard then catches. So guarded probes that fail cleanly look like
+  crashes in the log (that's what made KI-110 look like a raw load). Each
+  caught fault also takes the handler's global critical-region lock; minor at
+  a few hundred per streaming burst.
+- **Next step:** in the rexglue-skate3 fork, skip or demote the log for faults
+  inside `GuestTryCopy`.
+
 ## Resolved
 
 ### KI-75: Scene ring dumps taken in the same second overwrite each other
