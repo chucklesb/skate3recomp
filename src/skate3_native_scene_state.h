@@ -13,7 +13,9 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <deque>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -178,6 +180,11 @@ inline std::unordered_map<uint32_t, uint64_t> g_prewarm_seen;
 inline std::unordered_map<uint32_t, uint64_t> g_prewarm_tex_seen;
 inline std::atomic<uint64_t> g_prewarm_done{0};     // entries fully warm-decoded
 inline std::atomic<uint64_t> g_prewarm_dropped{0};  // entries given up on
+// Prewarm entries whose mesh record failed the guarded read (stale or
+// unmapped registration address); skipped and retried, never dereferenced
+// raw. The log budget rate-limits the per-entry line.
+inline std::atomic<uint64_t> g_prewarm_unreadable{0};
+inline std::atomic<int32_t> g_prewarm_unreadable_log_budget{16};
 inline std::atomic<bool> g_prewarm_workers_started{false};
 // tInstance::m_pRModel offset, confirmed at runtime by the material
 // cross-check probe in OnAddRenderInstance (Skate 2 layout: +0x78).
@@ -708,6 +715,8 @@ struct SceneRingFrame {
   std::vector<SceneRingItem> items;
 };
 inline std::deque<SceneRingFrame> g_scene_ring;  // render thread only
+// Ring depth in rendered frames: about 17 s at 144 fps (the RB+A dump is
+// documented as retroactive ~17 s), about 40 s at 60 fps.
 constexpr size_t kSceneRingFrames = 2400;
 inline std::atomic<bool> g_scene_ring_dump{false};
 

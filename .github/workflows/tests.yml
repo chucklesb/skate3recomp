@@ -1,0 +1,91 @@
+# Unit tests that need no game data, no codegen output and no SDK checkout
+# (KNOWN_ISSUES.md, KI-31). The game itself is not built here: building it
+# needs a Skate 3 dump and Title Update 3, which CI never has.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: python (ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run Python tests
+        run: python -B -m unittest discover -s tests -p "test_*.py" -v
+
+  cpp-windows:
+    name: c++ (windows, ${{ matrix.compiler }})
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [msvc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      # MSVC: the default Visual Studio generator, multi-config.
+      - name: Configure, build and test (MSVC)
+        if: matrix.compiler == 'msvc'
+        shell: pwsh
+        run: |
+          cmake -S . -B out/build/tests -DSKATE3_TESTS_ONLY=ON
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build out/build/tests --config Release --target skate3_tests
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ctest --test-dir out/build/tests -C Release --output-on-failure
+          exit $LASTEXITCODE
+      # Clang: the toolchain release builds use (Visual Studio's bundled
+      # clang++ with the GNU-style driver, Ninja, inside a VS dev shell).
+      - name: Configure, build and test (clang)
+        if: matrix.compiler == 'clang'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          Import-Module (Join-Path $vs "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64"
+          $llvm = Join-Path $vs "VC\Tools\Llvm\x64\bin"
+          if (Test-Path $llvm) { $env:PATH = "$llvm;$env:PATH" }
+          clang++ --version
+          cmake -S . -B out/build/tests -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ -DSKATE3_TESTS_ONLY=ON
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build out/build/tests --target skate3_tests
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ctest --test-dir out/build/tests --output-on-failure
+          exit $LASTEXITCODE
+
+  cpp-linux:
+    name: c++ (ubuntu, ${{ matrix.compiler }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [clang++, g++]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: >
+          cmake -S . -B out/build/tests
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
+          -DSKATE3_TESTS_ONLY=ON
+      - name: Build
+        run: cmake --build out/build/tests --target skate3_tests --parallel
+      - name: Test
+        run: ctest --test-dir out/build/tests --output-on-failure

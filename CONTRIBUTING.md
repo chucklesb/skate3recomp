@@ -127,6 +127,24 @@ what you tried and rejected.
   python -m unittest discover -s tests -p "test_*.py"
   ```
 
+- Run the C++ unit tests in `tests/`. They need no SDK checkout, game data or
+  codegen, so they configure on their own:
+
+  ```sh
+  cmake -S . -B out/build/tests -DSKATE3_TESTS_ONLY=ON
+  cmake --build out/build/tests --config Release --target skate3_tests
+  ctest --test-dir out/build/tests -C Release --output-on-failure
+  ```
+
+  `-DSKATE3_BUILD_TESTS=ON` builds them next to the game in a normal
+  configure instead. Use `CHECK` from `tests/test_check.h`, not `assert`,
+  which release builds compile out. A new test must only include the
+  standard library and headers like `src/native/screen_fx.h`; move the logic
+  it checks out of the game code into such a header first.
+- The `tests` GitHub Actions workflow runs both sets on every pull request and
+  push to `main`: Python on Ubuntu, C++ with MSVC and clang on Windows and with
+  clang and GCC on Ubuntu.
+
 ## Pull Requests
 
 - Target `main` on
