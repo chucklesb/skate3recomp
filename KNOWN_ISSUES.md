@@ -2191,9 +2191,9 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-87: Raw guest loads in the `CaptureDynamicState` pre-check
 
-- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested unattended / awaiting in-game test · **Severity:** low–medium
+- **Status:** fix in review in rubensteezy/skate3recomp#60, tested unattended / awaiting in-game test · **Severity:** low–medium
 - **Area:** native renderer, guest memory safety
-- **Tracking:** rubensteezy/skate3recomp#PRNUM. Found while fixing KI-64 (#48).
+- **Tracking:** rubensteezy/skate3recomp#60. Found while fixing KI-64 (#48).
 - **Where:** the world-path pre-check of `CaptureDynamicState` in
   `src/skate3_native_scene.cpp`, called about 800 times a frame from
   `OnSceneDrawList`. It read `ctx → record → mesh → vdesc` and the vertex
