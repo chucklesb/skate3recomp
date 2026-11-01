@@ -606,23 +606,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** if that warning ever appears, add a "user set while held" path
   that updates `saved_`.
 
-### KI-75: Scene ring dumps taken in the same second overwrite each other
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, diagnostics
-- **Tracking:** none yet. Found while fixing KI-32 (#44).
-- **Where:** `MaybeDumpSceneRing` in `src/skate3_native_scene_state.h`.
-  `SnapshotStem` in `src/native/skate3_native_diagnostics.cpp` uses the same
-  seconds-only naming.
-- **Problem:** the dump file is `logs/scene_ring_<time in seconds>.csv`, so an
-  F7 dump and an RB+A dump in the same second overwrite each other. That's the
-  same bug #44 fixes for screenshots. A snapshot takes several frames, so a
-  clash there is unlikely.
-- **Also:** the comment in `skate3_screenshot.h` says A/B captures "share one
-  timestamp". They actually share a tag with its own HH:MM:SS, and the file
-  stamps differ.
-- **Fix:** reuse #44's millisecond stamp, and reword the comment.
-
 ### KI-76: Scene ring may use about 150 MB while on (debug only)
 
 - **Status:** open (estimate, not measured) · **Severity:** low
@@ -1188,6 +1171,28 @@ repro steps; the entry says where the problem is and how it would show.
   dropped.
 
 ## Resolved
+
+### KI-75: Scene ring dumps taken in the same second overwrite each other
+
+- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested unattended / awaiting in-game test · **Severity:** low
+- **Area:** native renderer, diagnostics
+- **Tracking:** rubensteezy/skate3recomp#PRNUM. Found while fixing KI-32 (#44).
+- **Where:** `MaybeDumpSceneRing` in `src/skate3_native_scene_state.h`.
+  `SnapshotStem` in `src/native/skate3_native_diagnostics.cpp` uses the same
+  seconds-only naming.
+- **Problem:** the dump file is `logs/scene_ring_<time in seconds>.csv`, so an
+  F7 dump and an RB+A dump in the same second overwrite each other. That's the
+  same bug #44 fixes for screenshots. A snapshot takes several frames, so a
+  clash there is unlikely.
+- **Also:** the comment in `skate3_screenshot.h` says A/B captures "share one
+  timestamp". They actually share a tag with its own HH:MM:SS, and the file
+  stamps differ.
+- **Fix:** #44's strictly increasing millisecond stamp now lives in
+  `src/native/skate3_file_stamp.h` and names screenshots, scene ring dumps
+  (`logs/scene_ring_YYYYMMDD_HHMMSS_mmm.csv`) and snapshot stems
+  (`snapshot_YYYYMMDD_HHMMSS_mmm`), so no two diagnostic files get the same
+  stamp. The `skate3_screenshot.h` comment is reworded. Covered by
+  `tests/file_stamp_test.cpp`.
 
 ### KI-72: The Defender trojan trigger shipped on main
 
