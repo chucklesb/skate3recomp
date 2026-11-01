@@ -124,13 +124,6 @@ repro steps; the entry says where the problem is and how it would show.
   static retention test, so on ultrawide outputs vehicles at the screen edges
   can drop out of retention too early.
 
-### KI-27: DecodeMesh input validation
-
-- **Status:** open · **Severity:** low · was BT-20
-- **Problem:** element offsets aren't checked against the vertex stride (a
-  host over-read on a malformed declaration), and several `Map()` results
-  aren't checked for null.
-
 ### KI-29: Icon updater leaves `.icon-new` behind
 
 - **Status:** open · **Severity:** low · was BT-22
@@ -1974,6 +1967,46 @@ repro steps; the entry says where the problem is and how it would show.
   `gameplay (prewarm: N meshes ...)` counts match a same-machine baseline
   build without the fix (D3D12 3068 vs 3070, Vulkan 3056 vs 3056, 0 dropped,
   no unreadable records), with no new errors. Not yet played in-game.
+- **In-game test (2026-10-31):** Played ~100 min on the big rig (D3D12, 4K, MSAA x2) as one build stacking #38+#39+#47+#48 on main, with --skate3_native_render_scene_perf_log=true --skate3_native_render_scene_perf_items=true. User saw no problems. Log: prewarm 0 dropped and 0 decode refusals on every summary, prewarm[miss_retry=0] in all 1,202 samples, no 'guarded guest read failed' or 'DecodeMesh rejected', guest fps min 102 / avg 120, clean exit. Only ~2 area changes; not compared numerically with main; this PR was not tested on its own.
+
+### KI-27: DecodeMesh input validation
+
+- **Status:** fixed in rubensteezy/skate3recomp#39, tested in-game on 2026-10-31 · **Severity:** low · was BT-20
+- **Problem:** element offsets aren't checked against the vertex stride (a
+  host over-read on a malformed declaration), and several `Map()` results
+  aren't checked for null.
+- **Cause:** `DecodeMesh` (`src/skate3_native_scene_gpu.cpp`) reads each
+  element at `v * stride + offset`. The offsets are 16-bit fields from the
+  guest vertex declaration and the stride is a separate byte, so nothing tied
+  them together: an element placed past the stride read past the end of the
+  host payload copy on the last vertex. The vertex count was also divided by
+  the stride before anything checked it, and the cloth snapshot path passed
+  payload pointers with no size. Both upload-buffer `Map()` results were
+  written through unchecked, as were the staging `Map()`s in the texture
+  decode paths (`UploadGeneratedMips`, `EnsureGuestTextureFromWords`, both
+  branches of `EnsureGuestCubeTexture`) and in `EnsureFallbackTextures`.
+- **Fix:** `ValidateMeshDecodeInput` (`src/native/mesh_decode_validate.h`)
+  runs before any payload read. It checks stride > 0, at least one vertex,
+  vertex and index counts under a cap (1M / 8M), payload sizes covering
+  count × stride and count × 2, a decodable position format, and
+  offset + bytes read <= stride for every element `DecodeMesh` reads. It uses
+  the bytes actually read, not the format's nominal size, because the
+  synthetic cloth-quad item declares a float2 UV as `k_32_32_32_32_FLOAT`.
+  A rejected mesh fails the decode like any other failure (nothing is cached,
+  the draw-path miss re-requests it) and is counted in
+  `g_mesh_decode_rejected`, with a rate-limited warning (8 lines per 10 s).
+  `DecodeMesh` now maps both upload buffers up front; on a `Map()` failure it
+  unmaps what was mapped, releases both buffers and fails the decode, counted
+  in `g_mesh_map_failed`. The texture paths release the texture and staging
+  buffer and fail the decode; `EnsureFallbackTextures` sets `g_r.failed` like
+  its other failures. The "gameplay (prewarm: ...)" log line reports both
+  counters.
+- **Tested:** unit check of the validator against the real `DrawItem` with
+  crafted bad declarations (element past the stride, garbage offsets and
+  counts, short snapshots) plus the real cloth-quad layout. Unattended
+  `--skate3_demo_path=true` boots on D3D12 (3067 meshes) and Vulkan (3056),
+  inside the usual 3056 to 3070 range, with 0 dropped, 0 layout rejections
+  and 0 map failures. Not yet checked in a hands-on session.
 - **In-game test (2026-10-31):** Played ~100 min on the big rig (D3D12, 4K, MSAA x2) as one build stacking #38+#39+#47+#48 on main, with --skate3_native_render_scene_perf_log=true --skate3_native_render_scene_perf_items=true. User saw no problems. Log: prewarm 0 dropped and 0 decode refusals on every summary, prewarm[miss_retry=0] in all 1,202 samples, no 'guarded guest read failed' or 'DecodeMesh rejected', guest fps min 102 / avg 120, clean exit. Only ~2 area changes; not compared numerically with main; this PR was not tested on its own.
 
 ### Reviewed and ruled out (code review)

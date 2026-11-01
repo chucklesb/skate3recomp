@@ -43,6 +43,7 @@
 #include "native/skate3_native_guest_read.h"
 #include "native/skate3_native_lw.h"
 #include "native/skate3_native_palette.h"
+#include "native/mesh_decode_validate.h"
 // Offline-compiled SPIR-V for the native shaders (compiled from the HLSL
 // sources with DXC): the Vulkan RHI backend consumes these blobs; the D3D12
 // backend runtime-compiles the embedded HLSL as before.
@@ -756,6 +757,20 @@ nrhi::Buffer* CreateUploadBuffer(
   return device->CreateBuffer(desc);  // nullptr on failure, like the old helper
 }
 
+// A texture decode whose staging buffer failed to Map(): release the
+// texture and staging buffer the same way the CreateUploadBuffer failure
+// paths do, so the caller can fail the decode (nothing was mapped).
+void ReleaseFailedTextureUpload(nrhi::Device* device, GuestTexture& out) {
+  device->DestroyDeferred(out.upload);
+  out.upload = nullptr;
+  device->DestroyDeferred(out.texture);
+  out.texture = nullptr;
+  static std::atomic<uint32_t> logged{0};
+  if (logged.fetch_add(1, std::memory_order_relaxed) < 8) {
+    REXLOG_WARN("native-scene: texture upload buffer Map failed; decode fails");
+  }
+}
+
 // ---- Dynamic-mesh buffer reuse pool ---------------------------------------
 // Cloth/ropa garments and streaming heals replace their VB/IB every commit;
 // creating and destroying upload buffers per frame churns the allocator and
@@ -816,6 +831,34 @@ uint32_t SwapU32(uint32_t v) {
 // nrhi::kRowPitchAlignment = the old D3D12_TEXTURE_DATA_PITCH_ALIGNMENT).
 constexpr uint32_t kUploadPlacementAlignment = 512;
 
+// Rate-limited log for DecodeMesh refusals (malformed layout, Map failure):
+// at most 8 lines per 10 s window, the counters carry the totals. A
+// permanently malformed mesh re-requests its decode whenever it is visible,
+// so an unthrottled log would flood.
+void LogMeshDecodeRefusal(const DrawItem& item, const char* what,
+                          const char* reason, uint64_t total) {
+  static std::atomic<uint32_t> s_logs{0};
+  static std::atomic<int64_t> s_win{0};
+  const int64_t now_s = std::chrono::duration_cast<std::chrono::seconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count();
+  int64_t win = s_win.load(std::memory_order_relaxed);
+  if (now_s - win >= 10 && s_win.compare_exchange_strong(win, now_s)) {
+    s_logs.store(0, std::memory_order_relaxed);
+  }
+  if (s_logs.fetch_add(1, std::memory_order_relaxed) < 8) {
+    REXLOG_WARN(
+        "native-scene: DecodeMesh {} mesh={:08X} ({}): stride={} vb_bytes={} "
+        "ib_count={} pos={}@{} uv={}@{} uv2={}@{} nrm={}@{} tan={}/{}@{}/{} "
+        "skinned={} cloth={} (total {})",
+        what, item.mesh, reason, item.stride, item.vb_bytes, item.ib_count,
+        item.pos_fmt, item.pos_offset, item.uv_fmt, item.uv_offset, item.uv2_fmt,
+        item.uv2_offset, item.normal_fmt, item.normal_offset, item.tan_fmt,
+        item.tb_fmt, item.tangent_offset, item.binormal_offset, item.skinned,
+        item.cloth_quads, total);
+  }
+}
+
 // Decode guest vertices into {float3 position, float2 uv, float2 uv2,
 // unorm4 blend weights, u8x4 blend indices, float3 normal, float2 decal_uv}
 // (56-byte stride). decal_uv = the 3rd/4th halves of a half4 first texcoord
@@ -824,12 +867,29 @@ constexpr uint32_t kUploadPlacementAlignment = 512;
 // vb_payload/ib_payload: optional pre-copied guest payload snapshots (the
 // dynamic cloth decode jobs snapshot on the guest thread and convert on a
 // worker, see DynDecodeJob); when null the payloads are read live from
-// guest memory with the guarded copy.
+// guest memory with the guarded copy. vb_payload_bytes/ib_payload_bytes are
+// the snapshot sizes (required with a snapshot; a short one is rejected).
 bool DecodeMesh(nrhi::Device* device, uint8_t* base, const DrawItem& item,
                 MeshBuffers& out, const uint8_t* vb_payload = nullptr,
-                const uint8_t* ib_payload = nullptr) {
+                const uint8_t* ib_payload = nullptr, size_t vb_payload_bytes = 0,
+                size_t ib_payload_bytes = 0) {
+  // KI-27: bound every vertex/index read before touching the payload. The
+  // element offsets come from the guest vertex declaration independently of
+  // its stride byte, so an element placed past the stride over-read the
+  // host copy on the last vertex. Rejected meshes fail like any other
+  // decode failure (the miss path re-requests them; nothing is cached).
+  {
+    const size_t vb_avail = vb_payload != nullptr ? vb_payload_bytes : item.vb_bytes;
+    const size_t ib_avail = ib_payload != nullptr ? ib_payload_bytes
+                                                  : size_t(item.ib_count) * 2;
+    if (const char* reason = ValidateMeshDecodeInput(item, vb_avail, ib_avail)) {
+      const uint64_t total =
+          g_mesh_decode_rejected.fetch_add(1, std::memory_order_relaxed) + 1;
+      LogMeshDecodeRefusal(item, "rejected", reason, total);
+      return false;
+    }
+  }
   const uint32_t num_verts = item.vb_bytes / item.stride;
-  if (num_verts == 0) return false;
   // This runs on the render thread; the guest payloads were valid on the
   // game thread this frame but streaming can decommit them in between.
   // Copy them out with the lock-free guarded copy (never VirtualQuery here:
@@ -874,11 +934,24 @@ bool DecodeMesh(nrhi::Device* device, uint8_t* base, const DrawItem& item,
   }
 
   const uint8_t* src_vb = vb_payload;
-  float* dst = nullptr;
   uint32_t garbage = 0;
   int min_bi = 255;
   int max_bi = -1;
-  dst = static_cast<float*>(device->Map(vb));
+  // Map both upload buffers up front so a Map() failure fails the decode
+  // before anything is written. A buffer that failed to map is released,
+  // not pooled (the pool would hand the same buffer straight back).
+  float* dst = static_cast<float*>(device->Map(vb));
+  uint16_t* dst_ib = dst != nullptr ? static_cast<uint16_t*>(device->Map(ib)) : nullptr;
+  if (dst == nullptr || dst_ib == nullptr) {
+    if (dst != nullptr) {
+      device->Unmap(vb);
+    }
+    device->DestroyDeferred(vb);
+    device->DestroyDeferred(ib);
+    const uint64_t total = g_mesh_map_failed.fetch_add(1, std::memory_order_relaxed) + 1;
+    LogMeshDecodeRefusal(item, "upload Map failed", dst == nullptr ? "vb" : "ib", total);
+    return false;
+  }
   for (uint32_t v = 0; v < num_verts; ++v) {
     const uint8_t* p = src_vb + size_t(v) * item.stride + item.pos_offset;
     float x = 0.0f, y = 0.0f, z = 0.0f;
@@ -905,8 +978,9 @@ bool DecodeMesh(nrhi::Device* device, uint8_t* base, const DrawItem& item,
         z = s16(4) * kScale;
         break;
       }
-      default:
+      default:  // unreachable: ValidateMeshDecodeInput rejects the format
         device->Unmap(vb);
+        device->Unmap(ib);
         device->DestroyDeferred(vb);
         device->DestroyDeferred(ib);
         return false;
@@ -1216,8 +1290,6 @@ bool DecodeMesh(nrhi::Device* device, uint8_t* base, const DrawItem& item,
         item.vb_addr);
   }
 
-  uint16_t* dst_ib = nullptr;
-  dst_ib = static_cast<uint16_t*>(device->Map(ib));
   if (item.cloth_quads) {
     // Quad-list topology with no guest index buffer (live vertex range
     // already exact from the draw args): two triangles per quad.
@@ -1613,6 +1685,10 @@ bool UploadGeneratedMips(const NativeGuestOutputRenderContext& context, uint8_t*
     return false;
   }
   uint8_t* mapping = static_cast<uint8_t*>(device->Map(out.upload));
+  if (mapping == nullptr) {
+    ReleaseFailedTextureUpload(device, out);
+    return false;
+  }
   for (uint32_t m = 0; m < mip_count; ++m) {
     const Plan& p = plans[m];
     for (uint32_t y = 0; y < p.h; ++y) {
@@ -1903,6 +1979,10 @@ bool EnsureGuestTextureFromWords(const NativeGuestOutputRenderContext& context,
     return false;
   }
   uint8_t* mapping = static_cast<uint8_t*>(device->Map(out.upload));
+  if (mapping == nullptr) {
+    ReleaseFailedTextureUpload(device, out);
+    return false;
+  }
   const bool swap_rb_565 =
       rex::graphics::GetBaseFormat(info.format) == xenos::TextureFormat::k_5_6_5;
   for (uint32_t m = 0; m < mip_count; ++m) {
@@ -2492,6 +2572,10 @@ bool EnsureGuestCubeTexture(const NativeGuestOutputRenderContext& context, uint8
       return false;
     }
     uint8_t* mapping = static_cast<uint8_t*>(device->Map(out.upload));
+    if (mapping == nullptr) {
+      ReleaseFailedTextureUpload(device, out);
+      return false;
+    }
     static thread_local std::vector<uint8_t> rgba;   // level 0 of one face
     static thread_local std::vector<uint8_t> down;   // downsample scratch
     static thread_local std::vector<uint8_t> bc_row; // one untiled block row
@@ -2666,6 +2750,10 @@ bool EnsureGuestCubeTexture(const NativeGuestOutputRenderContext& context, uint8
     return false;
   }
   uint8_t* mapping = static_cast<uint8_t*>(device->Map(out.upload));
+  if (mapping == nullptr) {
+    ReleaseFailedTextureUpload(device, out);
+    return false;
+  }
   const auto upload_offset = [&](uint32_t face, uint32_t m) {
     uint32_t off = face * face_upload;
     for (uint32_t k = 0; k < m; ++k) {
@@ -4376,6 +4464,10 @@ bool EnsureFallbackTextures(const NativeGuestOutputRenderContext& context) {
       return false;
     }
     uint8_t* mapping = static_cast<uint8_t*>(device->Map(g_r.white.upload));
+    if (mapping == nullptr) {
+      g_r.failed = true;
+      return false;
+    }
     std::memset(mapping, 0xFF, 4);
     device->Unmap(g_r.white.upload);
     context.cmd->CopyBufferToTexture(g_r.white.texture, 0, 0, g_r.white.upload,
@@ -4413,6 +4505,10 @@ bool EnsureFallbackTextures(const NativeGuestOutputRenderContext& context) {
       return false;
     }
     uint8_t* mapping = static_cast<uint8_t*>(device->Map(g_r.white_cube.upload));
+    if (mapping == nullptr) {
+      g_r.failed = true;
+      return false;
+    }
     for (uint32_t f = 0; f < 6; ++f) {
       std::memset(mapping + f * 512, 0x80, 4);
     }
@@ -5220,7 +5316,8 @@ void PrewarmWorkerLoop() {
       PrewarmResult res;
       res.mesh_valid =
           DecodeMesh(g_r.device, base, dyn.item, res.buffers, dyn.vb.data(),
-                     dyn.ib.empty() ? nullptr : dyn.ib.data());
+                     dyn.ib.empty() ? nullptr : dyn.ib.data(), dyn.vb.size(),
+                     dyn.ib.size());
       if (res.mesh_valid) {
         res.buffers.fingerprint = dyn.item.fingerprint;
         res.buffers.dyn_seq = dyn.seq;
@@ -5935,9 +6032,11 @@ bool YieldForMenus(const NativeGuestOutputRenderContext& context) {
       }
       REXLOG_INFO(
           "native-scene: gameplay (prewarm: {} meshes decoded, {} dropped, {} still "
-          "queued)",
+          "queued; mesh decode refusals: {} bad layout, {} map failures)",
           g_prewarm_done.load(std::memory_order_relaxed),
-          g_prewarm_dropped.load(std::memory_order_relaxed), queued);
+          g_prewarm_dropped.load(std::memory_order_relaxed), queued,
+          g_mesh_decode_rejected.load(std::memory_order_relaxed),
+          g_mesh_map_failed.load(std::memory_order_relaxed));
     }
   }
   if (in_loading) {

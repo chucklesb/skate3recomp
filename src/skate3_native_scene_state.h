@@ -877,6 +877,12 @@ inline std::atomic<uint64_t> g_rej_dyn_range{0};
 // loses its bone binding produces no (or wrong) pixels with no other trace.
 inline std::atomic<uint64_t> g_rr_decode_fail{0};
 inline std::atomic<uint64_t> g_rr_no_bones{0};
+// DecodeMesh refusals (KI-27), counted on whichever thread decodes:
+// malformed vertex layout / counts / short payload (ValidateMeshDecodeInput),
+// and upload-buffer Map() failures. Both fail the decode like any other
+// DecodeMesh failure, so the mesh stays retryable through the miss path.
+inline std::atomic<uint64_t> g_mesh_decode_rejected{0};
+inline std::atomic<uint64_t> g_mesh_map_failed{0};
 // Decodes pushed past the per-frame budget (item/texture appears a few
 // frames late instead of hitching the render thread).
 inline std::atomic<uint64_t> g_rr_mesh_deferred{0};
