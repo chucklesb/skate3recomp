@@ -672,7 +672,7 @@ std::optional<rex::PathConfig> Skate3BaseApp::OnFinalizePaths(
   }
 #endif
 #if defined(_WIN32)
-  // Window/taskbar + Explorer icon sourced from the user's OWN game art at
+  // Window/taskbar icon sourced from the user's OWN game art at
   // runtime (game/nxeart); the shipped exe and the repo carry no EA
   // artwork (see skate3_win_icon.h). Game files are guaranteed installed by
   // this point on Windows (the install wizards above run blocking).

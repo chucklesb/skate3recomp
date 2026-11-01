@@ -1927,7 +1927,7 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-41: Shadow-pass textures could be evicted while still in use
 
-- **Status:** fix in review in rubensteezy/skate3recomp#56, awaiting in-game test · **Severity:** low–medium
+- **Status:** fixed in rubensteezy/skate3recomp#56, tested in-game on 2026-10-31 · **Severity:** low–medium
 - **Area:** native renderer, shadows, texture cache
 - **Where:** `LookupResolvedTexture` in `src/skate3_native_scene_gpu.cpp`.
   `RenderShadowAtlas` calls it for alpha-clip casters (`item.dynobj == 2`) and
@@ -1953,6 +1953,7 @@ repro steps; the entry says where the problem is and how it would show.
   screenshots showed no visible change.
 - **Fix:** `LookupResolvedTexture` also sets the store entry's
   `last_used_frame` to the current frame. Both callers go through it.
+- **In-game test (2026-10-31):** Played ~15 min on the big rig (D3D12, 4K) with --skate3_native_render_scene_tex_store_mb=256: no tree/fence shadow cut-outs seen, 'tex store LRU start' logged 71 times (eviction pressure reached), clean exit. No log counter exists for the evicted-texture lookup, so the evidence is visual only.
 
 ### Reviewed and ruled out (code review)
 
