@@ -6477,13 +6477,25 @@ struct DynRetained {
 };
 std::vector<DynRetained> g_dyn_retained;
 
+// Retention frustum margins, shared by the static and vehicle passes.
+// Guest-cull test: the tested frustum shrinks slightly so bounds poking just
+// inside an edge still count as view-culled. Draw test: it widens slightly
+// so only clearly-outside items skip.
+constexpr float kRetainGuestCullMargin = 0.97f;
+constexpr float kRetainDrawMargin = 1.05f;
+
 // True when all 8 world-space corners fall outside one clip plane of `vp`
 // (row-vector view*proj). `margin` scales the tested frustum: < 1 shrinks
 // it (bounds poking just inside an edge still count as outside; the
 // game's own cull volumes are tighter than a mesh bbox), > 1 widens it
-// (only clearly-outside counts).
+// (only clearly-outside counts). `hor_scale` is the frame's Hor+ ultrawide
+// scale (WideOutputHorScale, 1.0 when not wide): the left/right planes
+// widen by 1/hor_scale so a narrow guest `vp` tests the frame's real wide
+// view. Top/bottom stay put; Hor+ keeps the vertical FOV, and the game's
+// widened cull (skate3_ultrawide_guest.h) only moves its side planes.
 bool CornersOutsideFrustum(const float (&corners)[8][3], const float vp[16],
-                           float margin) {
+                           float margin, float hor_scale) {
+  const float x_margin = hor_scale > 0.0f ? margin / hor_scale : margin;
   int outside[6] = {};
   for (int c = 0; c < 8; ++c) {
     const float* p = corners[c];
@@ -6495,11 +6507,12 @@ bool CornersOutsideFrustum(const float (&corners)[8][3], const float vp[16],
     // D3D clip volume: -w <= x <= w, -w <= y <= w, 0 <= z <= w. The game's
     // negative projection x-scale only swaps left/right; the tests are
     // symmetric. Corners behind the camera land in z < 0.
-    const float m = margin * clip[3];
-    if (clip[0] < -m) ++outside[0];
-    if (clip[0] > m) ++outside[1];
-    if (clip[1] < -m) ++outside[2];
-    if (clip[1] > m) ++outside[3];
+    const float mx = x_margin * clip[3];
+    const float my = margin * clip[3];
+    if (clip[0] < -mx) ++outside[0];
+    if (clip[0] > mx) ++outside[1];
+    if (clip[1] < -my) ++outside[2];
+    if (clip[1] > my) ++outside[3];
     if (clip[2] < 0.0f) ++outside[4];
     if (clip[2] > clip[3]) ++outside[5];
   }
@@ -6514,7 +6527,8 @@ bool CornersOutsideFrustum(const float (&corners)[8][3], const float vp[16],
 // The item's world-space bbox against the frustum (statics: bbox is
 // mesh-local, world transforms it; fmt-57 absolute geometry carries an
 // identity world with world-space bounds).
-bool ItemOutsideFrustum(const DrawItem& it, const float vp[16], float margin) {
+bool ItemOutsideFrustum(const DrawItem& it, const float vp[16], float margin,
+                        float hor_scale) {
   float corners[8][3];
   for (int c = 0; c < 8; ++c) {
     const float l[3] = {c & 1 ? it.bbox_max[0] : it.bbox_min[0],
@@ -6526,21 +6540,21 @@ bool ItemOutsideFrustum(const DrawItem& it, const float vp[16], float margin) {
                       l[2] * w[2 * 4 + k] + w[3 * 4 + k];
     }
   }
-  return CornersOutsideFrustum(corners, vp, margin);
+  return CornersOutsideFrustum(corners, vp, margin, hor_scale);
 }
 
 // Axis-aligned cube of half-extent `half` around `center` against the
 // frustum, the skinned-item variant (a palette's world position lives in
 // its bone translations, not the identity item world).
 bool BoxOutsideFrustum(const float center[3], float half, const float vp[16],
-                       float margin) {
+                       float margin, float hor_scale) {
   float corners[8][3];
   for (int c = 0; c < 8; ++c) {
     corners[c][0] = center[0] + (c & 1 ? half : -half);
     corners[c][1] = center[1] + (c & 2 ? half : -half);
     corners[c][2] = center[2] + (c & 4 ? half : -half);
   }
-  return CornersOutsideFrustum(corners, vp, margin);
+  return CornersOutsideFrustum(corners, vp, margin, hor_scale);
 }
 
 // SynPanAngleDeg / SynPanView: native/skate3_native_diagnostics.cpp.
@@ -9957,6 +9971,13 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
   // correct D3D NDC orientation; use the view*proj matrix as captured.
   // (Negating column 0 here mirrors the image left-right.)
 
+  // Hor+ ultrawide scale for this frame's camera (1.0 when the output is not
+  // wide). The matrices are widened after the camera overrides below; the
+  // retention frustum tests (vehicle and static) pass it so their left/right
+  // planes already match the frame's real (wider) view. Nothing below
+  // rewrites scene.proj before WidenPublishedCamera.
+  const float wide_hor_scale = WideOutputHorScale(scene.proj);
+
   // Vehicle retention (see g_dyn_retained): re-publish the last live
   // capture of a view-culled vehicle for a short window. Runs BEFORE the
   // smoothing block on purpose; the re-published copy re-claims its pose
@@ -10073,8 +10094,10 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
       }
       if (publish) {
         // Unsubmitted + visible to the guest camera = really gone
-        // (despawn); only view-culled vehicles re-publish.
-        if (!BoxOutsideFrustum(r.pos, r.half, guest_vp, 0.97f)) {
+        // (despawn); only view-culled vehicles re-publish. Same test as the
+        // static pass: the guest culls to the widened ultrawide view.
+        if (!BoxOutsideFrustum(r.pos, r.half, guest_vp, kRetainGuestCullMargin,
+                               wide_hor_scale)) {
           keep = false;
         }
       }
@@ -10461,12 +10484,6 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
     }
   }
 
-  // Hor+ ultrawide scale for this frame's camera (1.0 when the output is not
-  // wide). The matrices are widened after the camera overrides below; the
-  // retention frustum guards divide by it here so their tests already match
-  // the frame's real (wider) view.
-  const float wide_hor_scale = WideOutputHorScale(scene.proj);
-
   // Off-screen retention (see g_retained_items): re-append statics the game
   // view-culled this frame while the trailing rendered pose can still see
   // them. Runs AFTER the smoothing block so retained copies never enter the
@@ -10526,14 +10543,16 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
       // it. The 0.97 margin shrinks the tested frustum so bounds poking
       // just inside an edge still count as view-culled.
       if (now - r.last_seen > kRetainTtlFrames ||
-          !ItemOutsideFrustum(r.item, guest_vp, 0.97f / wide_hor_scale)) {
+          !ItemOutsideFrustum(r.item, guest_vp, kRetainGuestCullMargin,
+                              wide_hor_scale)) {
         rit = g_retained_items.erase(rit);
         continue;
       }
       // Draw it only if the RENDERED pose can actually see it (widened
       // frustum: only clearly-outside skips); after a fast 180 the trail
       // behind the camera stays retained but costs nothing.
-      if (!ItemOutsideFrustum(r.item, scene.view_proj, 1.05f / wide_hor_scale)) {
+      if (!ItemOutsideFrustum(r.item, scene.view_proj, kRetainDrawMargin,
+                              wide_hor_scale)) {
         scene.items.push_back(r.item);
         ++retain_appended;
       }

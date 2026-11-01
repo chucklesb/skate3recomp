@@ -564,10 +564,13 @@ float CharFadeAlpha(const DrawItem& item);
 
 // True when all 8 corners of the item's world-space bbox fall outside one
 // clip plane of `vp` (row-vector view*proj). `margin` scales the tested
-// frustum: < 1 shrinks it, > 1 widens it. Defined in
-// skate3_native_scene.cpp; consumed by the off-screen retention pass and the
-// per-item profiling attribution.
-bool ItemOutsideFrustum(const DrawItem& it, const float vp[16], float margin);
+// frustum: < 1 shrinks it, > 1 widens it. `hor_scale` (Hor+ ultrawide,
+// <= 1) widens only the left/right planes by 1/hor_scale, for a narrow guest
+// `vp` tested against the wide view. Defined in skate3_native_scene.cpp;
+// consumed by the off-screen retention pass and the per-item profiling
+// attribution.
+bool ItemOutsideFrustum(const DrawItem& it, const float vp[16], float margin,
+                        float hor_scale = 1.0f);
 
 // Occlusion-cull handoff for the guest-side dispatch filter (defined in
 // skate3_native_scene_gpu.cpp): copies the most recent render frame's
