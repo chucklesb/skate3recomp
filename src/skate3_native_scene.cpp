@@ -1433,6 +1433,33 @@ uint32_t BankPaletteBase(uint8_t* base, uint32_t bank) {
   return 0;
 }
 
+// Hor+ ultrawide scale for the palette-scoring x bands (RefinePaletteBase,
+// ScoreRigidAffine). The banks hold the game's own 16:9 matrices, but on a
+// wide output the game culls to the wide view (skate3_ultrawide_guest.h), so
+// it submits and skins meshes out to |x|/w = 1/scale (2.0 at 32:9). The
+// sun-shadow (ortho) pass shows the same in measurement: at 32:9 the
+// side-band characters cast into it at |x|/w up to ~2.0, never past 1.5 at
+// 16:9. The strict 1.5 band refused their correct palettes (KI-61: about
+// 2% of all scorings at 32:9, all characters, all on the caller's own
+// guessed base), so dividing the x band by
+// this scale keeps the band's slack over the visible area the same as at
+// 16:9. Hor+ keeps the vertical FOV, so the y band stays put. Returns 1.0
+// when the output is not wide, which leaves 16:9 scoring unchanged. Same
+// derivation as WideOutputHorScale, with the game's fixed 16:9 base aspect
+// (the one the guest frustum widening assumes): a combined viewproj has no
+// separable projection to read the aspect from.
+float PaletteScoreHorScale() {
+  const double wide_aspect = rex::graphics::GetNativeGuestOutputWideAspect();
+  if (wide_aspect <= 0.0 || !rex::graphics::IsNativeGuestOutputActive()) {
+    return 1.0f;
+  }
+  constexpr double kGuestAspect = 16.0 / 9.0;
+  if (wide_aspect <= kGuestAspect + 0.01) {
+    return 1.0f;
+  }
+  return float(kGuestAspect / wide_aspect);
+}
+
 // The cloth/morph skinned VS variant (skating-NPC torsos) keeps ONE extra
 // parameter row between the viewproj and the bone palette: observed live,
 // c4 = (1,0,0,0) with the palette at c5 (pre-pass) / c8 (main-pass). A
@@ -1492,6 +1519,9 @@ uint32_t RefinePaletteBase(uint8_t* base, uint32_t bank, uint32_t palette_base,
     // the caller's guess, as the old per-candidate decode did.
     return palette_base;
   }
+  // Strict band: 1.5x the bank's clip volume, widened in x on ultrawide
+  // outputs (see PaletteScoreHorScale).
+  const float x_band = 1.5f / PaletteScoreHorScale();
   // score: fraction (0..16) of samples that skin in front of and inside the
   // bank's own clip volume; *out_spread = the skinned samples' bbox diagonal
   // (world units) for the bind-size sanity test below. *out_front_all (when
@@ -1524,7 +1554,7 @@ uint32_t RefinePaletteBase(uint8_t* base, uint32_t bank, uint32_t palette_base,
       // In FRONT of the projection (w > 0) and inside a generous guard band.
       // Without the w check a foreign palette that skins the mesh BEHIND the
       // camera can still land |x|,|y| within the band and score well.
-      if (clip[3] > 0.0f && std::abs(clip[0]) <= 1.5f * aw &&
+      if (clip[3] > 0.0f && std::abs(clip[0]) <= x_band * aw &&
           std::abs(clip[1]) <= 1.5f * aw) {
         ++ok;
       }
@@ -4323,6 +4353,8 @@ int ScoreRigidAffine(uint8_t* base, uint32_t bank, uint32_t m, const DrawItem& i
   if (!ReadSkinSamplesGuest(base, item, kSamples, sverts)) {
     return -1;
   }
+  // Same strict band as RefinePaletteBase, x widened on ultrawide outputs.
+  const float x_band = 1.5f / PaletteScoreHorScale();
   int ok = 0;
   int loose = 0;
   int n = 0;
@@ -4340,7 +4372,7 @@ int ScoreRigidAffine(uint8_t* base, uint32_t bank, uint32_t m, const DrawItem& i
     }
     const float aw = std::abs(clip[3]) < 1.0f ? 1.0f : std::abs(clip[3]);
     ++n;
-    if (std::abs(clip[0]) <= 1.5f * aw && std::abs(clip[1]) <= 1.5f * aw) {
+    if (std::abs(clip[0]) <= x_band * aw && std::abs(clip[1]) <= 1.5f * aw) {
       ++ok;
     }
     if (clip[3] > 0.0f && std::abs(clip[0]) <= 6.0f * aw &&

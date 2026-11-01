@@ -492,21 +492,6 @@ repro steps; the entry says where the problem is and how it would show.
   the cut, so in practice only hand-edited names hit it.
 - **Fix:** truncate at a UTF-8 character boundary.
 
-### KI-61: Palette scoring rejects samples at the edges of very wide views
-
-- **Status:** open (unconfirmed) · **Severity:** low–medium
-- **Area:** native renderer, ultrawide, skinned characters and vehicles
-- **Tracking:** none yet. Found while fixing KI-25 (#37).
-- **Where:** `RefinePaletteBase` (the `score` lambda) and `ScoreRigidAffine`
-  in `src/skate3_native_scene.cpp`.
-- **Problem:** both accept a sample only if it projects within 1.5x of the
-  guest bank's own 16:9 clip volume. The ultrawide view reaches
-  |x|/w = 1/scale, which is 1.31 at 21:9 (fine) but 2.0 at 32:9. From about
-  2.4:1 up, skinned characters or vehicles near the side edges may fail
-  palette validation and render mangled or fall back.
-- **Next step:** pass the Hor+ scale into the x band, or widen it to
-  `1.5f / hor_scale`, then test at 32:9.
-
 ### KI-62: Vehicle retention box may not track the car's real position
 
 - **Status:** open (unconfirmed) · **Severity:** low
@@ -2049,6 +2034,60 @@ repro steps; the entry says where the problem is and how it would show.
   skips and no `rej` counts, and showed the same error and warning lines as
   main. Not yet played in-game.
 - **In-game test (2026-10-31):** Played ~100 min on the big rig (D3D12, 4K, MSAA x2) as one build stacking #38+#39+#47+#48 on main, with --skate3_native_render_scene_perf_log=true --skate3_native_render_scene_perf_items=true. User saw no problems. Log: prewarm 0 dropped and 0 decode refusals on every summary, prewarm[miss_retry=0] in all 1,202 samples, no 'guarded guest read failed' or 'DecodeMesh rejected', guest fps min 102 / avg 120, clean exit. Only ~2 area changes; not compared numerically with main; this PR was not tested on its own.
+
+### KI-61: Palette scoring rejects samples at the edges of very wide views
+
+- **Status:** fixed in rubensteezy/skate3recomp#50, tested in-game on 2026-10-31 · **Severity:** low–medium
+- **Area:** native renderer, ultrawide, skinned characters
+- **Where:** `RefinePaletteBase` (the `score` lambda) and `ScoreRigidAffine`
+  in `src/skate3_native_scene.cpp`.
+- **Problem:** both accept a sample only if it projects within 1.5x of the
+  bank's own clip volume. The banks hold the game's 16:9 matrices, but on a
+  wide output the game culls to the wide view, so meshes in the side bands
+  reach |x|/w = 1/scale (1.33 at 21:9, 2.0 at 32:9). Confirmed at 32:9, not
+  at 21:9:
+  - At 32:9 about 2% of all palette scorings were refused only because of the
+    x band (they pass with a wider x band). Every one of them was a
+    character, and every one resolved to the caller's own guessed base, so
+    these were correct palettes being refused, not foreign ones.
+  - They all came from the sun-shadow pass (ortho bank, w = 1, pre-pass
+    layout), whose projection covers only the 16:9 view, with samples at
+    |x|/w 1.5 to 2.03. The main camera pass wasn't affected: its loose
+    fallback (`cam_at_c4`, 6x band) already accepted those palettes.
+  - A refused shadow-pass capture leaves the item pending, so it waits for
+    the main-pass draw or falls back to the previous frame's palette for up
+    to 10 frames. No mangled characters were seen in screenshots, so the
+    visible effect is at most stale poses or shadows at the side edges.
+  - At 21:9 only 4 of 1.38 million scorings were affected.
+  - `ScoreRigidAffine` (Ropa garments, in practice the player's tee) was
+    never affected in these runs, since the player stays near the centre.
+    It gets the same band so a garment at the edge (freecam, cutscenes)
+    scores the same way.
+- **Fix:** `PaletteScoreHorScale()` returns the Hor+ scale against the
+  game's fixed 16:9 aspect (1.0 when the output isn't wide), and both
+  functions use an x band of `1.5f / scale`. The y band and the 6x loose
+  band are unchanged. At 16:9 the band is exactly 1.5, so nothing changes.
+- **Tested:** unattended demo-path boots, signed in on a copy of the user's
+  save, D3D12, 1920-wide windows, about 100 s each, with temporary counters
+  that ran both bands on the same scorings. Refused scorings, as a share of
+  all scorings:
+
+  | Output | Old band | Wider band, same frames | Fixed build (wide band live) |
+  | --- | --- | --- | --- |
+  | 16:9 (2 runs) | 1.89%, 1.78% | same | n/a (scale 1.0) |
+  | 21:9, 2.37 | 2.09% | 2.09% (4 rescued) | 1.72% |
+  | 32:9, 3.56 (3 runs) | 3.42%, 4.22%, 3.51% | 1.69%, 1.87%, 1.68% | 2.00%, 1.76% |
+
+  Runs differ by about 0.4 points from scene timing alone (the two 21:9
+  runs differ that much with only 4 scorings affected), so compare within
+  a column. The wider band never refused a palette the old band accepted.
+  In 10 and 12 scorings of two 32:9 runs (of about 1.2 million each) the
+  bands picked different homes. The wider band always accepts at least
+  what the old one does, so there the old band had refused an earlier
+  candidate and fallen through to a later home. No sample with |x|/w over
+  1.5 was ever seen at 16:9. Not yet watched in play: needs characters
+  near the left and right edges at 32:9.
+- **In-game test (2026-10-31):** Played on the big rig as one build stacking #37+#50 on main 7e03084, 32:9 window (--skate3_ultrawide=true --skate3_ultrawide_target_aspect=3.56, 3840x1080 windowed, perf log on): one D3D12 run (~3.5 min gameplay, fps min 102 / avg 120) and one Vulkan run (~3.3 min, fps min 89 / avg 119). User saw nothing wrong at the screen edges on either backend. Both logs exited cleanly with no errors besides the known XMA noise. No log line proves the ultrawide path ran, so the evidence is visual; 21:9 was not run; this PR was not tested on its own.
 
 ### Reviewed and ruled out (code review)
 
