@@ -890,20 +890,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** decide whether release defaults should turn on vsync or a
   frame cap. Settings > Display already has Framerate Cap and V-Sync rows.
 
-### KI-92: `ScoreRigidAffine` has no in-front-of-camera check
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, player garments
-- **Tracking:** none yet. Found while fixing KI-61 (#50).
-- **Where:** `ScoreRigidAffine` in `src/skate3_native_scene.cpp`.
-- **Problem:** its strict count accepts a sample when `|x|` and `|y|` are within
-  1.5·|w|, without requiring `clip[3] > 0`. So a matrix that places the
-  garment behind the camera can still score well. `RefinePaletteBase` has
-  that check, and its comment explains it exists for exactly this case. The
-  structural tail-row check on the matrix block reduces the risk.
-- **Fix:** add `clip[3] > 0.0f` to the strict count, then re-test the player's
-  tee (Ropa, sim active) up close.
-
 ### KI-93: Character shadows may be cut off at the edges on 32:9 ultrawide
 
 - **Status:** open (unverified) · **Severity:** low–medium
@@ -1217,6 +1203,26 @@ repro steps; the entry says where the problem is and how it would show.
   does.
 
 ## Resolved
+
+### KI-92: `ScoreRigidAffine` has no in-front-of-camera check
+
+- **Status:** fix in review in rubensteezy/skate3recomp#68, tested unattended /
+  awaiting in-game test · **Severity:** low
+- **Area:** native renderer, player garments
+- **Tracking:** #68. Found while fixing KI-61 (#50).
+- **Where:** `ScoreRigidAffine` in `src/skate3_native_scene.cpp`.
+- **Problem:** its strict count accepted a sample when `|x|` and `|y|` were
+  within 1.5·|w|, without requiring `clip[3] > 0`. So a matrix that places the
+  garment behind the camera could still score well. `RefinePaletteBase` has
+  that check, and its comment explains it exists for exactly this case. The
+  structural tail-row check on the matrix block reduced the risk.
+- **Fix:** the strict count now also requires `clip[3] > 0.0f`. The only gate
+  on the score is `rigid_score >= 8 || front_all`, and `front_all` already
+  required w > 0, so samples in front of the camera score as before.
+- **Test:** unattended signed-out demo boots with a temporary old-vs-new score
+  comparison: no differences, every `ropa mesh ... score=16`. The garments
+  stayed sim-inactive there (`ropa[rigid=0 ...]`), so the rigid branch still
+  needs the in-game check: the player's tee (Ropa, sim active) up close.
 
 ### KI-72: The Defender trojan trigger shipped on main
 
