@@ -578,6 +578,10 @@ bool CopyOcclusionCulledCtxs(std::vector<uint32_t>& out);
 // Counts sort-list entries the guest-side filter kept away from the guest
 // dispatcher (frame-stats telemetry).
 void AddGuestOcclSkipped(uint32_t n);
+// Counts a hot-path guarded guest read that failed and was skipped (KI-64),
+// with a rate-limited log line naming the site (defined in
+// skate3_native_scene.cpp).
+void NoteGuestReadSkip(const char* site, uint32_t addr);
 
 // Called from the cProcessArenaAsset::RegisterTexture hook: guid -> guest
 // renderengine::Texture object.

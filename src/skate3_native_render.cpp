@@ -62,6 +62,11 @@ REXCVAR_DEFINE_BOOL(skate3_guest_fps_cap_auto, true, "Skate 3",
                     "refresh is known.")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
+namespace skate3::native_scene {
+// Fault-guarded guest read (defined in skate3_native_scene.cpp).
+bool GuestTryLoadU32(uint8_t* base, uint32_t addr, uint32_t* out);
+}  // namespace skate3::native_scene
+
 namespace skate3::native_render {
 namespace {
 
@@ -106,8 +111,23 @@ void OnSceneDrawList(uint8_t* base, uint32_t view, uint32_t sort_vec, uint32_t f
     return;
   }
   skate3::native_scene::GuestReadRecoveryScope guest_read_recovery(base);
-  const uint32_t entries = REX_LOAD_U32(sort_vec);
+  // The vector header and the entry segment are read through guarded
+  // copies (one for the whole segment): a raw load of a stale pointer here
+  // faults the guest render thread, and GuestReadRecoveryScope is a no-op
+  // on Windows (KI-64). A failed read skips this list's capture.
+  uint32_t entries = 0;
+  if (!skate3::native_scene::GuestTryLoadU32(base, sort_vec, &entries)) {
+    skate3::native_scene::NoteGuestReadSkip("OnSceneDrawList sort_vec", sort_vec);
+    return;
+  }
   if (entries == 0) {
+    return;
+  }
+  thread_local std::vector<uint32_t> segment;
+  segment.resize(size_t(count) * 2);
+  const uint32_t seg = entries + first * 8;
+  if (!skate3::native_scene::GuestTryCopy(segment.data(), REX_RAW_ADDR(seg), size_t(count) * 8)) {
+    skate3::native_scene::NoteGuestReadSkip("OnSceneDrawList entries", seg);
     return;
   }
   // b = which of the view's sort lists this came from (sort_vec - view), so
@@ -115,8 +135,7 @@ void OnSceneDrawList(uint8_t* base, uint32_t view, uint32_t sort_vec, uint32_t f
   const uint32_t list_offset = sort_vec - view;
   std::lock_guard<std::mutex> lock(g_mutex);
   for (uint32_t i = 0; i < count; ++i) {
-    const uint32_t entry = entries + (first + i) * 8;
-    const uint32_t mesh_context = REX_LOAD_U32(entry + 4);
+    const uint32_t mesh_context = __builtin_bswap32(segment[size_t(i) * 2 + 1]);
     if (mesh_context == 0) {
       continue;
     }
@@ -172,12 +191,24 @@ uint32_t FilterSceneDrawList(uint8_t* base, uint32_t sort_vec, uint32_t first,
     return count;
   }
   skate3::native_scene::GuestReadRecoveryScope guest_read_recovery(base);
-  const uint32_t entries = REX_LOAD_U32(sort_vec);
+  // Guarded reads (KI-64): on failure, leave the list unfiltered. The
+  // segment copy uses base + seg like the compaction writes and the restore
+  // below.
+  uint32_t entries = 0;
+  if (!skate3::native_scene::GuestTryLoadU32(base, sort_vec, &entries)) {
+    skate3::native_scene::NoteGuestReadSkip("FilterSceneDrawList sort_vec", sort_vec);
+    return count;
+  }
   if (entries == 0) {
     return count;
   }
   const uint32_t seg = entries + first * 8;
-  f.saved.assign(base + seg, base + seg + size_t(count) * 8);
+  f.saved.resize(size_t(count) * 8);
+  if (!skate3::native_scene::GuestTryCopy(f.saved.data(), base + seg, f.saved.size())) {
+    skate3::native_scene::NoteGuestReadSkip("FilterSceneDrawList entries", seg);
+    f.saved.clear();
+    return count;
+  }
   uint32_t kept = 0;
   uint32_t skipped = 0;
   for (uint32_t i = 0; i < count; ++i) {
@@ -726,11 +757,6 @@ extern "C" REX_FUNC(sub_8278E960) {
   }
 }
 
-namespace skate3::native_scene {
-// Fault-guarded guest read (defined in skate3_native_scene.cpp).
-bool GuestTryLoadU32(uint8_t* base, uint32_t addr, uint32_t* out);
-}  // namespace skate3::native_scene
-
 REXCVAR_DEFINE_BOOL(
     skate3_autoexposure_pin, true, "Skate 3",
     "Pin the game's auto-exposure at its per-zone maximum. The game "
@@ -778,7 +804,15 @@ extern "C" REX_FUNC(sub_827F0D00) {
     return;
   }
   skate3::native_scene::GuestReadRecoveryScope guest_read_recovery(base);
-  uint32_t prev_bits = REX_LOAD_U32(self + 3240);
+  // Guarded reads (KI-64): the adapted exposure at +3240 and the two
+  // ownership bytes at +3396/+3397. On failure, leave this frame unpinned.
+  uint32_t prev_bits = 0;
+  uint8_t own[2] = {};
+  if (!skate3::native_scene::GuestTryLoadU32(base, self + 3240, &prev_bits) ||
+      !skate3::native_scene::GuestTryCopy(own, REX_RAW_ADDR(self + 3396), sizeof(own))) {
+    skate3::native_scene::NoteGuestReadSkip("auto-exposure pin", self);
+    return;
+  }
   float prev;
   std::memcpy(&prev, &prev_bits, sizeof(prev));
   static std::atomic<int64_t> s_last_log_ns{-1};
@@ -799,8 +833,8 @@ extern "C" REX_FUNC(sub_827F0D00) {
   }
   REX_STORE_U32(self + 3240, max_bits);
   REX_STORE_U32(self + 3392, max_bits);
-  const uint32_t own_a = REX_LOAD_U8(self + 3397);
-  const uint32_t own_b = REX_LOAD_U8(self + 3396);
+  const uint32_t own_a = own[1];  // +3397
+  const uint32_t own_b = own[0];  // +3396
   if (own_a == 0 && inst_a >= 0x10000) {
     REX_STORE_U32(inst_a + 48, max_bits);
   }

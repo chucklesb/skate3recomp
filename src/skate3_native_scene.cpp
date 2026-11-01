@@ -1881,6 +1881,34 @@ bool GuestTryLoadU64(uint8_t* base, uint32_t addr, uint64_t* out) {
   return true;
 }
 
+// Hot-path guarded reads that failed (KI-64): the capture walk, the item
+// cache-hit check and the render hooks skip the item or hook action instead
+// of faulting the guest render thread (GuestReadRecoveryScope is a no-op on
+// Windows). Logged at most once per 10 s with the running total.
+namespace {
+std::atomic<uint64_t> g_guest_read_skips{0};
+std::atomic<int64_t> g_guest_read_skip_log_ns{-1};
+}  // namespace
+
+void NoteGuestReadSkip(const char* site, uint32_t addr) {
+  const uint64_t total = g_guest_read_skips.fetch_add(1, std::memory_order_relaxed) + 1;
+  const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                             std::chrono::steady_clock::now().time_since_epoch())
+                             .count();
+  int64_t last = g_guest_read_skip_log_ns.load(std::memory_order_relaxed);
+  if (last >= 0 && now_ns - last < 10'000'000'000) {
+    return;
+  }
+  if (!g_guest_read_skip_log_ns.compare_exchange_strong(last, now_ns,
+                                                        std::memory_order_relaxed)) {
+    return;  // another thread logged this window
+  }
+  REXLOG_WARN(
+      "native-scene: guarded guest read failed at {} (addr {:#010x}); skipped "
+      "(total={})",
+      site, addr, total);
+}
+
 // Per-instance world straight from the guest MeshContext: the owning model
 // object at ctx+0x30 keeps the instance's row-major 4x4 (translation in row
 // 3) at +0xA0. Verified 426/426 against placed captures in a park-editor
@@ -2642,10 +2670,19 @@ bool BuildItemFromMeshCached(uint8_t* base, uint32_t mesh, DrawItem& item) {
     if (it != g_item_cache.end() && frame < it->second.rebuild_frame) {
       CachedItemCore& core = it->second;
       // Structural validation: the mesh's pointer fields must still match
-      // the cached walk.
-      const bool intact =
-          REX_LOAD_U32(mesh + kMeshVertexBuffer) == core.item.vb_obj &&
-          REX_LOAD_U32(mesh + kMeshIndexBuffer) == core.item.ib_obj;
+      // the cached walk. IB +0x30 and VB +0x34 come from one guarded copy:
+      // streaming can unmap the record between capture and this check, and
+      // a raw load would fault the guest render thread (KI-64).
+      static_assert(kMeshVertexBuffer == kMeshIndexBuffer + 4);
+      uint32_t buf_ptrs[2];
+      if (!GuestTryCopy(buf_ptrs, REX_RAW_ADDR(mesh + kMeshIndexBuffer), sizeof(buf_ptrs))) {
+        g_item_cache.erase(it);
+        g_rej_chain.fetch_add(1, std::memory_order_relaxed);
+        NoteGuestReadSkip("BuildItemFromMeshCached mesh", mesh);
+        return false;
+      }
+      const bool intact = BSwap32(buf_ptrs[1]) == core.item.vb_obj &&
+                          BSwap32(buf_ptrs[0]) == core.item.ib_obj;
       // Buffer payload address/size can move under the same objects
       // (streaming re-init), cheap guarded re-read every frame.
       uint32_t vb_words[3] = {}, ib_words[3] = {};
@@ -2711,12 +2748,29 @@ bool BuildItemFromMeshCached(uint8_t* base, uint32_t mesh, DrawItem& item) {
 }
 
 bool BuildItemGeometry(uint8_t* base, uint32_t ctx, DrawItem& item) {
-  const uint32_t record = REX_LOAD_U32(ctx);
+  // Every MeshContext field this function reads (record +0x00, draw count
+  // +0x38, draw list +0x48) comes from one guarded copy, and the record
+  // and draw list are guarded too: the contexts were recorded earlier in
+  // the frame, streaming can unmap them before the build, and a raw load
+  // faults the guest render thread (KI-64).
+  static_assert(kCtxDrawCountU16 % 4 == 0 && kCtxDrawList > kCtxDrawCountU16);
+  uint32_t ctx_head[kCtxDrawList / 4 + 1];
+  if (ctx < 0x10000 || !GuestTryCopy(ctx_head, REX_RAW_ADDR(ctx), sizeof(ctx_head))) {
+    g_rej_chain.fetch_add(1, std::memory_order_relaxed);
+    NoteGuestReadSkip("BuildItemGeometry ctx", ctx);
+    return false;
+  }
+  const uint32_t record = BSwap32(ctx_head[0]);
   if (!GuestReadableApprox(base, record)) {
     g_rej_chain.fetch_add(1, std::memory_order_relaxed);
     return false;
   }
-  const uint32_t mesh = REX_LOAD_U32(record);
+  uint32_t mesh = 0;
+  if (!GuestTryLoadU32(base, record, &mesh)) {
+    g_rej_chain.fetch_add(1, std::memory_order_relaxed);
+    NoteGuestReadSkip("BuildItemGeometry record", record);
+    return false;
+  }
   if (!GuestReadableApprox(base, mesh)) {
     g_rej_chain.fetch_add(1, std::memory_order_relaxed);
     return false;
@@ -2743,17 +2797,22 @@ bool BuildItemGeometry(uint8_t* base, uint32_t ctx, DrawItem& item) {
   item.ctx = ctx;
 
   // Culled island draw list from the context.
-  const uint32_t draw_count = REX_LOAD_U16(ctx + kCtxDrawCountU16);
-  const uint32_t draw_list = REX_LOAD_U32(ctx + kCtxDrawList);
+  const uint32_t draw_count = BSwap32(ctx_head[kCtxDrawCountU16 / 4]) >> 16;
+  const uint32_t draw_list = BSwap32(ctx_head[kCtxDrawList / 4]);
   if (draw_count == 0 || draw_count > 512 || !GuestReadableApprox(base, draw_list)) {
     g_rej_draws.fetch_add(1, std::memory_order_relaxed);
     return false;
   }
+  uint32_t draw_words[512 * 4];
+  if (!GuestTryCopy(draw_words, REX_RAW_ADDR(draw_list), size_t(draw_count) * 16)) {
+    g_rej_draws.fetch_add(1, std::memory_order_relaxed);
+    NoteGuestReadSkip("BuildItemGeometry draw list", draw_list);
+    return false;
+  }
   item.draws.reserve(draw_count);
   for (uint32_t i = 0; i < draw_count; ++i) {
-    const uint32_t d = draw_list + i * 16;
-    DrawEntry entry{REX_LOAD_U32(d), REX_LOAD_U32(d + 4), REX_LOAD_U32(d + 8),
-                    REX_LOAD_U32(d + 12)};
+    const uint32_t* d = draw_words + i * 4;
+    DrawEntry entry{BSwap32(d[0]), BSwap32(d[1]), BSwap32(d[2]), BSwap32(d[3])};
     if (entry.index_count == 0 || entry.index_count > item.ib_count) continue;
     item.draws.push_back(entry);
   }
