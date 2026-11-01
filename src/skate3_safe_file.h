@@ -10,6 +10,8 @@
 //   either the old file or the new one, never a truncated one.
 // - QuarantineFile moves a file that failed to parse aside to
 //   `<name>.bad-<timestamp>` before anything may overwrite it.
+// - WriteBackupCopy saves a copy of a file's bytes under a timestamped name
+//   before a save replaces it.
 //
 // No logging and no rex dependencies: callers log the returned errors.
 
@@ -51,6 +53,17 @@ std::optional<std::filesystem::path> QuarantineFile(const std::filesystem::path&
                                                     std::string_view expected_bytes,
                                                     std::size_t keep_backups,
                                                     std::string* error = nullptr);
+
+// Writes `bytes` (crash-safe, as WriteFileAtomic) to a new file
+// `<path><tag>YYYYMMDD-HHMMSS[-N]` in the same folder, leaving `path` itself
+// alone. Afterwards prunes the oldest `<path><tag>*` files so at most
+// `keep_backups` remain (the new one is never pruned). Returns the backup
+// path, or nullopt with `error` set if it was not written.
+std::optional<std::filesystem::path> WriteBackupCopy(const std::filesystem::path& path,
+                                                     std::string_view tag,
+                                                     std::string_view bytes,
+                                                     std::size_t keep_backups,
+                                                     std::string* error = nullptr);
 
 // UTF-8 form of a path for log messages (path::string() can throw on Windows
 // for characters outside the ANSI code page).

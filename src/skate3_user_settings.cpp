@@ -4,6 +4,7 @@
 #include <charconv>
 #include <filesystem>
 #include <iomanip>
+#include <optional>
 #include <sstream>
 #include <string_view>
 
@@ -153,6 +154,52 @@ std::string TomlString(std::string_view value) {
   return out;
 }
 
+// Reads one element of the `profiles` array. Returns nullopt for an entry
+// that is not a table or lacks a usable id, gamertag or xuid; LoadProfiles
+// skips those and SaveProfiles backs the file up before dropping them.
+std::optional<LocalProfile> ParseProfileEntry(const toml::node& node) {
+  const auto* profile_table = node.as_table();
+  if (!profile_table) {
+    return std::nullopt;
+  }
+  LocalProfile profile;
+  profile.id = (*profile_table)["id"].value_or(std::string{});
+  profile.gamertag = (*profile_table)["gamertag"].value_or(std::string{});
+  profile.signed_in = (*profile_table)["signed_in"].value_or(true);
+  profile.live_signed_in = (*profile_table)["live_signed_in"].value_or(false);
+  if (auto xuid = (*profile_table)["xuid"].value<std::string>()) {
+    profile.xuid = ParseXuidString(*xuid);
+  } else if (auto xuid_int = (*profile_table)["xuid"].value<int64_t>()) {
+    profile.xuid = static_cast<uint64_t>(*xuid_int);
+  }
+  if (profile.id.empty() || profile.gamertag.empty() || profile.xuid == 0) {
+    return std::nullopt;
+  }
+  return profile;
+}
+
+// True if replacing a file holding `bytes` with a fresh save would lose
+// something: the file does not parse (it was edited or broken after
+// LoadProfiles), or it has profile entries LoadProfiles skipped.
+bool SaveWouldDropData(const std::string& bytes, const std::string& log_path) {
+  toml::table table;
+  try {
+    table = toml::parse(bytes, log_path);
+  } catch (const toml::parse_error&) {
+    return true;
+  }
+  if (auto profiles = table["profiles"].as_array()) {
+    for (auto& node : *profiles) {
+      if (!ParseProfileEntry(node)) {
+        return true;
+      }
+    }
+  } else if (table.contains("profiles")) {
+    return true;  // `profiles` is not an array: LoadProfiles ignored all of it.
+  }
+  return false;
+}
+
 }  // namespace
 
 std::filesystem::path ProfilesFilePath(const std::filesystem::path& user_data_root) {
@@ -206,37 +253,29 @@ LocalProfileStore LoadProfiles(const std::filesystem::path& profiles_path) {
   size_t skipped = 0;
   if (auto profiles = table["profiles"].as_array()) {
     for (auto& node : *profiles) {
-      auto* profile_table = node.as_table();
-      if (!profile_table) {
-        ++skipped;
-        continue;
-      }
-      LocalProfile profile;
-      profile.id = (*profile_table)["id"].value_or(std::string{});
-      profile.gamertag = (*profile_table)["gamertag"].value_or(std::string{});
-      profile.signed_in = (*profile_table)["signed_in"].value_or(true);
-      profile.live_signed_in = (*profile_table)["live_signed_in"].value_or(false);
-      if (auto xuid = (*profile_table)["xuid"].value<std::string>()) {
-        profile.xuid = ParseXuidString(*xuid);
-      } else if (auto xuid_int = (*profile_table)["xuid"].value<int64_t>()) {
-        profile.xuid = static_cast<uint64_t>(*xuid_int);
-      }
-      if (!profile.id.empty() && !profile.gamertag.empty() && profile.xuid != 0) {
-        store.profiles.push_back(std::move(profile));
+      if (auto profile = ParseProfileEntry(node)) {
+        store.profiles.push_back(std::move(*profile));
       } else {
         ++skipped;
       }
     }
+  } else if (table.contains("profiles")) {
+    ++skipped;
   }
   if (skipped != 0) {
     REXLOG_WARN("Profiles: {} skipped {} entr{} without a usable id, gamertag and xuid; "
-                "the next profile save drops them",
-                log_path, skipped, skipped == 1 ? "y" : "ies");
+                "the next profile save first backs the file up as {}.dropped-<time>, then "
+                "drops them",
+                log_path, skipped, skipped == 1 ? "y" : "ies",
+                safe_file::PathForLog(profiles_path.filename()));
   }
   return store;
 }
 
 bool SaveProfiles(const std::filesystem::path& profiles_path, const LocalProfileStore& store) {
+  // How many `profiles.toml.dropped-*` backups to keep.
+  constexpr std::size_t kMaxDroppedBackups = 5;
+
   const std::string log_path = safe_file::PathForLog(profiles_path);
   if (store.save_blocked) {
     REXLOG_WARN("Profiles: not saving {}: it could not be read or backed up this session",
@@ -276,6 +315,31 @@ bool SaveProfiles(const std::filesystem::path& profiles_path, const LocalProfile
   }
   bytes = std::move(crlf);
 #endif
+
+  // The save rewrites the file from `store`, which lacks any entries
+  // LoadProfiles skipped. Keep the old file's bytes first, so a hand-edited
+  // entry with a bad xuid (or similar) is never lost silently. Once saved,
+  // the file has no such entries, so this happens once, not on every save.
+  auto current = safe_file::ReadWholeFile(profiles_path);
+  if (current.status == safe_file::ReadStatus::kError) {
+    REXLOG_ERROR("Profiles: not saving {}: cannot read the current file to check it: {}",
+                 log_path, current.error);
+    return false;
+  }
+  if (current.status == safe_file::ReadStatus::kOk &&
+      SaveWouldDropData(current.bytes, log_path)) {
+    std::string backup_error;
+    auto backup = safe_file::WriteBackupCopy(profiles_path, ".dropped-", current.bytes,
+                                             kMaxDroppedBackups, &backup_error);
+    if (!backup) {
+      REXLOG_ERROR("Profiles: not saving {}: it has entries this save would drop, and backing "
+                   "it up failed: {}",
+                   log_path, backup_error);
+      return false;
+    }
+    REXLOG_WARN("Profiles: {} has entries this save drops; the old file is backed up as {}",
+                log_path, safe_file::PathForLog(*backup));
+  }
 
   std::string write_error;
   if (!safe_file::WriteFileAtomic(profiles_path, bytes, &write_error)) {

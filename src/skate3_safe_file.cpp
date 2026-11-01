@@ -77,10 +77,28 @@ bool MoveNoReplace(const std::filesystem::path& from, const std::filesystem::pat
 #endif
 }
 
-void PruneBackups(const std::filesystem::path& path, const std::filesystem::path& keep_path,
-                  std::size_t keep_backups) {
+// `<path><tag><timestamp>[-N]` that does not exist yet, or empty if none of
+// the first 100 is free.
+std::filesystem::path FreeBackupName(const std::filesystem::path& path, std::string_view tag) {
+  const std::string stamp = LocalTimestamp();
+  for (int n = 1; n <= 100; ++n) {
+    std::filesystem::path candidate = path;
+    candidate += std::string(tag) + stamp + (n > 1 ? "-" + std::to_string(n) : std::string());
+    std::error_code ec;
+    const bool taken = std::filesystem::exists(candidate, ec);
+    if (!ec && !taken) {
+      return candidate;
+    }
+  }
+  return {};
+}
+
+// Removes the oldest `<path><tag>*` files so at most `keep_backups` remain,
+// counting `keep_path` (which is never removed).
+void PruneBackups(const std::filesystem::path& path, std::string_view tag,
+                  const std::filesystem::path& keep_path, std::size_t keep_backups) {
   const std::filesystem::path dir = path.parent_path();
-  const std::string prefix = PathForLog(path.filename()) + ".bad-";
+  const std::string prefix = PathForLog(path.filename()) + std::string(tag);
   const std::string keep_name = PathForLog(keep_path.filename());
   std::vector<std::pair<std::string, std::filesystem::path>> backups;
   std::error_code ec;
@@ -256,18 +274,8 @@ std::optional<std::filesystem::path> QuarantineFile(const std::filesystem::path&
                                                     std::string_view expected_bytes,
                                                     std::size_t keep_backups,
                                                     std::string* error) {
-  const std::string stamp = LocalTimestamp();
-  std::filesystem::path backup;
-  for (int n = 1; n <= 100; ++n) {
-    std::filesystem::path candidate = path;
-    candidate += ".bad-" + stamp + (n > 1 ? "-" + std::to_string(n) : std::string());
-    std::error_code ec;
-    const bool taken = std::filesystem::exists(candidate, ec);
-    if (!ec && !taken) {
-      backup = std::move(candidate);
-      break;
-    }
-  }
+  constexpr std::string_view kTag = ".bad-";
+  const std::filesystem::path backup = FreeBackupName(path, kTag);
   if (backup.empty()) {
     SetError(error, "no free backup name for " + PathForLog(path));
     return std::nullopt;
@@ -296,7 +304,24 @@ std::optional<std::filesystem::path> QuarantineFile(const std::filesystem::path&
     }
   }
 
-  PruneBackups(path, backup, keep_backups);
+  PruneBackups(path, kTag, backup, keep_backups);
+  return backup;
+}
+
+std::optional<std::filesystem::path> WriteBackupCopy(const std::filesystem::path& path,
+                                                     std::string_view tag,
+                                                     std::string_view bytes,
+                                                     std::size_t keep_backups,
+                                                     std::string* error) {
+  const std::filesystem::path backup = FreeBackupName(path, tag);
+  if (backup.empty()) {
+    SetError(error, "no free backup name for " + PathForLog(path));
+    return std::nullopt;
+  }
+  if (!WriteFileAtomic(backup, bytes, error)) {
+    return std::nullopt;
+  }
+  PruneBackups(path, tag, backup, keep_backups);
   return backup;
 }
 
