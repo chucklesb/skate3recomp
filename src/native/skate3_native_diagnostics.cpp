@@ -3,6 +3,7 @@
 // skate3_native_scene.cpp; no rendering logic lives here.
 
 #include "native/skate3_native_diag.h"
+#include "native/skate3_file_stamp.h"
 
 #include <algorithm>
 #include <bit>
@@ -495,14 +496,8 @@ std::filesystem::path SnapshotDir() {
   return dir;
 }
 
-std::string SnapshotStem() {
-  const auto now = std::chrono::system_clock::now();
-  const auto seconds =
-      std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-  char stem[64];
-  std::snprintf(stem, sizeof(stem), "snapshot_%" PRId64, static_cast<int64_t>(seconds));
-  return stem;
-}
+// snapshot_YYYYMMDD_HHMMSS_mmm: unique per process (KI-75), like screenshots.
+std::string SnapshotStem() { return "snapshot_" + skate3::file_stamp::NextFileStamp(); }
 
 // Guest memory snapshot format (.gsnap):
 //   char magic[8] = "SK3GSNP1"

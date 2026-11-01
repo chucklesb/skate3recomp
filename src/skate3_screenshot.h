@@ -10,8 +10,9 @@ namespace skate3::screenshot {
 // the UI thread, so any thread works); the PNG encode runs on a detached
 // worker so the frame hitch stays minimal. Windows only; a no-op with a
 // warning elsewhere. hwnd is the platform-native window handle. tag, when
-// given, is appended to the filename (shot_<ts>_<tag>.png); the paired
-// native/emulated A/B captures share one timestamp.
+// given, is appended to the filename (shot_<ts>_<tag>.png). The paired
+// native/emulated A/B captures share a tag that carries the F11 press time
+// (HHMMSS), but each file gets its own <ts> from when it was captured.
 void CaptureWindow(void* hwnd, const char* tag = nullptr);
 
 // The game window handle, stashed at dialog setup so frame-loop code (the

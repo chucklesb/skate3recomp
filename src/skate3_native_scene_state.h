@@ -25,6 +25,7 @@
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
+#include "native/skate3_file_stamp.h"
 #include "skate3_native_scene.h"
 
 REXCVAR_DECLARE(bool, skate3_native_render_scene);
@@ -727,9 +728,11 @@ inline void MaybeDumpSceneRing() {
   if (!g_scene_ring_dump.exchange(false, std::memory_order_acq_rel)) {
     return;
   }
+  // logs/scene_ring_YYYYMMDD_HHMMSS_mmm.csv: the stamp is unique per process
+  // (KI-75), so an F7 dump and an RB+A dump in the same second both survive.
   char path[128];
-  std::snprintf(path, sizeof(path), "logs/scene_ring_%lld.csv",
-                static_cast<long long>(std::time(nullptr)));
+  std::snprintf(path, sizeof(path), "logs/scene_ring_%s.csv",
+                skate3::file_stamp::NextFileStamp().c_str());
   std::ofstream f(path);
   if (!f) {
     REXLOG_WARN("native-scene ring: cannot open {}", path);
