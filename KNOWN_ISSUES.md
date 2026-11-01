@@ -1161,6 +1161,32 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** per-site logging (or a debugger) in the mesh decode/prewarm
   path to find the faulting load, then guard it the way KI-64 did.
 
+### KI-111: `WarmItemResources` ignores the mesh decode backoff during settle
+
+- **Status:** open · **Severity:** low
+- **Area:** native renderer, mesh streaming
+- **Tracking:** none yet. Found while fixing KI-67 (#61).
+- **Where:** `WarmItemResources` in `src/skate3_native_scene_gpu.cpp`.
+- **Problem:** the KI-67 backoff (`MeshMissBackingOff`) is checked only on the
+  draw path. The settle-time warm pass still retries a mesh whose decode keeps
+  failing, every settle frame, so the wasted decodes KI-67 removed can come
+  back while a scene settles.
+- **Next step:** check `MeshMissBackingOff` before decoding in
+  `WarmItemResources` too.
+
+### KI-112: Prewarm drops a mesh after 8 failures without recording a backoff
+
+- **Status:** open · **Severity:** low
+- **Area:** native renderer, prewarm worker
+- **Tracking:** none yet. Found while fixing KI-67 (#61).
+- **Where:** the 8-failure drop in `ProcessPrewarmEntry`
+  (`src/skate3_native_scene_gpu.cpp`).
+- **Problem:** when the prewarm worker gives up on an entry it releases the key
+  but does not mark the mesh in the KI-67 failure table, so the draw path
+  retries it at once. Not seen in any run so far.
+- **Next step:** record the failure in `g_mesh_miss_fail` when the entry is
+  dropped.
+
 ## Resolved
 
 ### KI-72: The Defender trojan trigger shipped on main
