@@ -553,19 +553,6 @@ repro steps; the entry says where the problem is and how it would show.
   small debug cvar that triggers a popup flush (`sub_825D8AF0` →
   `sub_82D0A738`) would let the flush path be tested unattended.
 
-### KI-70: Restart prompt's Discard doesn't check it's acting on the Options state
-
-- **Status:** open · **Severity:** low
-- **Area:** Options menu
-- **Tracking:** none yet. Found while fixing KI-28 (#40). Code reading only.
-- **Where:** the Discard branch of the `sub_8260EA48` hook in
-  `src/skate3_options_menu.cpp`.
-- **Problem:** it uses `OptionsState()` (`owner+180`) without checking that the
-  object is a FrontEndState_Options. If the Options state is gone when Discard
-  fires, `PageOf` reads +68 of whatever object is there and could call
-  `sub_8260D078` on it. Unlikely, because the popup is modal over Options.
-- **Fix:** check the state's vtable against 0x823034B0 before acting.
-
 ### KI-71: Restart prompt shows no title
 
 - **Status:** open · **Severity:** low
@@ -1233,6 +1220,24 @@ repro steps; the entry says where the problem is and how it would show.
   keep a seeded test profile with a finished save for agents to copy in.
 
 ## Resolved
+
+### KI-70: Restart prompt's Discard doesn't check it's acting on the Options state
+
+- **Status:** fix in review in rubensteezy/skate3recomp#69, tested unattended (build only) /
+  awaiting in-game test · **Severity:** low
+- **Area:** Options menu
+- **Tracking:** #69. Found while fixing KI-28 (#40). Code reading only.
+- **Where:** the Discard branch of the `sub_8260EA48` hook in
+  `src/skate3_options_menu.cpp`.
+- **Problem:** it uses `OptionsState()` (`owner+180`) without checking that the
+  object is a FrontEndState_Options. If the Options state is gone when Discard
+  fires, `PageOf` reads +68 of whatever object is there and could call
+  `sub_8260D078` on it. Unlikely, because the popup is modal over Options.
+- **Fix:** `IsOptionsState` does a guarded read (`GuestTryCopy`) of the state's
+  vtable and compares it with 0x823034B0 before `PageOf` / `sub_8260D078`. On a
+  mismatch the Back is skipped and one warning is logged
+  (`Discard skipped, state ... is not FrontEndState_Options`). The staged
+  choices are still dropped, as the player asked.
 
 ### KI-72: The Defender trojan trigger shipped on main
 
