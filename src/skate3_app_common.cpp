@@ -771,7 +771,13 @@ void Skate3BaseApp::OnPostSetup() {
   }
 
   if (auto* input_system = static_cast<rex::input::InputSystem*>(runtime()->input_system())) {
-    input_system->SetActiveCallback([this]() {
+    // Input/guest threads. Gated by callback_gate_ (see the header): after
+    // OnShutdown this keeps guest input off and never touches `this`.
+    input_system->SetActiveCallback([this, gate = callback_gate_]() {
+      std::shared_lock lock(gate->mutex);
+      if (!gate->open.load(std::memory_order_relaxed)) {
+        return false;
+      }
       const bool settings_visible = simple_settings_dialog_ && simple_settings_dialog_->visible();
       const bool xam_ui_active = rex::kernel::xam::xeXamIsUIActive();
       // The drone cam owns the keyboard while flying: keep guest input off
@@ -781,8 +787,18 @@ void Skate3BaseApp::OnPostSetup() {
           REXCVAR_GET(skate3_native_render_scene_freecam_capture_input);
       return !settings_visible && !xam_ui_active && !freecam_captures;
     });
-    input_system->SetMenuChordCallback([this]() {
-      app_context().CallInUIThreadDeferred([this]() { ToggleSimpleSettings(); });
+    input_system->SetMenuChordCallback([this, gate = callback_gate_]() {
+      std::shared_lock lock(gate->mutex);
+      if (!gate->open.load(std::memory_order_relaxed)) {
+        return;
+      }
+      app_context().CallInUIThreadDeferred([this, gate]() {
+        // UI thread, same as OnShutdown: the flag alone decides (no lock, as
+        // ToggleSimpleSettings takes it exclusive to create the dialog).
+        if (gate->open.load(std::memory_order_relaxed)) {
+          ToggleSimpleSettings();
+        }
+      });
     });
   }
 
@@ -816,15 +832,28 @@ void Skate3BaseApp::OnPostSetup() {
   skate3::demo_path::InstallHooks(dispatcher);
   // User-facing intro-movie skip (independent of the demo path): the movie
   // completion override polls the merged UI pad state through this provider.
-  skate3::demo_path::SetUiInputProvider([this]() {
-    return static_cast<rex::input::InputSystem*>(runtime()->input_system());
-  });
+  skate3::demo_path::SetUiInputProvider(
+      [this, gate = callback_gate_]() -> rex::input::InputSystem* {
+        std::shared_lock lock(gate->mutex);
+        if (!gate->open.load(std::memory_order_relaxed)) {
+          return nullptr;
+        }
+        return static_cast<rex::input::InputSystem*>(runtime()->input_system());
+      });
   // PC settings rows in the game's Options screen. The callbacks arrive on
   // the guest thread: open (never toggle closed) the overlay, persist row
   // changes and restart on the UI thread (RestartGame defers itself, so it
   // runs after a save queued just before it).
-  skate3::options_menu::SetOpenSettingsCallback([this]() {
-    app_context().CallInUIThreadDeferred([this]() {
+  // All four are gated by callback_gate_ like the input callbacks above.
+  skate3::options_menu::SetOpenSettingsCallback([this, gate = callback_gate_]() {
+    std::shared_lock lock(gate->mutex);
+    if (!gate->open.load(std::memory_order_relaxed)) {
+      return;
+    }
+    app_context().CallInUIThreadDeferred([this, gate]() {
+      if (!gate->open.load(std::memory_order_relaxed)) {
+        return;  // UI thread: after OnShutdown, never recreate the dialog
+      }
       if (!simple_settings_dialog_ || !simple_settings_dialog_->visible()) {
         ToggleSimpleSettings();
       }
@@ -832,16 +861,30 @@ void Skate3BaseApp::OnPostSetup() {
   });
   // MAX QUALITY (F12 photo mode) is suspended around the save so its maxed
   // values never reach settings.toml (see WithMaxQualitySuspended).
-  skate3::options_menu::SetSaveSettingsCallback([this]() {
+  skate3::options_menu::SetSaveSettingsCallback([this, gate = callback_gate_]() {
+    std::shared_lock lock(gate->mutex);
+    if (!gate->open.load(std::memory_order_relaxed)) {
+      return;
+    }
     app_context().CallInUIThreadDeferred([this]() {
       skate3::WithMaxQualitySuspended(
           [this]() { rex::ui::SaveSimpleSettingsConfig(user_settings_path_); });
     });
   });
-  skate3::options_menu::SetRestartCallback([this]() { RestartGame(); });
+  skate3::options_menu::SetRestartCallback([this, gate = callback_gate_]() {
+    std::shared_lock lock(gate->mutex);
+    if (gate->open.load(std::memory_order_relaxed)) {
+      RestartGame();  // only posts to the UI thread; never blocks under the lock
+    }
+  });
   // Quit Game: the overlay's Close Game exit (CloseGame defers to the UI
   // thread, so it runs after the settings save queued just before it).
-  skate3::options_menu::SetQuitCallback([this]() { CloseGame(); });
+  skate3::options_menu::SetQuitCallback([this, gate = callback_gate_]() {
+    std::shared_lock lock(gate->mutex);
+    if (gate->open.load(std::memory_order_relaxed)) {
+      CloseGame();
+    }
+  });
   skate3::options_menu::Install();
   if (dispatcher->InitializeFunctionTable(eawebkit_PPCImageConfig.code_base,
                                           eawebkit_PPCImageConfig.code_size,
@@ -859,6 +902,16 @@ void Skate3BaseApp::OnPostSetup() {
 }
 
 void Skate3BaseApp::OnShutdown() {
+  // First: close the gate on the callbacks OnPostSetup gave to the input
+  // system, demo path and Options screen (they capture `this`). Exclusive, so
+  // a callback already running on the guest/input thread finishes before the
+  // dialogs below are reset; every later call is a no-op. The setters are not
+  // used to clear them: they are unsynchronised stores the guest reads.
+  {
+    std::unique_lock lock(callback_gate_->mutex);
+    callback_gate_->open.store(false, std::memory_order_relaxed);
+  }
+  REXLOG_INFO("Skate 3 shutdown: app callbacks disabled");
   if (window()) {
     skate3::freecam_input::Unregister(window());
   }
@@ -869,7 +922,12 @@ void Skate3BaseApp::OnShutdown() {
   UnregisterAppBinds();
   ApplyGameplayCursorMode();
   skate3::native_scene::SetSettingsMenuBlur(false);
-  simple_settings_dialog_.reset();
+  {
+    // The gate is closed, so no callback reads it any more; locked anyway so
+    // every write of the pointer follows the same rule.
+    std::unique_lock lock(callback_gate_->mutex);
+    simple_settings_dialog_.reset();
+  }
   native_debug_dialog_.reset();
   render_mode_indicator_.reset();
 }
@@ -970,11 +1028,15 @@ void Skate3BaseApp::ToggleSimpleSettings() {
     }
     return pad;
   };
-  simple_settings_dialog_ =
-      std::make_unique<rex::ui::SimpleSettingsDialog>(
-          imgui_drawer(), user_settings_path_, std::move(load_profiles), std::move(save_profile),
-          std::move(close_settings), std::move(close_game), std::move(restart_game),
-          std::move(poll_gamepad));
+  auto dialog = std::make_unique<rex::ui::SimpleSettingsDialog>(
+      imgui_drawer(), user_settings_path_, std::move(load_profiles), std::move(save_profile),
+      std::move(close_settings), std::move(close_game), std::move(restart_game),
+      std::move(poll_gamepad));
+  {
+    // The input active callback reads this pointer on another thread.
+    std::unique_lock lock(callback_gate_->mutex);
+    simple_settings_dialog_ = std::move(dialog);
+  }
   ApplySettingsCursorMode();
   skate3::native_scene::SetSettingsMenuBlur(true);
   skate3::SuspendMaxQuality();
