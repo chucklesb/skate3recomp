@@ -787,24 +787,6 @@ repro steps; the entry says where the problem is and how it would show.
   a second decode of X. That wastes worker time but has no visual effect.
 - **Fix:** erase only when `e.miss` is set.
 
-### KI-86: The prewarm miss queue pops from the front of a vector
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, streaming performance
-- **Tracking:** none yet. Found while fixing KI-65 (#47).
-- **Where:** `PrewarmWorkerLoop` in `src/skate3_native_scene_gpu.cpp`, and
-  `skate3_native_scene_state.h`.
-- **Problem:** `g_miss_queue.erase(g_miss_queue.begin())` costs time in
-  proportion to the queue length (capped at 65536) while `g_prewarm_mutex` is
-  held, so a large streaming burst could stall the workers. `g_dyn_jobs` has
-  the same pattern.
-- **Also:** the null base/device re-queue in `PrewarmWorkerLoop` is close to
-  dead code (the workers start only once `g_r.device` is set, and nothing
-  resets it). It never decrements retries, so if it ever ran for long it
-  would spin entries every 100 ms per worker without end.
-- **Next step:** switch both queues to `std::deque` if a profile shows lock
-  contention. Turn the null re-queue into a plain wait.
-
 ### KI-87: Raw guest loads in the `CaptureDynamicState` pre-check
 
 - **Status:** open · **Severity:** low–medium
@@ -1233,6 +1215,27 @@ repro steps; the entry says where the problem is and how it would show.
   keep a seeded test profile with a finished save for agents to copy in.
 
 ## Resolved
+
+### KI-86: The prewarm miss queue pops from the front of a vector
+
+- **Status:** fix in review in rubensteezy/skate3recomp#70, tested
+  unattended / awaiting in-game test · **Severity:** low
+- **Area:** native renderer, streaming performance
+- **Tracking:** #70. Found while fixing KI-65 (#47).
+- **Where:** `PrewarmWorkerLoop` in `src/skate3_native_scene_gpu.cpp`, and
+  `skate3_native_scene_state.h`.
+- **Problem:** `g_miss_queue.erase(g_miss_queue.begin())` costs time in
+  proportion to the queue length (capped at 65536) while `g_prewarm_mutex` is
+  held, so a large streaming burst could stall the workers. `g_dyn_jobs` has
+  the same pattern.
+- **Also:** the null base/device re-queue in `PrewarmWorkerLoop` is close to
+  dead code (the workers start only once `g_r.device` is set, and nothing
+  resets it). It never decrements retries, so if it ever ran for long it
+  would spin entries every 100 ms per worker without end.
+- **Fix:** both queues are `std::deque` now, popped with `pop_front()` (same
+  FIFO order, caps and priority). The null base/device check runs before
+  dequeuing and just waits 100 ms, so nothing is popped, re-queued or
+  dropped.
 
 ### KI-72: The Defender trojan trigger shipped on main
 
