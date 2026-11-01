@@ -107,6 +107,9 @@ REXCVAR_DEFINE_BOOL(skate3_ultrawide_widen_game_frustum, true, "Skate 3",
 REXCVAR_DEFINE_DOUBLE(skate3_ultrawide_target_aspect, 0.0, "Skate 3",
                       "Ultrawide display aspect (0 = derive from the host display at boot)")
     .range(0.0, 8.0);
+REXCVAR_DEFINE_BOOL(skate3_native_debug_open_at_boot, false, "Skate 3",
+                    "DEBUG: open the F12 native render debug dialog at startup (for "
+                    "unattended test runs that can't send the F12 key)");
 
 namespace {
 
@@ -467,10 +470,13 @@ std::filesystem::path InstalledMarketplaceHeaderPath(const std::filesystem::path
 
 bool IsInstalledMarketplaceContent(const std::filesystem::path& content_root, uint32_t title_id,
                                    const std::filesystem::path& package_path) {
+  // error_code overloads: an unreadable install path counts as "not
+  // installed" instead of throwing out of the startup DLC scan (KI-19).
+  std::error_code ec;
   return std::filesystem::is_directory(
-             InstalledMarketplaceContentPath(content_root, title_id, package_path)) &&
+             InstalledMarketplaceContentPath(content_root, title_id, package_path), ec) &&
          std::filesystem::is_regular_file(
-             InstalledMarketplaceHeaderPath(content_root, title_id, package_path));
+             InstalledMarketplaceHeaderPath(content_root, title_id, package_path), ec);
 }
 
 std::vector<std::filesystem::path> DiscoverDlcSourceDirectories(
@@ -666,7 +672,7 @@ std::optional<rex::PathConfig> Skate3BaseApp::OnFinalizePaths(
   }
 #endif
 #if defined(_WIN32)
-  // Window/taskbar + Explorer icon sourced from the user's OWN game art at
+  // Window/taskbar icon sourced from the user's OWN game art at
   // runtime (game/nxeart); the shipped exe and the repo carry no EA
   // artwork (see skate3_win_icon.h). Game files are guaranteed installed by
   // this point on Windows (the install wizards above run blocking).
@@ -682,7 +688,7 @@ void Skate3BaseApp::OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) {
   // skate3_native_render_mode_indicator shows it live). Input-transparent,
   // so it never affects cursor or focus handling.
   render_mode_indicator_ = std::make_unique<skate3::RenderModeIndicator>(drawer);
-  rex::ui::RegisterBind("bind_skate3_menu", "Escape", "Skate 3 settings", [this] {
+  RegisterAppBind("bind_skate3_menu", "Escape", "Skate 3 settings", [this] {
     // Escape backs out of the settings screen level by level (rows ->
     // category rail -> closed); when the screen is closed it opens it.
     if (simple_settings_dialog_ && simple_settings_dialog_->visible()) {
@@ -691,7 +697,7 @@ void Skate3BaseApp::OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) {
       ToggleSimpleSettings();
     }
   });
-  rex::ui::RegisterBind("bind_skate3_menu_alt", "F1", "Skate 3 settings alternate", [this] {
+  RegisterAppBind("bind_skate3_menu_alt", "F1", "Skate 3 settings alternate", [this] {
     ToggleSimpleSettings();
   });
   // Remembered handle: the F11 paired A/B parity capture (native + emulated
@@ -699,56 +705,63 @@ void Skate3BaseApp::OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) {
   // skate3_native_render.cpp) needs the window without an app pointer.
   skate3::screenshot::RememberWindow(window() ? window()->GetNativeWindowHandle()
                                               : nullptr);
-  rex::ui::RegisterBind("bind_skate3_screenshot", "F6",
-                        "Save screenshot to screenshots/", [this] {
-                          skate3::screenshot::CaptureWindow(
-                              window() ? window()->GetNativeWindowHandle() : nullptr);
-                        });
-  rex::ui::RegisterBind("bind_skate3_native_render_toggle", "F5",
-                        "Toggle native/emulated renderer", [] {
-                          skate3::native_scene::ToggleSceneEnabled();
-                        });
-  rex::ui::RegisterBind("bind_skate3_save_draw_fingerprints", "F8",
-                        "Save draw fingerprint log", [this] {
-                          SaveDrawFingerprintLog();
-                        });
-  rex::ui::RegisterBind("bind_skate3_log_debug_marker", "F9",
-                        "Write debug marker to log", [this] {
-                          LogDebugMarker();
-                        });
-  rex::ui::RegisterBind("bind_skate3_log_user_marker", "F10",
-                        "Write marker to log", [this] {
-                          LogUserMarker();
-                        });
-  rex::ui::RegisterBind("bind_skate3_native_debug", "F12",
-                        "Native render debug menu", [this] {
-                          ToggleNativeDebug();
-                        });
-  rex::ui::RegisterBind("bind_skate3_showcase", "Ctrl+Shift+B",
-                        "Graphics build-up showcase", [] {
-                          // A capture/recording tool, not a player feature:
-                          // like the capture hotkeys, the bind is inert
-                          // unless the diagnostics cvar opts in (the F12
-                          // Showcase Setup window still starts runs).
-                          if (!REXCVAR_GET(skate3_native_render_capture_hotkeys)) {
-                            return;
-                          }
-                          REXCVAR_SET(
-                              skate3_native_render_scene_showcase,
-                              !REXCVAR_GET(skate3_native_render_scene_showcase));
-                        });
-  rex::ui::RegisterBind("bind_skate3_freecam", "End",
-                        "Drone camera (free fly)", [] {
-                          REXCVAR_SET(
-                              skate3_native_render_scene_freecam,
-                              !REXCVAR_GET(skate3_native_render_scene_freecam));
-                        });
+  RegisterAppBind("bind_skate3_screenshot", "F6",
+                  "Save screenshot to screenshots/", [this] {
+                    skate3::screenshot::CaptureWindow(
+                        window() ? window()->GetNativeWindowHandle() : nullptr);
+                  });
+  RegisterAppBind("bind_skate3_native_render_toggle", "F5",
+                  "Toggle native/emulated renderer", [] {
+                    skate3::native_scene::ToggleSceneEnabled();
+                  });
+  RegisterAppBind("bind_skate3_save_draw_fingerprints", "F8",
+                  "Save draw fingerprint log", [this] {
+                    SaveDrawFingerprintLog();
+                  });
+  RegisterAppBind("bind_skate3_log_debug_marker", "F9",
+                  "Write debug marker to log", [this] {
+                    LogDebugMarker();
+                  });
+  RegisterAppBind("bind_skate3_log_user_marker", "F10",
+                  "Write marker to log", [this] {
+                    LogUserMarker();
+                  });
+  RegisterAppBind("bind_skate3_native_debug", "F12",
+                  "Native render debug menu", [this] {
+                    ToggleNativeDebug();
+                  });
+  RegisterAppBind("bind_skate3_showcase", "Ctrl+Shift+B",
+                  "Graphics build-up showcase", [] {
+                    // A capture/recording tool, not a player feature:
+                    // like the capture hotkeys, the bind is inert
+                    // unless the diagnostics cvar opts in (the F12
+                    // Showcase Setup window still starts runs).
+                    if (!REXCVAR_GET(skate3_native_render_capture_hotkeys)) {
+                      return;
+                    }
+                    REXCVAR_SET(
+                        skate3_native_render_scene_showcase,
+                        !REXCVAR_GET(skate3_native_render_scene_showcase));
+                  });
+  RegisterAppBind("bind_skate3_freecam", "End",
+                  "Drone camera (free fly)", [] {
+                    REXCVAR_SET(
+                        skate3_native_render_scene_freecam,
+                        !REXCVAR_GET(skate3_native_render_scene_freecam));
+                  });
 }
 
 void Skate3BaseApp::OnPostSetup() {
   skate3::shader_disasm::RunIfRequested();
   ApplySelectedProfileToRuntime();
   ApplyGameplayCursorMode();
+  if (REXCVAR_GET(skate3_native_debug_open_at_boot)) {
+    app_context().CallInUIThreadDeferred([this]() {
+      if (!native_debug_dialog_ || !native_debug_dialog_->visible()) {
+        ToggleNativeDebug();
+      }
+    });
+  }
   // The drone/free-fly cam sources its keyboard/mouse from the app's window
   // event mirror on every platform (the raw GetAsyncKeyState path in
   // UpdateFreecam is Windows-only). Independent of the MnK controller-emulation
@@ -826,6 +839,9 @@ void Skate3BaseApp::OnPostSetup() {
     });
   });
   skate3::options_menu::SetRestartCallback([this]() { RestartGame(); });
+  // Quit Game: the overlay's Close Game exit (CloseGame defers to the UI
+  // thread, so it runs after the settings save queued just before it).
+  skate3::options_menu::SetQuitCallback([this]() { CloseGame(); });
   skate3::options_menu::Install();
   if (dispatcher->InitializeFunctionTable(eawebkit_PPCImageConfig.code_base,
                                           eawebkit_PPCImageConfig.code_size,
@@ -846,17 +862,33 @@ void Skate3BaseApp::OnShutdown() {
   if (window()) {
     skate3::freecam_input::Unregister(window());
   }
-  rex::ui::UnregisterBind("bind_skate3_menu");
-  rex::ui::UnregisterBind("bind_skate3_menu_alt");
-  rex::ui::UnregisterBind("bind_skate3_save_draw_fingerprints");
-  rex::ui::UnregisterBind("bind_skate3_log_debug_marker");
-  rex::ui::UnregisterBind("bind_skate3_log_user_marker");
-  rex::ui::UnregisterBind("bind_skate3_native_debug");
+  // Before the dialogs below are reset: the bind callbacks capture `this` and
+  // reach into them. The SDK's bind registry is a process-lifetime static and
+  // ReXApp::OnDestroy calls OnShutdown before tearing down its own overlays,
+  // so unregistering here is always inside the registry's lifetime.
+  UnregisterAppBinds();
   ApplyGameplayCursorMode();
   skate3::native_scene::SetSettingsMenuBlur(false);
   simple_settings_dialog_.reset();
   native_debug_dialog_.reset();
   render_mode_indicator_.reset();
+}
+
+void Skate3BaseApp::RegisterAppBind(std::string_view name, std::string_view default_key,
+                                    std::string_view description,
+                                    std::function<void()> callback) {
+  rex::ui::RegisterBind(name, default_key, description, std::move(callback));
+  registered_binds_.emplace_back(name);
+}
+
+void Skate3BaseApp::UnregisterAppBinds() {
+  // Reverse registration order. UnregisterBind nulls the callback (the entry
+  // and its cvar stay registered), so a key event after this is a no-op.
+  for (auto it = registered_binds_.rbegin(); it != registered_binds_.rend(); ++it) {
+    rex::ui::UnregisterBind(*it);
+  }
+  REXLOG_INFO("Skate 3 shutdown: unregistered {} key binds", registered_binds_.size());
+  registered_binds_.clear();
 }
 
 void Skate3BaseApp::ToggleSimpleSettings() {
@@ -916,26 +948,7 @@ void Skate3BaseApp::ToggleSimpleSettings() {
     ApplyGameplayCursorMode();
     skate3::ResumeMaxQuality();
   };
-  auto close_game = [this]() {
-#if REX_PLATFORM_MAC || REX_PLATFORM_LINUX
-    std::thread([]() {
-      std::this_thread::sleep_for(std::chrono::seconds(10));
-      REXLOG_WARN("Close Game watchdog exiting process after shutdown timeout");
-      std::_Exit(EXIT_SUCCESS);
-    }).detach();
-#endif
-    app_context().CallInUIThreadDeferred([this]() {
-#if REX_PLATFORM_MAC
-      app_context().QuitFromUIThread();
-#else
-      if (window()) {
-        window()->RequestClose();
-      } else {
-        app_context().QuitFromUIThread();
-      }
-#endif
-    });
-  };
+  auto close_game = [this]() { CloseGame(); };
   auto restart_game = [this]() { RestartGame(); };
   // Raw pad poll for menu navigation: bypasses the is_active gate that
   // zeroes guest-facing input while the settings screen is open.
@@ -991,6 +1004,27 @@ void Skate3BaseApp::ApplyGameplayCursorMode() {
   if (window()) {
     window()->SetCursorVisibility(rex::ui::Window::CursorVisibility::kAutoHidden);
   }
+}
+
+void Skate3BaseApp::CloseGame() {
+#if REX_PLATFORM_MAC || REX_PLATFORM_LINUX
+  std::thread([]() {
+    std::this_thread::sleep_for(std::chrono::seconds(10));
+    REXLOG_WARN("Close Game watchdog exiting process after shutdown timeout");
+    std::_Exit(EXIT_SUCCESS);
+  }).detach();
+#endif
+  app_context().CallInUIThreadDeferred([this]() {
+#if REX_PLATFORM_MAC
+    app_context().QuitFromUIThread();
+#else
+    if (window()) {
+      window()->RequestClose();
+    } else {
+      app_context().QuitFromUIThread();
+    }
+#endif
+  });
 }
 
 void Skate3BaseApp::RestartGame() {
@@ -1134,9 +1168,21 @@ std::set<std::string> Skate3BaseApp::DiscoverRecipeAliases(
   static constexpr std::string_view kPrefix = "data/content/recipe/";
 
   std::set<std::string> aliases;
+  // Step with increment(ec): operator++ throws on a mid-scan error (KI-19).
   std::error_code ec;
-  for (const auto& entry : std::filesystem::directory_iterator(content_root, ec)) {
-    if (ec || !entry.is_regular_file() || entry.path().extension() != ".big") {
+  std::filesystem::directory_iterator it(content_root, ec);
+  for (;; it.increment(ec)) {
+    if (ec) {
+      REXLOG_WARN("Could not scan Skate 3 content folder {} for recipe aliases: {}",
+                  content_root.string(), ec.message());
+      break;
+    }
+    if (it == std::filesystem::directory_iterator()) {
+      break;
+    }
+    const auto& entry = *it;
+    std::error_code entry_ec;
+    if (!entry.is_regular_file(entry_ec) || entry.path().extension() != ".big") {
       continue;
     }
 
@@ -1167,6 +1213,42 @@ std::set<std::string> Skate3BaseApp::DiscoverRecipeAliases(
   return aliases;
 }
 
+namespace {
+
+// The overlay folders sit deep under the user-data root, for example
+// <cache_root>\vfs_big_directory_aliases\data\state\livingworldentities\pedestrian\plugin.
+// Without the \\?\ prefix, CreateDirectoryW stops at 248 characters and the
+// SDK's FindFirstFileW / GetFileAttributesExW calls at MAX_PATH, so a long
+// AppData or portable path silently lost an alias (KI-46). The prefix lifts
+// both limits without the OS LongPathsEnabled policy. The SDK host device
+// hands its paths straight to the wide Win32 calls and builds every entry
+// path from the device root, so the whole overlay tree inherits the prefix.
+// The prefix turns off Win32 path parsing, so the path must be absolute and
+// normalized (backslashes only, no "." or ".." parts).
+std::filesystem::path ToExtendedLengthPath(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  std::error_code ec;
+  const auto absolute = std::filesystem::absolute(path, ec);
+  if (ec) {
+    return path;
+  }
+  const std::wstring text = absolute.lexically_normal().native();
+  if (text.rfind(LR"(\\?\)", 0) == 0 || text.rfind(LR"(\\.\)", 0) == 0 ||
+      text.rfind(LR"(\??\)", 0) == 0) {
+    return text;
+  }
+  if (text.rfind(LR"(\\)", 0) == 0) {
+    // UNC share: \\server\share\... becomes \\?\UNC\server\share\...
+    return std::wstring(LR"(\\?\UNC\)") + text.substr(2);
+  }
+  return std::wstring(LR"(\\?\)") + text;
+#else
+  return path;
+#endif
+}
+
+}  // namespace
+
 bool Skate3BaseApp::CreateOverlayDirectory(
     const std::filesystem::path& overlay_root, std::string_view guest_path) {
   std::filesystem::path path = overlay_root;
@@ -1185,7 +1267,14 @@ bool Skate3BaseApp::CreateOverlayDirectory(
 
   std::error_code ec;
   std::filesystem::create_directories(path, ec);
-  return !ec;
+  if (ec) {
+    REXLOG_WARN("Skate 3 BIG-directory VFS overlay: failed to create alias {} at {} ({} chars): "
+                "{} (error {})",
+                guest_path, rex::path_to_utf8(path), path.native().size(), ec.message(),
+                ec.value());
+    return false;
+  }
+  return true;
 }
 
 void Skate3BaseApp::InstallRecipeOverlay() {
@@ -1194,9 +1283,15 @@ void Skate3BaseApp::InstallRecipeOverlay() {
   }
 
   const auto content_root = runtime()->game_data_root() / "data" / "content";
-  if (!std::filesystem::exists(content_root)) {
-    REXLOG_WARN("Skipping Skate 3 recipe VFS overlay; content root not found: {}",
-                content_root.string());
+  std::error_code exists_ec;
+  if (!std::filesystem::exists(content_root, exists_ec)) {
+    if (exists_ec) {
+      REXLOG_WARN("Skipping Skate 3 recipe VFS overlay; could not access content root {}: {}",
+                  content_root.string(), exists_ec.message());
+    } else {
+      REXLOG_WARN("Skipping Skate 3 recipe VFS overlay; content root not found: {}",
+                  content_root.string());
+    }
     return;
   }
 
@@ -1207,12 +1302,12 @@ void Skate3BaseApp::InstallRecipeOverlay() {
     return;
   }
 
-  const auto overlay_root = cache_root() / "vfs_big_directory_aliases";
+  const auto overlay_root = ToExtendedLengthPath(cache_root() / "vfs_big_directory_aliases");
   std::error_code ec;
   std::filesystem::create_directories(overlay_root, ec);
   if (ec) {
-    REXLOG_WARN("Skipping Skate 3 BIG-directory VFS overlay; failed to create {}: {}",
-                overlay_root.string(), ec.message());
+    REXLOG_WARN("Skipping Skate 3 BIG-directory VFS overlay; failed to create {}: {} (error {})",
+                rex::path_to_utf8(overlay_root), ec.message(), ec.value());
     return;
   }
 
@@ -1236,18 +1331,24 @@ void Skate3BaseApp::InstallRecipeOverlay() {
       ++created;
     }
   }
+  const size_t failed = aliases.size() + std::size(kBigDirectoryAliases) - created;
 
   if (!created) {
     REXLOG_WARN("Skipping Skate 3 BIG-directory VFS overlay; failed to create alias directories in {}",
-                overlay_root.string());
+                rex::path_to_utf8(overlay_root));
     return;
+  }
+  if (failed) {
+    REXLOG_WARN("Skate 3 BIG-directory VFS overlay: {} of {} alias directories could not be "
+                "created in {}; see the warnings above",
+                failed, created + failed, rex::path_to_utf8(overlay_root));
   }
 
   auto device = std::make_unique<rex::filesystem::HostPathDevice>(
       "skate3bigdirs:", overlay_root, true);
   if (!device->Initialize()) {
     REXLOG_WARN("Skipping Skate 3 BIG-directory VFS overlay; failed to initialize host device for {}",
-                overlay_root.string());
+                rex::path_to_utf8(overlay_root));
     return;
   }
 
@@ -1311,18 +1412,55 @@ void Skate3BaseApp::InstallDlcPackages() {
   size_t skipped_count = 0;
 
   for (const auto& source_dir : source_dirs) {
-    if (!std::filesystem::is_directory(source_dir)) {
+    std::error_code status_ec;
+    const auto source_status = std::filesystem::status(source_dir, status_ec);
+    if (!std::filesystem::is_directory(source_status)) {
+      if (status_ec && source_status.type() != std::filesystem::file_type::not_found) {
+        REXLOG_WARN("Could not access Skate 3 DLC folder {}: {}", source_dir.string(),
+                    status_ec.message());
+      }
       continue;
     }
 
+    // Step with increment(ec): operator++ throws on a mid-scan error, e.g. a
+    // subfolder without read access, which used to end startup (KI-19). The
+    // standard library ends the iteration on any such error, so each
+    // subfolder is probed before recursing and an unreadable one is skipped
+    // with a warning instead of losing the rest of the folder.
     std::error_code iter_ec;
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(source_dir, iter_ec)) {
+    std::filesystem::recursive_directory_iterator it(source_dir, iter_ec);
+    for (;; it.increment(iter_ec)) {
       if (iter_ec) {
         REXLOG_WARN("Could not scan Skate 3 DLC folder {}: {}", source_dir.string(),
                     iter_ec.message());
         break;
       }
-      if (!entry.is_regular_file()) {
+      if (it == std::filesystem::recursive_directory_iterator()) {
+        break;
+      }
+      const auto& entry = *it;
+
+      std::error_code entry_ec;
+      if (it.recursion_pending() && entry.is_directory(entry_ec) &&
+          !entry.is_symlink(entry_ec)) {
+        std::error_code probe_ec;
+        std::filesystem::directory_iterator probe(entry.path(), probe_ec);
+        if (probe_ec) {
+          REXLOG_WARN("Skipping unreadable Skate 3 DLC subfolder {}: {}", entry.path().string(),
+                      probe_ec.message());
+          it.disable_recursion_pending();
+        }
+        continue;
+      }
+
+      entry_ec.clear();
+      const bool is_file = entry.is_regular_file(entry_ec);
+      if (entry_ec) {
+        REXLOG_WARN("Skipping unreadable Skate 3 DLC candidate {}: {}", entry.path().string(),
+                    entry_ec.message());
+        continue;
+      }
+      if (!is_file) {
         continue;
       }
 
@@ -1330,7 +1468,11 @@ void Skate3BaseApp::InstallDlcPackages() {
       std::error_code canonical_ec;
       auto package_key = std::filesystem::weakly_canonical(package_path, canonical_ec).string();
       if (canonical_ec) {
-        package_key = std::filesystem::absolute(package_path).string();
+        std::error_code absolute_ec;
+        package_key = std::filesystem::absolute(package_path, absolute_ec).string();
+        if (absolute_ec) {
+          package_key = package_path.string();
+        }
       }
       if (!seen_packages.insert(package_key).second) {
         continue;
