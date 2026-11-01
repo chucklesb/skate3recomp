@@ -846,19 +846,6 @@ repro steps; the entry says where the problem is and how it would show.
   document `GuestReadableApprox`. Optionally, pass the captured segment to
   the filter.
 
-### KI-89: Raw writes through just-read pointers in the auto-exposure hook
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, guest memory safety
-- **Tracking:** none yet. Found while fixing KI-64 (#48).
-- **Where:** `sub_827F0D00` in `src/skate3_native_render.cpp`:
-  `REX_STORE_U32(inst_a + 48 / inst_b + 56)`.
-- **Problem:** these write through pointers read a moment earlier. A stale
-  instance pointer would be a write fault, or would corrupt guest memory if
-  the page has been reused.
-- **Next step:** low priority. Check `inst_a` / `inst_b` against a guarded read
-  of their vtable or type before the stores.
-
 ### KI-90: The bone-ring comment blames the wrong cause for hair shimmer
 
 - **Status:** open · **Severity:** low
@@ -1188,6 +1175,25 @@ repro steps; the entry says where the problem is and how it would show.
   dropped.
 
 ## Resolved
+
+### KI-89: Raw writes through just-read pointers in the auto-exposure hook
+
+- **Status:** fix in review in rubensteezy/skate3recomp#63, tested unattended / awaiting in-game test · **Severity:** low
+- **Area:** native renderer, guest memory safety
+- **Tracking:** rubensteezy/skate3recomp#63. Found while fixing KI-64 (#48).
+- **Where:** `sub_827F0D00` in `src/skate3_native_render.cpp`:
+  `REX_STORE_U32(inst_a + 48 / inst_b + 56)`.
+- **Problem:** these write through pointers read a moment earlier. A stale
+  instance pointer would be a write fault, or would corrupt guest memory if
+  the page has been reused.
+- **Fix:** before each store, the hook does a guarded read of the instance head
+  and the target word (a failure is logged through the KI-64 skip counter as
+  "auto-exposure pin output a/b"). It then applies the game's own gate: the
+  big-endian u16 at `inst+2` must be greater than 2. Otherwise the game writes
+  to a static scratch at 0x820D0850, and the hook now skips the store too.
+- **Unattended test (2026-11-01):** D3D12 demo path, about 9000 frames. The
+  gate passed on every logged call (inst_a count 7, inst_b count 4). There were
+  no skip warnings, and "auto-exposure re-pinned" logs as before.
 
 ### KI-72: The Defender trojan trigger shipped on main
 
