@@ -45,12 +45,26 @@ REXCVAR_DEFINE_INT32(skate3_demo_path_input_settle_ms, 2500, "Skate 3",
 REXCVAR_DEFINE_INT32(skate3_demo_path_input_delay_ms, 600, "Skate 3",
                      "Demo path: delay between injected gameplay inputs")
     .range(50, 10000);
+REXCVAR_DEFINE_STRING(skate3_demo_path_boot_screen_inputs, "", "Skate 3",
+                      "Demo path: extra per-screen boot inputs, 'id:token|token...' entries "
+                      "separated by commas (FE screen ids as logged by 'FE stack'). While that "
+                      "screen is on top of the FE stack before gameplay, the tokens are tapped "
+                      "in turn instead of the dialog A auto-tap. Added to the built-in rules");
 REXCVAR_DEFINE_BOOL(skate3_intro_movie_skip, true, "Skate 3",
                     "Skip the frontend intro movie when A or Start is pressed "
                     "(the default keyboard bindings make that Space and Enter)");
 
+namespace skate3::native_scene {
+// Fault-guarded guest read (defined in skate3_native_scene.cpp).
+bool GuestTryLoadU32(uint8_t* base, uint32_t addr, uint32_t* out);
+}  // namespace skate3::native_scene
+
 namespace skate3::demo_path {
 namespace {
+
+// Guest memory base, captured by the boot-flow hooks for the boot-assist
+// worker's FE stack reads.
+std::atomic<uint8_t*> g_guest_base{nullptr};
 
 constexpr uint32_t kFrontEndStatePressStart = 24;
 constexpr uint32_t kFrontEndStateLanguageSelect = 47;
@@ -174,6 +188,7 @@ extern "C" REX_FUNC(Skate3DemoPath_SetFrontEndStateHook) {
 }
 
 extern "C" REX_FUNC(Skate3DemoPath_LanguageSelectStateHook) {
+  g_guest_base.store(base, std::memory_order_relaxed);
   PollF10Marker();
   LogBootFlowEventChange(g_last_language_select_event, "BootFlow LanguageSelectState",
                          ctx.r4.u32, ctx.r3.u32);
@@ -185,6 +200,7 @@ extern "C" REX_FUNC(Skate3DemoPath_LanguageSelectStateHook) {
 }
 
 extern "C" REX_FUNC(Skate3DemoPath_ShowPressStartModeHook) {
+  g_guest_base.store(base, std::memory_order_relaxed);
   PollF10Marker();
   LogBootFlowEventChange(g_last_press_start_event, "BootFlow ShowPressStartMode", ctx.r4.u32,
                          ctx.r3.u32);
@@ -389,6 +405,169 @@ void StartGameplayInputWorkerIfNeeded() {
   std::atexit(JoinGameplayInputWorker);
 }
 
+// ---- Boot assist: per-screen inputs between press-start and gameplay ------
+//
+// Between the press-start screen and gameplay the kernel's XGI handler keeps
+// a dialog A auto-tap running (every 0x8001 = 0 presence update re-arms it),
+// which accepts the boot dialogs of an existing profile. Screens that A alone
+// can't leave get their own inputs here: a worker polls the FrontEndManager
+// push-state stack and, while a screen with a rule is on top, turns the A
+// auto-tap off and taps the rule's buttons in turn.
+
+constexpr uint32_t kFrontEndManagerPtr = 0x830CFE14;  // TU3 image
+constexpr uint32_t kFeStackBeginOffset = 0x210;
+constexpr uint32_t kFeStackEndOffset = 0x214;
+constexpr uint32_t kFeStackRecordSize = 20;  // screen id at +0
+constexpr size_t kFeStackMaxDepth = 16;
+
+struct BootScreenRule {
+  uint32_t screen_id;
+  std::vector<uint16_t> buttons;
+};
+
+// Reads the FE push-state stack (bottom first). False if unreadable.
+bool ReadFrontEndStack(uint8_t* base, std::vector<uint32_t>* ids) {
+  ids->clear();
+  uint32_t mgr = 0, beg = 0, end = 0;
+  if (!skate3::native_scene::GuestTryLoadU32(base, kFrontEndManagerPtr, &mgr) || mgr == 0 ||
+      !skate3::native_scene::GuestTryLoadU32(base, mgr + kFeStackBeginOffset, &beg) ||
+      !skate3::native_scene::GuestTryLoadU32(base, mgr + kFeStackEndOffset, &end) ||
+      beg > end || end - beg > kFeStackRecordSize * kFeStackMaxDepth) {
+    return false;
+  }
+  for (uint32_t addr = beg; addr + kFeStackRecordSize <= end; addr += kFeStackRecordSize) {
+    uint32_t id = 0;
+    if (!skate3::native_scene::GuestTryLoadU32(base, addr, &id)) {
+      return false;
+    }
+    ids->push_back(id);
+  }
+  return true;
+}
+
+std::string FormatIds(const std::vector<uint32_t>& ids) {
+  std::string out;
+  for (size_t i = 0; i < ids.size(); ++i) {
+    if (i) {
+      out += ',';
+    }
+    out += std::to_string(ids[i]);
+  }
+  return out;
+}
+
+// Parses "id:token|token,id:token". Returns false (and logs) on a bad entry.
+bool ParseBootScreenRules(const std::string& spec, std::vector<BootScreenRule>* rules) {
+  std::stringstream stream(spec);
+  std::string entry;
+  while (std::getline(stream, entry, ',')) {
+    size_t begin = entry.find_first_not_of(" \t");
+    if (begin == std::string::npos) {
+      continue;
+    }
+    entry = entry.substr(begin, entry.find_last_not_of(" \t") - begin + 1);
+    const size_t colon = entry.find(':');
+    if (colon == std::string::npos || colon == 0) {
+      REXLOG_WARN("Skate 3 demo path: bad boot screen rule '{}'", entry);
+      return false;
+    }
+    BootScreenRule rule{static_cast<uint32_t>(std::strtoul(entry.c_str(), nullptr, 10)), {}};
+    std::stringstream tokens(entry.substr(colon + 1));
+    std::string name;
+    while (std::getline(tokens, name, '|')) {
+      const GameplayInputToken* token = FindGameplayInputToken(name);
+      if (!token || token->buttons == 0) {
+        REXLOG_WARN("Skate 3 demo path: bad token '{}' in boot screen rule '{}'", name, entry);
+        return false;
+      }
+      rule.buttons.push_back(token->buttons);
+    }
+    if (rule.buttons.empty()) {
+      REXLOG_WARN("Skate 3 demo path: empty boot screen rule '{}'", entry);
+      return false;
+    }
+    rules->push_back(std::move(rule));
+  }
+  return true;
+}
+
+std::atomic<bool> g_boot_assist_quit{false};
+std::thread g_boot_assist;
+
+void JoinBootAssist() {
+  g_boot_assist_quit.store(true, std::memory_order_relaxed);
+  if (g_boot_assist.joinable()) {
+    g_boot_assist.join();
+  }
+}
+
+void StartBootAssistIfNeeded() {
+  if (!AutomationEnabled()) {
+    return;
+  }
+  std::vector<BootScreenRule> rules;
+  if (!ParseBootScreenRules(REXCVAR_GET(skate3_demo_path_boot_screen_inputs), &rules)) {
+    rules.clear();
+  }
+  g_boot_assist = std::thread([rules = std::move(rules)] {
+    constexpr auto kPoll = std::chrono::milliseconds(50);
+    constexpr int64_t kTapIntervalMs = 1000;
+    std::vector<uint32_t> ids;
+    std::vector<uint32_t> last_ids;
+    bool have_last = false;
+    const BootScreenRule* active = nullptr;
+    size_t next_button = 0;
+    auto next_tap = std::chrono::steady_clock::now();
+    while (!g_boot_assist_quit.load(std::memory_order_relaxed)) {
+      if (rex::kernel::guest_presence::GameplayContextValue() == 1) {
+        return;  // the XGI handler ends all boot automation at gameplay
+      }
+      uint8_t* base = g_guest_base.load(std::memory_order_relaxed);
+      if (base != nullptr && ReadFrontEndStack(base, &ids)) {
+        if (!have_last || ids != last_ids) {
+          REXLOG_INFO("Skate 3 demo path: FE stack [{}]", FormatIds(ids));
+          last_ids = ids;
+          have_last = true;
+        }
+        const BootScreenRule* rule = nullptr;
+        if (!ids.empty()) {
+          for (const BootScreenRule& candidate : rules) {
+            if (candidate.screen_id == ids.back()) {
+              rule = &candidate;
+              break;
+            }
+          }
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (rule != active) {
+          if (rule) {
+            REXLOG_INFO("Skate 3 demo path: boot screen {} has its own inputs", rule->screen_id);
+            next_button = 0;
+            next_tap = now + std::chrono::milliseconds(kTapIntervalMs);
+          } else if (rex::kernel::guest_presence::GameplayContextValue() == 0) {
+            rex::kernel::xam::SetSyntheticAutoTap(rex::input::X_INPUT_GAMEPAD_A, true);
+          }
+          active = rule;
+        }
+        if (active) {
+          // The XGI handler re-arms the A auto-tap on every presence update.
+          rex::kernel::xam::SetSyntheticAutoTap(rex::input::X_INPUT_GAMEPAD_A, false);
+          if (now >= next_tap) {
+            const uint16_t buttons = active->buttons[next_button];
+            next_button = (next_button + 1) % active->buttons.size();
+            rex::kernel::xam::QueueSyntheticInput(buttons, 8);
+            REXLOG_INFO("Skate 3 demo path: boot screen {} tap 0x{:04X}", active->screen_id,
+                        buttons);
+            next_tap = now + std::chrono::milliseconds(kTapIntervalMs);
+          }
+        }
+      }
+      std::this_thread::sleep_for(kPoll);
+    }
+  });
+  std::atexit(JoinBootAssist);
+}
+
 }  // namespace
 
 void InstallHooks(rex::runtime::FunctionDispatcher* dispatcher) {
@@ -402,6 +581,7 @@ void InstallHooks(rex::runtime::FunctionDispatcher* dispatcher) {
   dispatcher->SetFunction(0x82639400, &Skate3DemoPath_LanguageSelectUpdateHook);
   REXLOG_INFO("Skate 3 demo path: frontend probe hooks installed");
   StartGameplayInputWorkerIfNeeded();
+  StartBootAssistIfNeeded();
 }
 
 rex::input::InputSystem* GetUiInputSystem() {
