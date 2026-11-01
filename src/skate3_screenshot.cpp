@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
@@ -60,20 +61,42 @@ bool PngEncoderClsid(CLSID* clsid) {
   return false;
 }
 
+// Last timestamp handed out, in ms since the epoch. Strictly increasing, so
+// two captures in the same millisecond (or after a clock step back) still
+// get distinct names, in capture order. After such a burst or step back the
+// stamp leads the clock until the clock catches up.
+std::atomic<int64_t> g_last_shot_ms{0};
+
+int64_t NextShotMs() {
+  const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::system_clock::now().time_since_epoch())
+                             .count();
+  int64_t last = g_last_shot_ms.load(std::memory_order_relaxed);
+  int64_t next;
+  do {
+    next = std::max(now_ms, last + 1);
+  } while (!g_last_shot_ms.compare_exchange_weak(last, next, std::memory_order_relaxed));
+  return next;
+}
+
+// shot_YYYYMMDD_HHMMSS_mmm[_tag].png: the millisecond field keeps names
+// unique within a second and, being fixed width, keeps name order equal to
+// capture order.
 std::filesystem::path ScreenshotPath(const char* tag) {
-  const auto now = std::chrono::system_clock::now();
-  const std::time_t t = std::chrono::system_clock::to_time_t(now);
+  const int64_t ms = NextShotMs();
+  const std::time_t t = static_cast<std::time_t>(ms / 1000);
+  const int millis = static_cast<int>(ms % 1000);
   std::tm tm{};
   localtime_s(&tm, &t);
   char name[96];
   if (tag != nullptr && tag[0] != '\0') {
-    std::snprintf(name, sizeof(name), "shot_%04d%02d%02d_%02d%02d%02d_%s.png",
+    std::snprintf(name, sizeof(name), "shot_%04d%02d%02d_%02d%02d%02d_%03d_%s.png",
                   tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min,
-                  tm.tm_sec, tag);
+                  tm.tm_sec, millis, tag);
   } else {
-    std::snprintf(name, sizeof(name), "shot_%04d%02d%02d_%02d%02d%02d.png",
+    std::snprintf(name, sizeof(name), "shot_%04d%02d%02d_%02d%02d%02d_%03d.png",
                   tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min,
-                  tm.tm_sec);
+                  tm.tm_sec, millis);
   }
   return std::filesystem::absolute(std::filesystem::path("screenshots") / name);
 }

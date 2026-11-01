@@ -47,6 +47,8 @@ REXCVAR_DECLARE(bool, skate3_native_render_scene_tex_confirm);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_mesh_revalidate);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_tex_mips);
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_debug);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_upload_ring_gate);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_upload_ring_log);
 // Image quality (hot; skate3_native_scene.cpp).
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_msaa);
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_shadow_tile);
@@ -113,36 +115,49 @@ REXCVAR_DECLARE(double, skate3_draw_distance_stream_probe);
 namespace skate3 {
 namespace {
 
-bool CvarCheckbox(const char* label, bool value, const char* help = nullptr) {
-  bool v = value;
-  ImGui::Checkbox(label, &v);
+// Cvar widgets. Each one takes the cvar's storage (REXCVAR_GET(name)) and
+// writes it only when ImGui reports an edit, returning true on that frame.
+// They used to return the read-back value for an unconditional REXCVAR_SET
+// every UI frame (KI-30), which raced every other writer of the same cvar:
+// the render thread's SdkCvarOverride (KI-11) forcing a value for a menu or
+// photo window, the options menu and settings overlay, MAX QUALITY and the
+// hotkeys. A write landing between the dialog's read and its write-back was
+// silently undone, either the forced value (the window lost its override)
+// or the restored user value (the forced one stuck, and a later settings
+// save could persist it). Every control below follows the same rule.
+bool CvarCheckbox(const char* label, bool& cvar, const char* help = nullptr) {
+  bool v = cvar;
+  const bool changed = ImGui::Checkbox(label, &v);
+  if (changed) {
+    cvar = v;
+  }
   if (help != nullptr && ImGui::IsItemHovered()) {
     ImGui::SetTooltip("%s", help);
   }
-  return v;
+  return changed;
 }
 
 // Float-cvar slider (the cvars are hot-reload doubles; edits apply next
-// frame). Returns the possibly-changed value for REXCVAR_SET.
-double CvarSlider(const char* label, double value, float lo, float hi,
-                  const char* fmt, const char* help = nullptr) {
-  float v = float(value);
-  if (ImGui::SliderFloat(label, &v, lo, hi, fmt)) {
-    value = double(v);
+// frame, live while dragging).
+bool CvarSlider(const char* label, double& cvar, float lo, float hi, const char* fmt,
+                const char* help = nullptr) {
+  float v = float(cvar);
+  const bool changed = ImGui::SliderFloat(label, &v, lo, hi, fmt);
+  if (changed) {
+    cvar = double(v);
   }
   if (help != nullptr && (ImGui::IsItemHovered() || ImGui::IsItemActive())) {
     ImGui::SetTooltip("%s", help);
   }
-  return value;
+  return changed;
 }
 
 // Combo over a fixed value list (for quality steps that are not a
-// continuum: sample counts, map sizes). Returns the possibly-changed value;
-// out-of-list current values snap to the nearest entry's label without
-// writing back until the user picks one.
-int32_t ValueCombo(const char* label, int32_t value, const int32_t* values,
-                   const char* const* labels, int count,
-                   const char* help = nullptr) {
+// continuum: sample counts, map sizes). Out-of-list current values snap to
+// the nearest entry's label without writing back until the user picks one.
+bool ValueCombo(const char* label, int32_t& cvar, const int32_t* values, const char* const* labels,
+                int count, const char* help = nullptr) {
+  const int32_t value = cvar;
   int index = 0;
   for (int i = 1; i < count; ++i) {
     const int32_t di = values[i] > value ? values[i] - value : value - values[i];
@@ -152,13 +167,14 @@ int32_t ValueCombo(const char* label, int32_t value, const int32_t* values,
       index = i;
     }
   }
-  if (ImGui::Combo(label, &index, labels, count)) {
-    value = values[index];
+  const bool changed = ImGui::Combo(label, &index, labels, count);
+  if (changed) {
+    cvar = values[index];
   }
   if (help != nullptr && ImGui::IsItemHovered()) {
     ImGui::SetTooltip("%s", help);
   }
-  return value;
+  return changed;
 }
 
 // ---- Max quality (photo mode) ---------------------------------------------
@@ -442,16 +458,10 @@ void DrawFreecamControls() {
         "While flying, keep keyboard/controller input away from the game so\n"
         "the fly keys don't also steer the skater.");
   }
-  REXCVAR_SET(skate3_native_render_scene_freecam_speed,
-              CvarSlider("fly speed (m/s)",
-                         REXCVAR_GET(skate3_native_render_scene_freecam_speed),
-                         0.5f, 60.0f, "%.1f",
-                         "Base fly speed; Shift = 4x, Ctrl = 0.2x"));
-  REXCVAR_SET(
-      skate3_native_render_scene_freecam_look_speed,
-      CvarSlider("look speed (deg/s)",
-                 REXCVAR_GET(skate3_native_render_scene_freecam_look_speed),
-                 20.0f, 240.0f, "%.0f", "Arrow-key look rate"));
+  CvarSlider("fly speed (m/s)", REXCVAR_GET(skate3_native_render_scene_freecam_speed), 0.5f, 60.0f,
+             "%.1f", "Base fly speed; Shift = 4x, Ctrl = 0.2x");
+  CvarSlider("look speed (deg/s)", REXCVAR_GET(skate3_native_render_scene_freecam_look_speed),
+             20.0f, 240.0f, "%.0f", "Arrow-key look rate");
   ImGui::TextDisabled(
       "WASD fly, E/Space up, Q/C down, arrows or right-mouse drag look,\n"
       "Z/X zoom, Shift fast, Ctrl slow.");
@@ -469,16 +479,10 @@ void DrawShowcaseSetupWindow(bool* p_open) {
                     ImVec2(-1.0f, 0.0f))) {
     REXCVAR_SET(skate3_native_render_scene_showcase, !running);
   }
-  REXCVAR_SET(skate3_native_render_scene_showcase_hold,
-              CvarSlider("stage hold (s)",
-                         REXCVAR_GET(skate3_native_render_scene_showcase_hold),
-                         0.0f, 10.0f, "%.1f",
-                         "Seconds each layer holds fullscreen between wipes"));
-  REXCVAR_SET(skate3_native_render_scene_showcase_wipe,
-              CvarSlider("wipe duration (s)",
-                         REXCVAR_GET(skate3_native_render_scene_showcase_wipe),
-                         0.5f, 10.0f, "%.1f",
-                         "Seconds each split wipe takes to cross the screen"));
+  CvarSlider("stage hold (s)", REXCVAR_GET(skate3_native_render_scene_showcase_hold), 0.0f, 10.0f,
+             "%.1f", "Seconds each layer holds fullscreen between wipes");
+  CvarSlider("wipe duration (s)", REXCVAR_GET(skate3_native_render_scene_showcase_wipe), 0.5f,
+             10.0f, "%.1f", "Seconds each split wipe takes to cross the screen");
 
   ImGui::SeparatorText("Layer order");
   ImGui::TextDisabled(
@@ -612,331 +616,235 @@ void DrawImageQualitySection() {
   {
     static const int32_t kMsaaValues[] = {1, 2, 4, 8};
     static const char* const kMsaaLabels[] = {"Off (1x)", "2x", "4x", "8x"};
-    REXCVAR_SET(skate3_native_render_scene_msaa,
-                ValueCombo("MSAA", REXCVAR_GET(skate3_native_render_scene_msaa),
-                           kMsaaValues, kMsaaLabels, 4,
-                           "Scene multisampling. Distant thin geometry "
-                           "(railings, wires) shimmers without it. Applies "
-                           "live (pipeline rebuild)."));
+    ValueCombo("MSAA", REXCVAR_GET(skate3_native_render_scene_msaa), kMsaaValues, kMsaaLabels, 4,
+               "Scene multisampling. Distant thin geometry "
+               "(railings, wires) shimmers without it. Applies "
+               "live (pipeline rebuild).");
   }
   {
     static const int32_t kTileValues[] = {0, 512, 1024, 2048, 4096};
     static const char* const kTileLabels[] = {"Auto (render scale)", "512",
                                               "1024", "2048", "4096"};
-    REXCVAR_SET(
-        skate3_native_render_scene_shadow_tile,
-        ValueCombo("shadow tile size",
-                   REXCVAR_GET(skate3_native_render_scene_shadow_tile),
-                   kTileValues, kTileLabels, 5,
-                   "Dynamic-shadow cascade tile resolution. Auto matches the "
-                   "emulated renderer's crispness at the current Resolution "
-                   "Scale; 512 = the softer original-console look."));
+    ValueCombo("shadow tile size", REXCVAR_GET(skate3_native_render_scene_shadow_tile), kTileValues,
+               kTileLabels, 5,
+               "Dynamic-shadow cascade tile resolution. Auto matches the "
+               "emulated renderer's crispness at the current Resolution "
+               "Scale; 512 = the softer original-console look.");
   }
   {
     static const int32_t kStaticValues[] = {1024, 2048, 4096, 8192};
     static const char* const kStaticLabels[] = {"1024", "2048", "4096",
                                                 "8192"};
-    REXCVAR_SET(
-        skate3_native_render_scene_shadow_static_size,
-        ValueCombo("static sun map size",
-                   REXCVAR_GET(skate3_native_render_scene_shadow_static_size),
-                   kStaticValues, kStaticLabels, 4,
-                   "Static sun-shadow map resolution per cascade tile (the "
-                   "map is three tiles)."));
+    ValueCombo("static sun map size", REXCVAR_GET(skate3_native_render_scene_shadow_static_size),
+               kStaticValues, kStaticLabels, 4,
+               "Static sun-shadow map resolution per cascade tile (the "
+               "map is three tiles).");
   }
-  REXCVAR_SET(skate3_native_render_scene_ssao_full_res,
-              CvarCheckbox("Full-res SSAO",
-                           REXCVAR_GET(skate3_native_render_scene_ssao_full_res),
-                           "Evaluate SSAO at full output resolution instead "
-                           "of half. ~4x the AO cost for slightly sharper "
-                           "contact shadows."));
-  REXCVAR_SET(skate3_native_render_scene_hdr_packed,
-              CvarCheckbox("Packed HDR format (R11G11B10)",
-                           REXCVAR_GET(skate3_native_render_scene_hdr_packed),
-                           "Halves scene-pass color bandwidth vs RGBA16F at "
-                           "slightly lower precision in very dark "
-                           "gradients."));
+  CvarCheckbox("Full-res SSAO", REXCVAR_GET(skate3_native_render_scene_ssao_full_res),
+               "Evaluate SSAO at full output resolution instead "
+               "of half. ~4x the AO cost for slightly sharper "
+               "contact shadows.");
+  CvarCheckbox("Packed HDR format (R11G11B10)", REXCVAR_GET(skate3_native_render_scene_hdr_packed),
+               "Halves scene-pass color bandwidth vs RGBA16F at "
+               "slightly lower precision in very dark "
+               "gradients.");
 }
 
 void DrawLightingPostSection() {
-  REXCVAR_SET(skate3_native_render_scene_hdr,
-              CvarCheckbox("HDR intermediate",
-                           REXCVAR_GET(skate3_native_render_scene_hdr),
-                           "Float scene target + single host tonemap, the basis for "
-                           "bloom, shafts and haze. Off = the classic in-material "
-                           "tonemap (parity A/B)."));
-  REXCVAR_SET(skate3_native_render_scene_bloom,
-              CvarCheckbox("Bloom",
-                           REXCVAR_GET(skate3_native_render_scene_bloom),
-                           "Downsample/upsample pyramid driven by pre-tonemap "
-                           "brightness (night lamps, neon, sun glare)."));
-  REXCVAR_SET(skate3_native_render_scene_bloom_threshold,
-              CvarSlider("bloom threshold",
-                         REXCVAR_GET(skate3_native_render_scene_bloom_threshold),
-                         0.0f, 1.5f, "%.2f",
-                         "Pre-tonemap onset (1.0 = the tone curve's saturation "
-                         "point). Below ~0.7 the sunlit day frame starts feeding "
-                         "the pyramid and veils in glow."));
-  REXCVAR_SET(skate3_native_render_scene_bloom_knee,
-              CvarSlider("bloom knee",
-                         REXCVAR_GET(skate3_native_render_scene_bloom_knee),
-                         0.0f, 0.5f, "%.2f"));
-  REXCVAR_SET(skate3_native_render_scene_bloom_intensity,
-              CvarSlider("bloom intensity",
-                         REXCVAR_GET(skate3_native_render_scene_bloom_intensity),
-                         0.0f, 0.3f, "%.3f"));
-  REXCVAR_SET(skate3_native_render_scene_shafts,
-              CvarCheckbox("Volumetric sun shafts",
-                           REXCVAR_GET(skate3_native_render_scene_shafts),
-                           "Shadow-marched air: shadowed portions of each view ray "
-                           "proportionally dim the light seen through them (dark "
-                           "crepuscular shafts from buildings/trees/underpasses). "
-                           "Fully lit air is untouched."));
-  REXCVAR_SET(skate3_native_render_scene_shafts_intensity,
-              CvarSlider("shaft intensity",
-                         REXCVAR_GET(skate3_native_render_scene_shafts_intensity),
-                         0.0f, 1.5f, "%.2f",
-                         "How strongly fully shadowed air dims the scene behind it "
-                         "(scaled by the forward-scatter phase toward the sun)."));
-  REXCVAR_SET(skate3_native_render_scene_shafts_reach,
-              CvarSlider("shaft reach (world units)",
-                         REXCVAR_GET(skate3_native_render_scene_shafts_reach),
-                         5.0f, 300.0f, "%.0f",
-                         "How far in front of the camera the air is sampled. Longer "
-                         "= more distant shadow volumes, coarser sampling."));
+  CvarCheckbox("HDR intermediate", REXCVAR_GET(skate3_native_render_scene_hdr),
+               "Float scene target + single host tonemap, the basis for "
+               "bloom, shafts and haze. Off = the classic in-material "
+               "tonemap (parity A/B).");
+  CvarCheckbox("Bloom", REXCVAR_GET(skate3_native_render_scene_bloom),
+               "Downsample/upsample pyramid driven by pre-tonemap "
+               "brightness (night lamps, neon, sun glare).");
+  CvarSlider("bloom threshold", REXCVAR_GET(skate3_native_render_scene_bloom_threshold), 0.0f, 1.5f,
+             "%.2f",
+             "Pre-tonemap onset (1.0 = the tone curve's saturation "
+             "point). Below ~0.7 the sunlit day frame starts feeding "
+             "the pyramid and veils in glow.");
+  CvarSlider("bloom knee", REXCVAR_GET(skate3_native_render_scene_bloom_knee), 0.0f, 0.5f, "%.2f");
+  CvarSlider("bloom intensity", REXCVAR_GET(skate3_native_render_scene_bloom_intensity), 0.0f, 0.3f,
+             "%.3f");
+  CvarCheckbox("Volumetric sun shafts", REXCVAR_GET(skate3_native_render_scene_shafts),
+               "Shadow-marched air: shadowed portions of each view ray "
+               "proportionally dim the light seen through them (dark "
+               "crepuscular shafts from buildings/trees/underpasses). "
+               "Fully lit air is untouched.");
+  CvarSlider("shaft intensity", REXCVAR_GET(skate3_native_render_scene_shafts_intensity), 0.0f,
+             1.5f, "%.2f",
+             "How strongly fully shadowed air dims the scene behind it "
+             "(scaled by the forward-scatter phase toward the sun).");
+  CvarSlider("shaft reach (world units)", REXCVAR_GET(skate3_native_render_scene_shafts_reach),
+             5.0f, 300.0f, "%.0f",
+             "How far in front of the camera the air is sampled. Longer "
+             "= more distant shadow volumes, coarser sampling.");
   {
     int steps = REXCVAR_GET(skate3_native_render_scene_shafts_steps);
     if (ImGui::SliderInt("shaft steps", &steps, 8, 64)) {
       REXCVAR_SET(skate3_native_render_scene_shafts_steps, steps);
     }
   }
-  REXCVAR_SET(skate3_native_render_scene_haze,
-              CvarCheckbox("Directional haze",
-                           REXCVAR_GET(skate3_native_render_scene_haze),
-                           "Fog-tinted sun scattering added with view distance, "
-                           "strongest toward the sun. Off by default: the game's "
-                           "authored sky/fog already carry the base atmosphere."));
-  REXCVAR_SET(skate3_native_render_scene_haze_intensity,
-              CvarSlider("haze intensity",
-                         REXCVAR_GET(skate3_native_render_scene_haze_intensity),
-                         0.0f, 0.5f, "%.3f"));
-  REXCVAR_SET(skate3_native_render_scene_haze_density,
-              CvarSlider("haze density (1/unit)",
-                         REXCVAR_GET(skate3_native_render_scene_haze_density),
-                         0.0f, 0.02f, "%.4f",
-                         "How quickly the scattering saturates with distance "
-                         "(0.005 reaches ~63% at 200 units)."));
-  REXCVAR_SET(skate3_native_render_scene_ssao,
-              CvarCheckbox("SSAO (GTAO)",
-                           REXCVAR_GET(skate3_native_render_scene_ssao),
-                           "Screen-space ambient occlusion: contact shading under "
-                           "ledges, rails, vehicles, feet."));
-  REXCVAR_SET(skate3_native_render_scene_ssao_radius,
-              CvarSlider("SSAO radius (world units)",
-                         REXCVAR_GET(skate3_native_render_scene_ssao_radius),
-                         0.1f, 4.0f, "%.2f"));
-  REXCVAR_SET(skate3_native_render_scene_ssao_intensity,
-              CvarSlider("SSAO intensity",
-                         REXCVAR_GET(skate3_native_render_scene_ssao_intensity),
-                         0.0f, 3.0f, "%.2f",
-                         "Exponent on the visibility term (1 = physical, >1 = "
-                         "accentuated)."));
-  REXCVAR_SET(skate3_native_render_scene_ssao_luma_protect,
-              CvarSlider("SSAO sunlit protection",
-                         REXCVAR_GET(skate3_native_render_scene_ssao_luma_protect),
-                         0.0f, 3.0f, "%.2f",
-                         "How strongly bright (sun-lit) surfaces resist SSAO "
-                         "darkening (ambient-only approximation)."));
+  CvarCheckbox("Directional haze", REXCVAR_GET(skate3_native_render_scene_haze),
+               "Fog-tinted sun scattering added with view distance, "
+               "strongest toward the sun. Off by default: the game's "
+               "authored sky/fog already carry the base atmosphere.");
+  CvarSlider("haze intensity", REXCVAR_GET(skate3_native_render_scene_haze_intensity), 0.0f, 0.5f,
+             "%.3f");
+  CvarSlider("haze density (1/unit)", REXCVAR_GET(skate3_native_render_scene_haze_density), 0.0f,
+             0.02f, "%.4f",
+             "How quickly the scattering saturates with distance "
+             "(0.005 reaches ~63% at 200 units).");
+  CvarCheckbox("SSAO (GTAO)", REXCVAR_GET(skate3_native_render_scene_ssao),
+               "Screen-space ambient occlusion: contact shading under "
+               "ledges, rails, vehicles, feet.");
+  CvarSlider("SSAO radius (world units)", REXCVAR_GET(skate3_native_render_scene_ssao_radius), 0.1f,
+             4.0f, "%.2f");
+  CvarSlider("SSAO intensity", REXCVAR_GET(skate3_native_render_scene_ssao_intensity), 0.0f, 3.0f,
+             "%.2f",
+             "Exponent on the visibility term (1 = physical, >1 = "
+             "accentuated).");
+  CvarSlider("SSAO sunlit protection", REXCVAR_GET(skate3_native_render_scene_ssao_luma_protect),
+             0.0f, 3.0f, "%.2f",
+             "How strongly bright (sun-lit) surfaces resist SSAO "
+             "darkening (ambient-only approximation).");
   {
-    const bool was_on = REXCVAR_GET(skate3_native_render_scene_sun_override);
-    const bool now_on =
-        CvarCheckbox("Sun override (lighting lab)", was_on,
-                     "Move the sun with the sliders below: dynamic CSM "
-                     "shadows, the static world-shadow map, shadow receivers "
-                     "and the volumetric shafts all follow. Baked lightmap "
-                     "shade and the sky dome's painted sun stay put (game "
-                     "content).");
-    if (now_on && !was_on) {
-      // Seed the sliders from the captured sun so enabling the override
-      // starts at the true position instead of jumping.
-      float sun[3];
-      skate3::native_scene::GetCapturedSunDir(sun);
-      const float kRad = 57.29577951f;
-      REXCVAR_SET(skate3_native_render_scene_sun_azimuth,
-                  double(std::fmod(std::atan2(sun[0], sun[2]) * kRad + 360.0f,
-                                   360.0f)));
-      REXCVAR_SET(
-          skate3_native_render_scene_sun_elevation,
-          double(std::clamp(std::asin(std::clamp(sun[1], -1.0f, 1.0f)) * kRad,
-                            2.0f, 88.0f)));
+    bool on = REXCVAR_GET(skate3_native_render_scene_sun_override);
+    if (ImGui::Checkbox("Sun override (lighting lab)", &on)) {
+      if (on) {
+        // Seed the sliders from the captured sun so enabling the override
+        // starts at the true position instead of jumping.
+        float sun[3];
+        skate3::native_scene::GetCapturedSunDir(sun);
+        const float kRad = 57.29577951f;
+        REXCVAR_SET(skate3_native_render_scene_sun_azimuth,
+                    double(std::fmod(std::atan2(sun[0], sun[2]) * kRad + 360.0f, 360.0f)));
+        REXCVAR_SET(
+            skate3_native_render_scene_sun_elevation,
+            double(std::clamp(std::asin(std::clamp(sun[1], -1.0f, 1.0f)) * kRad, 2.0f, 88.0f)));
+      }
+      REXCVAR_SET(skate3_native_render_scene_sun_override, on);
     }
-    REXCVAR_SET(skate3_native_render_scene_sun_override, now_on);
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(
+          "Move the sun with the sliders below: dynamic CSM "
+          "shadows, the static world-shadow map, shadow receivers "
+          "and the volumetric shafts all follow. Baked lightmap "
+          "shade and the sky dome's painted sun stay put (game "
+          "content).");
+    }
   }
-  REXCVAR_SET(skate3_native_render_scene_sun_azimuth,
-              CvarSlider("sun azimuth (deg)",
-                         REXCVAR_GET(skate3_native_render_scene_sun_azimuth),
-                         0.0f, 360.0f, "%.0f"));
-  REXCVAR_SET(skate3_native_render_scene_sun_elevation,
-              CvarSlider("sun elevation (deg)",
-                         REXCVAR_GET(skate3_native_render_scene_sun_elevation),
-                         2.0f, 88.0f, "%.0f",
-                         "Low elevations give long shadows and the most visible "
-                         "volumetric shafts."));
+  CvarSlider("sun azimuth (deg)", REXCVAR_GET(skate3_native_render_scene_sun_azimuth), 0.0f, 360.0f,
+             "%.0f");
+  CvarSlider("sun elevation (deg)", REXCVAR_GET(skate3_native_render_scene_sun_elevation), 2.0f,
+             88.0f, "%.0f",
+             "Low elevations give long shadows and the most visible "
+             "volumetric shafts.");
 }
 
 void DrawShadowsSection() {
-  REXCVAR_SET(skate3_native_render_scene_shadows,
-              CvarCheckbox("Dynamic shadows",
-                           REXCVAR_GET(skate3_native_render_scene_shadows),
-                           "Native CSM: skater/NPC/prop shadows onto the world"));
-  REXCVAR_SET(skate3_native_render_scene_experimental_static_shadows,
-              CvarCheckbox(
-                  "Static sun shadows (experimental)",
-                  REXCVAR_GET(skate3_native_render_scene_experimental_static_shadows),
-                  "Native static sun-shadow map: buildings, trees, rails and "
-                  "placed props cast live shadows from a dedicated "
-                  "sun-aligned depth map: shade on characters and props, "
-                  "and shadows that follow a moved sun. The game's own "
-                  "dynamic shadow cascades are untouched. Shelved (KI-5): reads as "
-                  "odd extra shadows in places; off by default."));
-  REXCVAR_SET(
-      skate3_native_render_scene_shadow_static_strength,
-      CvarSlider(
-          "static shadow strength",
-          REXCVAR_GET(skate3_native_render_scene_shadow_static_strength),
-          0.0f, 1.0f, "%.2f",
-          "How dark static-geometry shadows get (characters/props always "
-          "cast at full strength). Lower if live static shade fights the "
-          "baked lighting."));
-  REXCVAR_SET(
-      skate3_native_render_scene_shadow_static_radius,
-      CvarSlider(
-          "static shadow radius (m)",
-          REXCVAR_GET(skate3_native_render_scene_shadow_static_radius), 40.0f,
-          600.0f, "%.0f",
-          "Far-cascade half-extent of the static sun-shadow map (mid and "
-          "inner cascades cover 1/2 and 1/6 at 2x/6x density). Larger "
-          "reaches farther at lower far-cascade density."));
-  REXCVAR_SET(skate3_native_render_scene_experimental_pcss,
-              CvarCheckbox(
-                  "Soft shadows (PCSS, experimental)",
-                  REXCVAR_GET(skate3_native_render_scene_experimental_pcss),
-                  "Contact-hardening filter: crisp where a shadow touches "
-                  "its caster, progressively softer with caster height. Shelved "
-                  "(KI-5); off = the game-exact atlas sampling."));
-  REXCVAR_SET(skate3_native_render_scene_shadow_pcss_sun_deg,
-              CvarSlider(
-                  "sun angular size (deg)",
-                  REXCVAR_GET(skate3_native_render_scene_shadow_pcss_sun_deg),
-                  0.1f, 8.0f, "%.1f",
-                  "Penumbra growth per meter of caster height (the real sun "
-                  "is ~0.53 deg)."));
-  REXCVAR_SET(skate3_native_render_scene_shadow_pcss_max_m,
-              CvarSlider(
-                  "max penumbra (m)",
-                  REXCVAR_GET(skate3_native_render_scene_shadow_pcss_max_m),
-                  0.05f, 5.0f, "%.2f"));
-  REXCVAR_SET(
-      skate3_native_render_scene_shadow_static_bias,
-      CvarSlider("static receive bias (m)",
-                 REXCVAR_GET(skate3_native_render_scene_shadow_static_bias),
-                 0.0f, 0.5f, "%.3f",
-                 "Raise if static geometry shows self-shadow acne (stipple "
-                 "on sunlit ground/walls); lower if static shadows visibly "
-                 "detach from their casters."));
+  CvarCheckbox("Dynamic shadows", REXCVAR_GET(skate3_native_render_scene_shadows),
+               "Native CSM: skater/NPC/prop shadows onto the world");
+  CvarCheckbox("Static sun shadows (experimental)",
+               REXCVAR_GET(skate3_native_render_scene_experimental_static_shadows),
+               "Native static sun-shadow map: buildings, trees, rails and "
+               "placed props cast live shadows from a dedicated "
+               "sun-aligned depth map: shade on characters and props, "
+               "and shadows that follow a moved sun. The game's own "
+               "dynamic shadow cascades are untouched. Shelved (KI-5): reads as "
+               "odd extra shadows in places; off by default.");
+  CvarSlider("static shadow strength",
+             REXCVAR_GET(skate3_native_render_scene_shadow_static_strength), 0.0f, 1.0f, "%.2f",
+             "How dark static-geometry shadows get (characters/props always "
+             "cast at full strength). Lower if live static shade fights the "
+             "baked lighting.");
+  CvarSlider("static shadow radius (m)",
+             REXCVAR_GET(skate3_native_render_scene_shadow_static_radius), 40.0f, 600.0f, "%.0f",
+             "Far-cascade half-extent of the static sun-shadow map (mid and "
+             "inner cascades cover 1/2 and 1/6 at 2x/6x density). Larger "
+             "reaches farther at lower far-cascade density.");
+  CvarCheckbox("Soft shadows (PCSS, experimental)",
+               REXCVAR_GET(skate3_native_render_scene_experimental_pcss),
+               "Contact-hardening filter: crisp where a shadow touches "
+               "its caster, progressively softer with caster height. Shelved "
+               "(KI-5); off = the game-exact atlas sampling.");
+  CvarSlider("sun angular size (deg)", REXCVAR_GET(skate3_native_render_scene_shadow_pcss_sun_deg),
+             0.1f, 8.0f, "%.1f",
+             "Penumbra growth per meter of caster height (the real sun "
+             "is ~0.53 deg).");
+  CvarSlider("max penumbra (m)", REXCVAR_GET(skate3_native_render_scene_shadow_pcss_max_m), 0.05f,
+             5.0f, "%.2f");
+  CvarSlider("static receive bias (m)", REXCVAR_GET(skate3_native_render_scene_shadow_static_bias),
+             0.0f, 0.5f, "%.3f",
+             "Raise if static geometry shows self-shadow acne (stipple "
+             "on sunlit ground/walls); lower if static shadows visibly "
+             "detach from their casters.");
 }
 
 void DrawWorldShadingSection() {
-  REXCVAR_SET(skate3_native_render_scene_lightmaps,
-              CvarCheckbox("Lightmaps", REXCVAR_GET(skate3_native_render_scene_lightmaps),
-                           "Baked lighting atlas sample x2 on world materials"));
-  REXCVAR_SET(skate3_native_render_scene_macro,
-              CvarCheckbox("Macro overlay", REXCVAR_GET(skate3_native_render_scene_macro),
-                           "Large-scale grime/crack multiply (ground/wall weathering)"));
-  REXCVAR_SET(skate3_native_render_scene_decals,
-              CvarCheckbox("Decal art composite",
-                           REXCVAR_GET(skate3_native_render_scene_decals),
-                           "Graffiti/paint art lerped over environment.decal sections"));
-  REXCVAR_SET(skate3_native_render_scene_transparents,
-              CvarCheckbox("Transparent sub-pass",
-                           REXCVAR_GET(skate3_native_render_scene_transparents),
-                           "environment.transparent items (mist sheets, glass, fences)"));
-  REXCVAR_SET(skate3_native_render_scene_backface_cull,
-              CvarCheckbox("Backface cull (game parity)",
-                           REXCVAR_GET(skate3_native_render_scene_backface_cull),
-                           "World env materials cull FRONT like the game's material "
-                           "XMLs; off = legacy cull-none (shows interior faces)"));
+  CvarCheckbox("Lightmaps", REXCVAR_GET(skate3_native_render_scene_lightmaps),
+               "Baked lighting atlas sample x2 on world materials");
+  CvarCheckbox("Macro overlay", REXCVAR_GET(skate3_native_render_scene_macro),
+               "Large-scale grime/crack multiply (ground/wall weathering)");
+  CvarCheckbox("Decal art composite", REXCVAR_GET(skate3_native_render_scene_decals),
+               "Graffiti/paint art lerped over environment.decal sections");
+  CvarCheckbox("Transparent sub-pass", REXCVAR_GET(skate3_native_render_scene_transparents),
+               "environment.transparent items (mist sheets, glass, fences)");
+  CvarCheckbox("Backface cull (game parity)", REXCVAR_GET(skate3_native_render_scene_backface_cull),
+               "World env materials cull FRONT like the game's material "
+               "XMLs; off = legacy cull-none (shows interior faces)");
 }
 
 void DrawSceneContentSection() {
-  REXCVAR_SET(skate3_native_render_scene_world_items,
-              CvarCheckbox("World items", REXCVAR_GET(skate3_native_render_scene_world_items),
-                           "Static geometry from the world sort lists"));
-  REXCVAR_SET(skate3_native_render_scene_dynamic_items,
-              CvarCheckbox("Dynamic items",
-                           REXCVAR_GET(skate3_native_render_scene_dynamic_items),
-                           "Characters, movable props, cloth (RenderMesh/world-path "
-                           "captures)"));
-  REXCVAR_SET(
-      skate3_native_render_scene_lw_fade,
-      CvarCheckbox("LW entity fade (store)",
-                   REXCVAR_GET(skate3_native_render_scene_lw_fade),
-                   "Serve NPC/traffic fade alpha from the LivingWorld entity "
-                   "itself (per-instance store) instead of the per-draw "
-                   "captured constant row; fixes opaque mid-air spawns, "
-                   "missing fade-ins and clone alpha blinks"));
-  REXCVAR_SET(
-      skate3_native_render_scene_lw_identity,
-      CvarCheckbox("LW entity identity (pose rings)",
-                   REXCVAR_GET(skate3_native_render_scene_lw_identity),
-                   "Key NPC/traffic pose-smoothing rings by the game's own "
-                   "per-instance MeshContext instead of (mesh, occurrence) "
-                   "pairing; clone reshuffles can no longer mispair "
-                   "(teleport/slide class)"));
-  REXCVAR_SET(
-      skate3_native_render_scene_lw_gap_fill,
-      CvarCheckbox("LW gap fill (1-2 frame republish)",
-                   REXCVAR_GET(skate3_native_render_scene_lw_gap_fill),
-                   "Republish a live NPC whose MeshContext skipped this "
-                   "frame's submit records (the 1-3 frame publish GAPs that "
-                   "read as blinks/small teleports)"));
-  REXCVAR_SET(
-      skate3_native_render_scene_lw_palette,
-      CvarCheckbox("LW authoritative caster palettes",
-                   REXCVAR_GET(skate3_native_render_scene_lw_palette),
-                   "Replace GUESSED ortho caster-bank palettes on "
-                   "edge-of-view vehicles with the entity's own packed "
-                   "palette from the pack writer (the mangle/transform "
-                   "class)"));
-  REXCVAR_SET(skate3_native_render_scene_quadlists,
-              CvarCheckbox("Quad-list particles",
-                           REXCVAR_GET(skate3_native_render_scene_quadlists),
-                           "Non-indexed quad-list captures (particle systems; off by "
-                           "default: render as white squares without sprite textures)"));
-  REXCVAR_SET(
-      skate3_native_render_scene_retain_offscreen,
-      CvarCheckbox("Retain off-screen statics",
-                   REXCVAR_GET(skate3_native_render_scene_retain_offscreen),
-                   "Keep recently seen statics drawn while the game view-culls "
-                   "them: the smoothed render camera trails the guest pose, so "
-                   "without this world geometry visibly tears down right at the "
-                   "screen edges during pans/traversal"));
-  REXCVAR_SET(skate3_native_render_scene_2d,
-              CvarCheckbox("2D / HUD replay", REXCVAR_GET(skate3_native_render_scene_2d),
-                           "APT/Flash HUD + glyph text + SimpleDraw icons"));
-  REXCVAR_SET(skate3_native_render_scene_splines,
-              CvarCheckbox("Neon splines", REXCVAR_GET(skate3_native_render_scene_splines),
-                           "Waypoint arrows / marker beams"));
+  CvarCheckbox("World items", REXCVAR_GET(skate3_native_render_scene_world_items),
+               "Static geometry from the world sort lists");
+  CvarCheckbox("Dynamic items", REXCVAR_GET(skate3_native_render_scene_dynamic_items),
+               "Characters, movable props, cloth (RenderMesh/world-path "
+               "captures)");
+  CvarCheckbox("LW entity fade (store)", REXCVAR_GET(skate3_native_render_scene_lw_fade),
+               "Serve NPC/traffic fade alpha from the LivingWorld entity "
+               "itself (per-instance store) instead of the per-draw "
+               "captured constant row; fixes opaque mid-air spawns, "
+               "missing fade-ins and clone alpha blinks");
+  CvarCheckbox("LW entity identity (pose rings)",
+               REXCVAR_GET(skate3_native_render_scene_lw_identity),
+               "Key NPC/traffic pose-smoothing rings by the game's own "
+               "per-instance MeshContext instead of (mesh, occurrence) "
+               "pairing; clone reshuffles can no longer mispair "
+               "(teleport/slide class)");
+  CvarCheckbox("LW gap fill (1-2 frame republish)",
+               REXCVAR_GET(skate3_native_render_scene_lw_gap_fill),
+               "Republish a live NPC whose MeshContext skipped this "
+               "frame's submit records (the 1-3 frame publish GAPs that "
+               "read as blinks/small teleports)");
+  CvarCheckbox("LW authoritative caster palettes",
+               REXCVAR_GET(skate3_native_render_scene_lw_palette),
+               "Replace GUESSED ortho caster-bank palettes on "
+               "edge-of-view vehicles with the entity's own packed "
+               "palette from the pack writer (the mangle/transform "
+               "class)");
+  CvarCheckbox("Quad-list particles", REXCVAR_GET(skate3_native_render_scene_quadlists),
+               "Non-indexed quad-list captures (particle systems; off by "
+               "default: render as white squares without sprite textures)");
+  CvarCheckbox("Retain off-screen statics",
+               REXCVAR_GET(skate3_native_render_scene_retain_offscreen),
+               "Keep recently seen statics drawn while the game view-culls "
+               "them: the smoothed render camera trails the guest pose, so "
+               "without this world geometry visibly tears down right at the "
+               "screen edges during pans/traversal");
+  CvarCheckbox("2D / HUD replay", REXCVAR_GET(skate3_native_render_scene_2d),
+               "APT/Flash HUD + glyph text + SimpleDraw icons");
+  CvarCheckbox("Neon splines", REXCVAR_GET(skate3_native_render_scene_splines),
+               "Waypoint arrows / marker beams");
 }
 
 void DrawPacingSection() {
-  REXCVAR_SET(skate3_native_render_scene_smooth_camera,
-              CvarCheckbox("Smooth camera + entity poses",
-                           REXCVAR_GET(skate3_native_render_scene_smooth_camera),
-                           "The guest updates its camera/entities on its own ~200 Hz "
-                           "sim tick; raw poses judder at high render rates. Re-times "
-                           "them on the host clock (1 kHz camera sampler + pose "
-                           "interpolation, a few ms of camera latency)."));
+  CvarCheckbox("Smooth camera + entity poses",
+               REXCVAR_GET(skate3_native_render_scene_smooth_camera),
+               "The guest updates its camera/entities on its own ~200 Hz "
+               "sim tick; raw poses judder at high render rates. Re-times "
+               "them on the host clock (1 kHz camera sampler + pose "
+               "interpolation, a few ms of camera latency).");
   {
     float w = float(REXCVAR_GET(skate3_native_render_scene_smooth_camera_filter_ms));
     if (ImGui::SliderFloat("camera filter (ms, 0 = off)", &w, 0.0f, 100.0f, "%.0f")) {
@@ -951,10 +859,8 @@ void DrawPacingSection() {
           "interpolation.");
     }
   }
-  REXCVAR_SET(skate3_native_render_scene_sort_opaque,
-              CvarCheckbox("Front-to-back opaque sort",
-                           REXCVAR_GET(skate3_native_render_scene_sort_opaque),
-                           "Early-z rejects occluded pixels before the material shading"));
+  CvarCheckbox("Front-to-back opaque sort", REXCVAR_GET(skate3_native_render_scene_sort_opaque),
+               "Early-z rejects occluded pixels before the material shading");
   {
     int cap = int(REXCVAR_GET(skate3_guest_fps_cap));
     if (ImGui::InputInt("Guest fps cap (0 = off)", &cap, 10, 30)) {
@@ -990,6 +896,17 @@ void DrawDiagnosticsSection() {
       REXCVAR_SET(skate3_native_render_scene_hdr_debug, dbg);
     }
   }
+
+  ImGui::SeparatorText("Upload rings (KI-16)");
+  CvarCheckbox("Gate ring regions on GPU completion",
+               REXCVAR_GET(skate3_native_render_scene_upload_ring_gate),
+               "On: each bone/UI/constant ring region is handed out only after "
+               "the GPU finished with it (#28). Off: the old frame_number % N "
+               "pick. Toggle to A/B the frame rate.");
+  CvarCheckbox("Log upload ring counters",
+               REXCVAR_GET(skate3_native_render_scene_upload_ring_log),
+               "One 'upload rings:' log line per perf interval: picks per ring, "
+               "fallbacks, frame rate and GPU lag.");
 
   ImGui::SeparatorText("Reflective glass isolation (env fam 5/6/13)");
   {
@@ -1027,14 +944,13 @@ void DrawDiagnosticsSection() {
           "face average).\nOther modes: extra LOD bias added to the "
           "automatic 640p-parity bias.");
     }
-    REXCVAR_SET(skate3_native_render_scene_refl_bias_auto,
-                CvarCheckbox("auto normal tilt (derive from material)",
-                             REXCVAR_GET(skate3_native_render_scene_refl_bias_auto),
-                             "Compute the constant tilt from each material's own "
-                             "detail texture (hardware-exact BC1 decode), the "
-                             "principled source of the hand-tuned reference "
-                             "values. Uncheck to drive the sliders below "
-                             "instead."));
+    CvarCheckbox("auto normal tilt (derive from material)",
+                 REXCVAR_GET(skate3_native_render_scene_refl_bias_auto),
+                 "Compute the constant tilt from each material's own "
+                 "detail texture (hardware-exact BC1 decode), the "
+                 "principled source of the hand-tuned reference "
+                 "values. Uncheck to drive the sliders below "
+                 "instead.");
     float bx = float(REXCVAR_GET(skate3_native_render_scene_refl_bias_x));
     if (ImGui::SliderFloat("normal tilt X (horizontal)", &bx, -0.2f, 0.2f, "%.3f")) {
       REXCVAR_SET(skate3_native_render_scene_refl_bias_x, double(bx));
@@ -1110,29 +1026,20 @@ void DrawDiagnosticsSection() {
 }
 
 void DrawCachesSection() {
-  REXCVAR_SET(
-      skate3_native_render_scene_tex_revalidate,
-      CvarCheckbox("Texture payload revalidation",
-                   REXCVAR_GET(skate3_native_render_scene_tex_revalidate),
-                   "Re-fingerprint cached texture payloads every 16 frames, re-decode "
-                   "on change (added to heal late-composed lightmap pages)"));
-  REXCVAR_SET(
-      skate3_native_render_scene_tex_confirm,
-      CvarCheckbox("Confirm payload changes",
-                   REXCVAR_GET(skate3_native_render_scene_tex_confirm),
-                   "Re-decode only after the same changed payload is sampled on two "
-                   "consecutive polls (rejects mid-stream snapshots: streaming texture "
-                   "flicker)"));
-  REXCVAR_SET(skate3_native_render_scene_mesh_revalidate,
-              CvarCheckbox("Mesh payload revalidation",
-                           REXCVAR_GET(skate3_native_render_scene_mesh_revalidate),
-                           "Re-decode cached meshes when the guest payload fingerprint "
-                           "changes (streaming arena reuse / CPU-animated buffers)"));
-  REXCVAR_SET(skate3_native_render_scene_tex_mips,
-              CvarCheckbox("Texture mip chains",
-                           REXCVAR_GET(skate3_native_render_scene_tex_mips),
-                           "Upload guest mip chains (off = mip 0 only). Flush the "
-                           "texture cache after toggling."));
+  CvarCheckbox("Texture payload revalidation",
+               REXCVAR_GET(skate3_native_render_scene_tex_revalidate),
+               "Re-fingerprint cached texture payloads every 16 frames, re-decode "
+               "on change (added to heal late-composed lightmap pages)");
+  CvarCheckbox("Confirm payload changes", REXCVAR_GET(skate3_native_render_scene_tex_confirm),
+               "Re-decode only after the same changed payload is sampled on two "
+               "consecutive polls (rejects mid-stream snapshots: streaming texture "
+               "flicker)");
+  CvarCheckbox("Mesh payload revalidation", REXCVAR_GET(skate3_native_render_scene_mesh_revalidate),
+               "Re-decode cached meshes when the guest payload fingerprint "
+               "changes (streaming arena reuse / CPU-animated buffers)");
+  CvarCheckbox("Texture mip chains", REXCVAR_GET(skate3_native_render_scene_tex_mips),
+               "Upload guest mip chains (off = mip 0 only). Flush the "
+               "texture cache after toggling.");
   if (ImGui::Button("Flush texture cache")) {
     skate3::native_scene::FlushTextureCache();
   }
@@ -1231,19 +1138,46 @@ void NativeDebugDialog::OnDraw(ImGuiIO& io) {
                        "skate3_native_render hook layer is OFF (boot-time)");
   }
   {
-    const bool v = CvarCheckbox("Native scene renderer (F5)",
-                                REXCVAR_GET(skate3_native_render_scene),
-                                "Full native/emulated switch, same as F5");
-    if (v != REXCVAR_GET(skate3_native_render_scene)) {
+    // Toggles through ToggleSceneEnabled (never a direct write) and only on
+    // a click, so an F5 press between this read and the compare can't be
+    // toggled straight back.
+    bool scene_on = REXCVAR_GET(skate3_native_render_scene);
+    if (ImGui::Checkbox("Native scene renderer (F5)", &scene_on) &&
+        scene_on != REXCVAR_GET(skate3_native_render_scene)) {
       skate3::native_scene::ToggleSceneEnabled();
     }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("Full native/emulated switch, same as F5");
+    }
   }
-  REXCVAR_SET(native_render_suppress_emulated_draws,
-              CvarCheckbox("Suppress emulated draws",
-                           REXCVAR_GET(native_render_suppress_emulated_draws),
-                           "Skip emulated GPU work for framebuffer-sized passes while "
-                           "native output is active (perf). Small-surface passes "
-                           "(lightmap page composition) always run."));
+  {
+    static const char* const kSuppressHelp =
+        "Skip emulated GPU work for framebuffer-sized passes while "
+        "native output is active (perf). Small-surface passes "
+        "(lightmap page composition) always run.";
+    // While a menu or photo window holds the render thread's override on
+    // this cvar (KI-11), the live cvar carries the forced value: show the
+    // user's own setting, which comes back when the window closes, and
+    // lock the box so an edit can't fight the override or be dropped by
+    // its restore.
+    bool user_value = false;
+    if (skate3::native_scene::SuppressEmulatedDrawsOverride(&user_value)) {
+      ImGui::BeginDisabled();
+      ImGui::Checkbox("Suppress emulated draws", &user_value);
+      ImGui::EndDisabled();
+      ImGui::SameLine();
+      ImGui::TextDisabled("(overridden)");
+      if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "%s\n\nA menu or photo window is overriding this right now (the\n"
+            "box shows your setting, which returns when the window closes).",
+            kSuppressHelp);
+      }
+    } else {
+      CvarCheckbox("Suppress emulated draws", REXCVAR_GET(native_render_suppress_emulated_draws),
+                   kSuppressHelp);
+    }
+  }
 
   if (ImGui::CollapsingHeader("Showcase & capture",
                               ImGuiTreeNodeFlags_DefaultOpen)) {
