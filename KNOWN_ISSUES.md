@@ -1192,10 +1192,10 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-40: Photo FX constant slots have no bounds check
 
-- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, untested (build only;
+- **Status:** fix in review in rubensteezy/skate3recomp#65, untested (build only;
   the bound is not reachable today) · **Severity:** low
 - **Area:** native renderer, photo FX
-- **Tracking:** rubensteezy/skate3recomp#PRNUM. Found while fixing KI-16 (#28).
+- **Tracking:** rubensteezy/skate3recomp#65. Found while fixing KI-16 (#28).
 - **Where:** `src/skate3_native_scene_gpu.cpp`, `RenderScene`, the photo FX
   `fill_cb` lambda.
 - **Problem:** `cb_slot_next++` is never checked against
