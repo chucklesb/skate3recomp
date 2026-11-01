@@ -23,6 +23,23 @@ endif()
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Standalone C++ unit tests (tests/CMakeLists.txt). They only need the C++
+# standard library. SKATE3_TESTS_ONLY configures nothing else, so the tests
+# build without the SDK submodule, game data, the title update or codegen
+# output (this is what CI uses).
+option(SKATE3_BUILD_TESTS "Build the standalone C++ unit tests and register them with CTest" OFF)
+option(SKATE3_TESTS_ONLY
+    "Configure only the standalone C++ unit tests (no SDK, game data or codegen needed)"
+    OFF)
+if(SKATE3_BUILD_TESTS OR SKATE3_TESTS_ONLY)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
+if(SKATE3_TESTS_ONLY)
+    message(STATUS "SKATE3_TESTS_ONLY is on: configuring the unit tests only, not the game")
+    return()
+endif()
+
 include(cmake/Skate3Version.cmake)
 
 skate3_resolve_version(SKATE3_FULL_VERSION

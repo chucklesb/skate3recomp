@@ -564,10 +564,13 @@ float CharFadeAlpha(const DrawItem& item);
 
 // True when all 8 corners of the item's world-space bbox fall outside one
 // clip plane of `vp` (row-vector view*proj). `margin` scales the tested
-// frustum: < 1 shrinks it, > 1 widens it. Defined in
-// skate3_native_scene.cpp; consumed by the off-screen retention pass and the
-// per-item profiling attribution.
-bool ItemOutsideFrustum(const DrawItem& it, const float vp[16], float margin);
+// frustum: < 1 shrinks it, > 1 widens it. `hor_scale` (Hor+ ultrawide,
+// <= 1) widens only the left/right planes by 1/hor_scale, for a narrow guest
+// `vp` tested against the wide view. Defined in skate3_native_scene.cpp;
+// consumed by the off-screen retention pass and the per-item profiling
+// attribution.
+bool ItemOutsideFrustum(const DrawItem& it, const float vp[16], float margin,
+                        float hor_scale = 1.0f);
 
 // Occlusion-cull handoff for the guest-side dispatch filter (defined in
 // skate3_native_scene_gpu.cpp): copies the most recent render frame's
@@ -578,6 +581,10 @@ bool CopyOcclusionCulledCtxs(std::vector<uint32_t>& out);
 // Counts sort-list entries the guest-side filter kept away from the guest
 // dispatcher (frame-stats telemetry).
 void AddGuestOcclSkipped(uint32_t n);
+// Counts a hot-path guarded guest read that failed and was skipped (KI-64),
+// with a rate-limited log line naming the site (defined in
+// skate3_native_scene.cpp).
+void NoteGuestReadSkip(const char* site, uint32_t addr);
 
 // Called from the cProcessArenaAsset::RegisterTexture hook: guid -> guest
 // renderengine::Texture object.
@@ -742,6 +749,13 @@ bool SceneFailed();
 // failure can succeed on retry; a persistent one simply re-latches).
 void ResetSceneFailure();
 
+// F12 debug dialog (UI thread): true while a menu or photo window holds the
+// render thread's override on the SDK's native_render_suppress_emulated_draws
+// cvar (SdkCvarOverride, KI-11), so the live cvar may carry the forced value.
+// *user_value then gets the user's own setting, which the window restores
+// when it closes. The dialog shows that value and leaves the cvar alone.
+bool SuppressEmulatedDrawsOverride(bool* user_value);
+
 // Debug-dialog cache flushes (F12 native-render debug menu): retire every
 // cached GPU texture / mesh decode so hot-toggled decode settings (mip
 // chains, revalidation, ...) rebuild immediately.
@@ -756,7 +770,7 @@ void FlushMeshCache();
 void RecordCameraSignal(double seconds);
 
 // F7: dump the rolling per-frame scene-composition ring (one compact
-// signature per item per frame for the last ~900 frames) to
+// signature per item per frame for the last 2400 frames) to
 // logs/scene_ring_<ts>.csv on the render thread's next frame. Diffing the
 // artifact frame against its neighbors names exactly which item appeared /
 // vanished / changed textures during a 1-2 frame flash no capture can catch.

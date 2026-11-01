@@ -43,6 +43,7 @@
 #include "native/skate3_native_guest_read.h"
 #include "native/skate3_native_lw.h"
 #include "native/skate3_native_palette.h"
+#include "native/mesh_decode_validate.h"
 // Offline-compiled SPIR-V for the native shaders (compiled from the HLSL
 // sources with DXC): the Vulkan RHI backend consumes these blobs; the D3D12
 // backend runtime-compiles the embedded HLSL as before.
@@ -89,6 +90,8 @@ REXCVAR_DECLARE(bool, skate3_native_render_scene_mesh_revalidate);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_pause_native);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_perf_log);
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_perf_interval);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_upload_ring_gate);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_upload_ring_log);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_perf_items);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_occlusion_cull);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_photo_display_yield);
@@ -414,6 +417,75 @@ void EvictTexStore(uint64_t frame_number, uint64_t submission) {
   g_store_evicted.fetch_add(n, std::memory_order_relaxed);
 }
 
+// Routing-map pruning (KI-17): tex_routes, tex_sticky, words_sticky and
+// tex_pending_first gain an entry per texture object / draw site ever seen
+// and nothing else removes them. Same idle policy as the store LRU above
+// (wall-clock kTexEvictMinIdleSeconds through the live frame rate, stamped
+// on every use), swept on the store's byte-scan cadence. An idle route or
+// sticky site is dropped only once its words key has no valid decode in
+// the store: with nothing behind it, it serves exactly what a recreated
+// entry would (the hold/sticky paths all require a resident valid entry),
+// so the drop is behavior-neutral. A hard ceiling (kTexRouteMaxIdleSeconds)
+// bounds the rest. Entries used this frame are never candidates, and the
+// age floor sits far past the detail-downgrade hold and the 20-frame
+// first-sight skip window.
+constexpr double kTexRouteMaxIdleSeconds = 300.0;
+std::atomic<uint64_t> g_tex_routing_pruned{0};
+
+void PruneTexRouting(uint64_t frame_number) {
+  static uint64_t s_next_sweep_frame = 0;
+  static uint64_t s_next_log_frame = 0;
+  static uint64_t s_pruned_since_log = 0;
+  if (frame_number < s_next_sweep_frame) {
+    return;
+  }
+  s_next_sweep_frame = frame_number + kStoreByteScanIntervalFrames;
+  const uint64_t hold_floor = 8 * uint64_t(std::max(
+      20, REXCVAR_GET(skate3_native_render_scene_detail_hold)));
+  const uint64_t min_idle = std::max<uint64_t>(
+      hold_floor, uint64_t(g_evict_fps_estimate * kTexEvictMinIdleSeconds));
+  const uint64_t max_idle = std::max<uint64_t>(
+      min_idle, uint64_t(g_evict_fps_estimate * kTexRouteMaxIdleSeconds));
+  const auto stale = [&](uint64_t last_used, uint64_t key) {
+    if (last_used + min_idle >= frame_number) {
+      return false;
+    }
+    if (last_used + max_idle < frame_number) {
+      return true;
+    }
+    const auto it = g_r.tex_store.find(key);
+    return it == g_r.tex_store.end() || !it->second.valid;
+  };
+  size_t pruned = 0;
+  pruned += std::erase_if(g_r.tex_routes, [&](const auto& kv) {
+    return stale(kv.second.last_used_frame, kv.second.key);
+  });
+  pruned += std::erase_if(g_r.tex_sticky, [&](const auto& kv) {
+    return stale(kv.second.last_used_frame, kv.second.words_key);
+  });
+  pruned += std::erase_if(g_r.words_sticky, [&](const auto& kv) {
+    return stale(kv.second.last_used_frame, kv.second.words_key);
+  });
+  pruned += std::erase_if(g_r.tex_pending_first, [&](const auto& kv) {
+    return kv.second.last_used_frame + min_idle < frame_number;
+  });
+  s_pruned_since_log += pruned;
+  g_tex_routing_pruned.fetch_add(pruned, std::memory_order_relaxed);
+  // Once a minute at most, and only when something was pruned: the map
+  // sizes should level off over a long session.
+  if (s_pruned_since_log != 0 && frame_number >= s_next_log_frame) {
+    s_next_log_frame =
+        frame_number + std::max<uint64_t>(60, uint64_t(g_evict_fps_estimate * 60.0));
+    REXLOG_INFO(
+        "native-scene: tex routing pruned {} (routes={} sticky={} "
+        "words_sticky={} pending_first={} store={} min_idle={}f)",
+        s_pruned_since_log, g_r.tex_routes.size(), g_r.tex_sticky.size(),
+        g_r.words_sticky.size(), g_r.tex_pending_first.size(),
+        g_r.tex_store.size(), min_idle);
+    s_pruned_since_log = 0;
+  }
+}
+
 // Mesh cache LRU, same amortized shape: without it every streamed arena's
 // meshes accumulated for the whole session (observed: 61k live buffers
 // after a few minutes of map changes). The wall-clock idle guard keeps the
@@ -647,6 +719,9 @@ std::vector<PrewarmResult> g_prewarm_out;
 // thread re-injects them each frame so retries are frame-paced instead of
 // hot-spinning the workers.
 std::vector<PrewarmEntry> g_prewarm_retry;  // under g_prewarm_out_mutex
+// Draw-path miss retries routed back to g_miss_queue by PrewarmCommit
+// (KI-65): visible content whose first build failed.
+std::atomic<uint64_t> g_prewarm_miss_retries{0};
 
 // Shader sources live in src/native/shaders/*.hlsl; the build embeds them
 // into this generated header (cmake/EmbedShaders.cmake) so the exe stays
@@ -683,6 +758,20 @@ nrhi::Buffer* CreateUploadBuffer(
   desc.heap = nrhi::HeapKind::kUpload;
   desc.bind_class = bind_class;
   return device->CreateBuffer(desc);  // nullptr on failure, like the old helper
+}
+
+// A texture decode whose staging buffer failed to Map(): release the
+// texture and staging buffer the same way the CreateUploadBuffer failure
+// paths do, so the caller can fail the decode (nothing was mapped).
+void ReleaseFailedTextureUpload(nrhi::Device* device, GuestTexture& out) {
+  device->DestroyDeferred(out.upload);
+  out.upload = nullptr;
+  device->DestroyDeferred(out.texture);
+  out.texture = nullptr;
+  static std::atomic<uint32_t> logged{0};
+  if (logged.fetch_add(1, std::memory_order_relaxed) < 8) {
+    REXLOG_WARN("native-scene: texture upload buffer Map failed; decode fails");
+  }
 }
 
 // ---- Dynamic-mesh buffer reuse pool ---------------------------------------
@@ -745,6 +834,34 @@ uint32_t SwapU32(uint32_t v) {
 // nrhi::kRowPitchAlignment = the old D3D12_TEXTURE_DATA_PITCH_ALIGNMENT).
 constexpr uint32_t kUploadPlacementAlignment = 512;
 
+// Rate-limited log for DecodeMesh refusals (malformed layout, Map failure):
+// at most 8 lines per 10 s window, the counters carry the totals. A
+// permanently malformed mesh re-requests its decode whenever it is visible,
+// so an unthrottled log would flood.
+void LogMeshDecodeRefusal(const DrawItem& item, const char* what,
+                          const char* reason, uint64_t total) {
+  static std::atomic<uint32_t> s_logs{0};
+  static std::atomic<int64_t> s_win{0};
+  const int64_t now_s = std::chrono::duration_cast<std::chrono::seconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count();
+  int64_t win = s_win.load(std::memory_order_relaxed);
+  if (now_s - win >= 10 && s_win.compare_exchange_strong(win, now_s)) {
+    s_logs.store(0, std::memory_order_relaxed);
+  }
+  if (s_logs.fetch_add(1, std::memory_order_relaxed) < 8) {
+    REXLOG_WARN(
+        "native-scene: DecodeMesh {} mesh={:08X} ({}): stride={} vb_bytes={} "
+        "ib_count={} pos={}@{} uv={}@{} uv2={}@{} nrm={}@{} tan={}/{}@{}/{} "
+        "skinned={} cloth={} (total {})",
+        what, item.mesh, reason, item.stride, item.vb_bytes, item.ib_count,
+        item.pos_fmt, item.pos_offset, item.uv_fmt, item.uv_offset, item.uv2_fmt,
+        item.uv2_offset, item.normal_fmt, item.normal_offset, item.tan_fmt,
+        item.tb_fmt, item.tangent_offset, item.binormal_offset, item.skinned,
+        item.cloth_quads, total);
+  }
+}
+
 // Decode guest vertices into {float3 position, float2 uv, float2 uv2,
 // unorm4 blend weights, u8x4 blend indices, float3 normal, float2 decal_uv}
 // (56-byte stride). decal_uv = the 3rd/4th halves of a half4 first texcoord
@@ -753,12 +870,29 @@ constexpr uint32_t kUploadPlacementAlignment = 512;
 // vb_payload/ib_payload: optional pre-copied guest payload snapshots (the
 // dynamic cloth decode jobs snapshot on the guest thread and convert on a
 // worker, see DynDecodeJob); when null the payloads are read live from
-// guest memory with the guarded copy.
+// guest memory with the guarded copy. vb_payload_bytes/ib_payload_bytes are
+// the snapshot sizes (required with a snapshot; a short one is rejected).
 bool DecodeMesh(nrhi::Device* device, uint8_t* base, const DrawItem& item,
                 MeshBuffers& out, const uint8_t* vb_payload = nullptr,
-                const uint8_t* ib_payload = nullptr) {
+                const uint8_t* ib_payload = nullptr, size_t vb_payload_bytes = 0,
+                size_t ib_payload_bytes = 0) {
+  // KI-27: bound every vertex/index read before touching the payload. The
+  // element offsets come from the guest vertex declaration independently of
+  // its stride byte, so an element placed past the stride over-read the
+  // host copy on the last vertex. Rejected meshes fail like any other
+  // decode failure (the miss path re-requests them; nothing is cached).
+  {
+    const size_t vb_avail = vb_payload != nullptr ? vb_payload_bytes : item.vb_bytes;
+    const size_t ib_avail = ib_payload != nullptr ? ib_payload_bytes
+                                                  : size_t(item.ib_count) * 2;
+    if (const char* reason = ValidateMeshDecodeInput(item, vb_avail, ib_avail)) {
+      const uint64_t total =
+          g_mesh_decode_rejected.fetch_add(1, std::memory_order_relaxed) + 1;
+      LogMeshDecodeRefusal(item, "rejected", reason, total);
+      return false;
+    }
+  }
   const uint32_t num_verts = item.vb_bytes / item.stride;
-  if (num_verts == 0) return false;
   // This runs on the render thread; the guest payloads were valid on the
   // game thread this frame but streaming can decommit them in between.
   // Copy them out with the lock-free guarded copy (never VirtualQuery here:
@@ -803,11 +937,24 @@ bool DecodeMesh(nrhi::Device* device, uint8_t* base, const DrawItem& item,
   }
 
   const uint8_t* src_vb = vb_payload;
-  float* dst = nullptr;
   uint32_t garbage = 0;
   int min_bi = 255;
   int max_bi = -1;
-  dst = static_cast<float*>(device->Map(vb));
+  // Map both upload buffers up front so a Map() failure fails the decode
+  // before anything is written. A buffer that failed to map is released,
+  // not pooled (the pool would hand the same buffer straight back).
+  float* dst = static_cast<float*>(device->Map(vb));
+  uint16_t* dst_ib = dst != nullptr ? static_cast<uint16_t*>(device->Map(ib)) : nullptr;
+  if (dst == nullptr || dst_ib == nullptr) {
+    if (dst != nullptr) {
+      device->Unmap(vb);
+    }
+    device->DestroyDeferred(vb);
+    device->DestroyDeferred(ib);
+    const uint64_t total = g_mesh_map_failed.fetch_add(1, std::memory_order_relaxed) + 1;
+    LogMeshDecodeRefusal(item, "upload Map failed", dst == nullptr ? "vb" : "ib", total);
+    return false;
+  }
   for (uint32_t v = 0; v < num_verts; ++v) {
     const uint8_t* p = src_vb + size_t(v) * item.stride + item.pos_offset;
     float x = 0.0f, y = 0.0f, z = 0.0f;
@@ -834,8 +981,9 @@ bool DecodeMesh(nrhi::Device* device, uint8_t* base, const DrawItem& item,
         z = s16(4) * kScale;
         break;
       }
-      default:
+      default:  // unreachable: ValidateMeshDecodeInput rejects the format
         device->Unmap(vb);
+        device->Unmap(ib);
         device->DestroyDeferred(vb);
         device->DestroyDeferred(ib);
         return false;
@@ -1145,8 +1293,6 @@ bool DecodeMesh(nrhi::Device* device, uint8_t* base, const DrawItem& item,
         item.vb_addr);
   }
 
-  uint16_t* dst_ib = nullptr;
-  dst_ib = static_cast<uint16_t*>(device->Map(ib));
   if (item.cloth_quads) {
     // Quad-list topology with no guest index buffer (live vertex range
     // already exact from the draw args): two triangles per quad.
@@ -1542,6 +1688,10 @@ bool UploadGeneratedMips(const NativeGuestOutputRenderContext& context, uint8_t*
     return false;
   }
   uint8_t* mapping = static_cast<uint8_t*>(device->Map(out.upload));
+  if (mapping == nullptr) {
+    ReleaseFailedTextureUpload(device, out);
+    return false;
+  }
   for (uint32_t m = 0; m < mip_count; ++m) {
     const Plan& p = plans[m];
     for (uint32_t y = 0; y < p.h; ++y) {
@@ -1832,6 +1982,10 @@ bool EnsureGuestTextureFromWords(const NativeGuestOutputRenderContext& context,
     return false;
   }
   uint8_t* mapping = static_cast<uint8_t*>(device->Map(out.upload));
+  if (mapping == nullptr) {
+    ReleaseFailedTextureUpload(device, out);
+    return false;
+  }
   const bool swap_rb_565 =
       rex::graphics::GetBaseFormat(info.format) == xenos::TextureFormat::k_5_6_5;
   for (uint32_t m = 0; m < mip_count; ++m) {
@@ -2421,6 +2575,10 @@ bool EnsureGuestCubeTexture(const NativeGuestOutputRenderContext& context, uint8
       return false;
     }
     uint8_t* mapping = static_cast<uint8_t*>(device->Map(out.upload));
+    if (mapping == nullptr) {
+      ReleaseFailedTextureUpload(device, out);
+      return false;
+    }
     static thread_local std::vector<uint8_t> rgba;   // level 0 of one face
     static thread_local std::vector<uint8_t> down;   // downsample scratch
     static thread_local std::vector<uint8_t> bc_row; // one untiled block row
@@ -2595,6 +2753,10 @@ bool EnsureGuestCubeTexture(const NativeGuestOutputRenderContext& context, uint8
     return false;
   }
   uint8_t* mapping = static_cast<uint8_t*>(device->Map(out.upload));
+  if (mapping == nullptr) {
+    ReleaseFailedTextureUpload(device, out);
+    return false;
+  }
   const auto upload_offset = [&](uint32_t face, uint32_t m) {
     uint32_t off = face * face_upload;
     for (uint32_t k = 0; k < m; ++k) {
@@ -2698,6 +2860,136 @@ bool EnsureGuestCubeTexture(const NativeGuestOutputRenderContext& context, uint8
 // location; see nrhi::InputElementDesc).
 
 }  // namespace
+
+static_assert(RendererState::kBoneRegions <= UploadRingRegions::kMaxRegions);
+static_assert(RendererState::kShadowCbRegions <= UploadRingRegions::kMaxRegions);
+static_assert(RendererState::kUiRegions <= UploadRingRegions::kMaxRegions);
+static_assert(RendererState::kPfxCbRegions <= UploadRingRegions::kMaxRegions);
+static_assert(RendererState::kScreenFxCbRegions <= UploadRingRegions::kMaxRegions);
+
+void UploadRingRegions::Acquire(nrhi::Device* device, uint64_t frame_number) {
+  ++stats_.acquires;
+  if (!REXCVAR_GET(skate3_native_render_scene_upload_ring_log)) {
+    Pick(device, frame_number);
+    return;
+  }
+  const auto t0 = std::chrono::steady_clock::now();
+  Pick(device, frame_number);
+  stats_.acquire_ns += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                    std::chrono::steady_clock::now() - t0)
+                                    .count());
+}
+
+void UploadRingRegions::Pick(nrhi::Device* device, uint64_t frame_number) {
+  const uint64_t completed = device->CompletedSubmission();
+  uint32_t in_flight = 0;
+  for (uint32_t i = 0; i < count_; ++i) {
+    in_flight += submission_[i] > completed ? 1u : 0u;
+  }
+  stats_.in_flight_max = std::max(stats_.in_flight_max, in_flight);
+  // A/B switch: the pre-#28 pick, no completion check.
+  if (!REXCVAR_GET(skate3_native_render_scene_upload_ring_gate)) {
+    current_ = uint32_t(frame_number % count_);
+    return;
+  }
+  // A new high of half the ring or more means the GPU lags far enough to
+  // matter; at most count_ lines per ring per run.
+  if (in_flight > in_flight_high_) {
+    in_flight_high_ = in_flight;
+    if (in_flight * 2 >= count_) {
+      REXLOG_INFO("upload ring {}: {}/{} regions in flight (completed submission {})",
+                  name_, in_flight, count_, completed);
+    }
+  }
+  // Round-robin from the last region: the next one is normally long done.
+  uint32_t oldest = (current_ + 1) % count_;
+  for (uint32_t i = 1; i <= count_; ++i) {
+    const uint32_t r = (current_ + i) % count_;
+    if (submission_[r] <= completed) {
+      stats_.skips += i != 1 ? 1u : 0u;
+      current_ = r;
+      return;
+    }
+    if (submission_[r] < submission_[oldest]) {
+      oldest = r;
+    }
+  }
+  // Every region is still referenced by unfinished GPU work. nrhi can't
+  // wait on a fence, so reuse the oldest one (the pre-KI-16 behavior) and
+  // say so: the frame may show stale HUD, bones or constants.
+  const uint32_t n = exhausted_++;
+  ++stats_.fallbacks;
+  if (n < 8 || (n & 1023u) == 0) {
+    REXLOG_WARN(
+        "upload ring {}: all {} regions in flight (completed submission {}, oldest "
+        "region needs {}); reusing it ({} times so far)",
+        name_, count_, completed, submission_[oldest], n + 1);
+  }
+  current_ = oldest;
+}
+
+// Optional (skate3_native_render_scene_upload_ring_log): one line per perf
+// interval with each ring's counters, the window's frame rate and how far
+// the GPU trails the CPU. Proves from a run log whether the ring helper
+// does more than one pick per frame, falls back, or costs measurable time.
+// GPU lag here is CurrentSubmission - CompletedSubmission at the end of the
+// frame: 1-2 is a CPU-bound or idle GPU, 3+ a GPU that can't keep up.
+static void LogUploadRingStats(nrhi::Device* device, uint64_t frames) {
+  static uint64_t s_lag_max = 0;
+  static uint64_t s_lag_sum = 0;
+  static uint64_t s_lag_n = 0;
+  static uint64_t s_window_frame = 0;
+  static std::chrono::steady_clock::time_point s_window_t0{};
+  if (!REXCVAR_GET(skate3_native_render_scene_upload_ring_log)) {
+    s_window_frame = 0;
+    return;
+  }
+  const uint64_t cur = device->CurrentSubmission();
+  const uint64_t done = device->CompletedSubmission();
+  const uint64_t lag = cur > done ? cur - done : 0;
+  s_lag_max = std::max(s_lag_max, lag);
+  s_lag_sum += lag;
+  ++s_lag_n;
+  const auto now = std::chrono::steady_clock::now();
+  const uint64_t interval = uint64_t(
+      std::max(60, REXCVAR_GET(skate3_native_render_scene_perf_interval)));
+  if (s_window_frame == 0) {
+    // First frame with the log on: drop counts from before it.
+    s_window_frame = frames;
+    s_window_t0 = now;
+    s_lag_max = s_lag_sum = s_lag_n = 0;
+    for (UploadRingRegions* ring : {&g_r.bone_regions, &g_r.ui_regions, &g_r.shadow_cb_regions,
+                                    &g_r.pfx_cb_regions, &g_r.screen_fx_cb_regions}) {
+      ring->TakeStats();
+    }
+    return;
+  }
+  if (frames - s_window_frame < interval) {
+    return;
+  }
+  const uint64_t n = frames - s_window_frame;
+  const double secs = std::chrono::duration<double>(now - s_window_t0).count();
+  std::string rings;
+  uint64_t acquire_ns = 0;
+  for (UploadRingRegions* ring : {&g_r.bone_regions, &g_r.ui_regions, &g_r.shadow_cb_regions,
+                                  &g_r.pfx_cb_regions, &g_r.screen_fx_cb_regions}) {
+    const UploadRingRegions::Stats s = ring->TakeStats();
+    acquire_ns += s.acquire_ns;
+    rings += fmt::format(" | {}: calls={} picks={} skips={} fallbacks={} inflight_max={}",
+                         ring->name(), s.calls, s.acquires, s.skips, s.fallbacks,
+                         s.in_flight_max);
+  }
+  REXLOG_INFO(
+      "upload rings: {} frames in {:.2f}s ({:.0f} fps, {:.2f} ms/frame), gate={}, "
+      "pick time {:.1f}us total ({:.3f}us/frame), gpu lag avg={:.2f} max={}{}",
+      n, secs, secs > 0.0 ? double(n) / secs : 0.0, secs * 1000.0 / double(n),
+      REXCVAR_GET(skate3_native_render_scene_upload_ring_gate) ? "on" : "off(legacy % N)",
+      double(acquire_ns) / 1000.0, double(acquire_ns) / 1000.0 / double(n),
+      s_lag_n ? double(s_lag_sum) / double(s_lag_n) : 0.0, s_lag_max, rings);
+  s_window_frame = frames;
+  s_window_t0 = now;
+  s_lag_max = s_lag_sum = s_lag_n = 0;
+}
 
 // ---- EnsurePipeline helpers ------------------------------------------------
 // Split from the former ~1,000-line EnsurePipeline: one resource
@@ -3586,10 +3878,10 @@ bool EnsurePhotoFxPipeline(const NativeGuestOutputRenderContext& context) {
       device->Unmap(g_r.pfx_lut_upload);
     }
     if (g_r.pfx_cb == nullptr) {
-      // 8 pass slots x 4 KB x 4 frames in flight.
-      // 10 slots per frame region: depth pack + accum feed + 6 passes +
-      // accum mode 2 + the debug view.
-      g_r.pfx_cb = CreateUploadBuffer(device, 10u * 4096u * 4u);
+      // kPfxCbSlots 4 KB slots per frame region, kPfxCbRegions regions.
+      g_r.pfx_cb = CreateUploadBuffer(
+          device, size_t(RendererState::kPfxCbSlots) * 4096u *
+                      RendererState::kPfxCbRegions);
       g_r.pfx_cb_ptr = g_r.pfx_cb
                            ? static_cast<uint8_t*>(device->Map(g_r.pfx_cb))
                            : nullptr;
@@ -4006,14 +4298,26 @@ bool EnsureShadowResources(const NativeGuestOutputRenderContext& context) {
 // only disable their feature, never abort the native path.
 bool EnsureBlurOutlineTargets(const NativeGuestOutputRenderContext& context) {
   nrhi::Device* device = context.device;
+  const nrhi::Format output_format = context.guest_output->format();
+  if (g_r.blur_tex[0] != nullptr && g_r.blur_format != output_format) {
+    // The blur PSOs follow the output format (rtv_format rebuild), so the
+    // intermediates they render into must too.
+    for (int t = 0; t < 2; ++t) {
+      if (g_r.blur_srv[t]) device->DestroyDeferred(g_r.blur_srv[t]);
+      g_r.blur_srv[t] = nullptr;
+      if (g_r.blur_tex[t]) device->DestroyDeferred(g_r.blur_tex[t]);
+      g_r.blur_tex[t] = nullptr;
+    }
+  }
   if (g_r.blur_tex[0] == nullptr && g_r.pso_blur != nullptr) {
     // Popup background blur intermediates at the game's fixed 1152x640
     // internal resolution (the bilinear stretch back to the output is what
-    // produces the authentic frosted-glass lattice).
+    // produces the authentic frosted-glass lattice). Recreated when the
+    // output format changes.
     nrhi::TextureDesc desc;
     desc.width = RendererState::kBlurWidth;
     desc.height = RendererState::kBlurHeight;
-    desc.format = context.guest_output->format();
+    desc.format = output_format;
     desc.initial_state = nrhi::ResourceState::kRenderTarget;
     bool ok = true;
     for (int t = 0; t < 2 && ok; ++t) {
@@ -4035,7 +4339,9 @@ bool EnsureBlurOutlineTargets(const NativeGuestOutputRenderContext& context) {
         break;
       }
     }
-    if (!ok) {
+    if (ok) {
+      g_r.blur_format = output_format;
+    } else {
       REXLOG_ERROR("native-scene: blur intermediate creation failed; blur disabled");
       for (int t = 0; t < 2; ++t) {
         if (g_r.blur_srv[t]) device->DestroyDeferred(g_r.blur_srv[t]);
@@ -4049,11 +4355,12 @@ bool EnsureBlurOutlineTargets(const NativeGuestOutputRenderContext& context) {
 
   // Settings-menu gaussian intermediates: half the output resolution
   // (sigma halves with it; the final bilinear stretch back is invisible
-  // under a real blur), recreated whenever the output size changes.
+  // under a real blur), recreated whenever the output size or format
+  // changes.
   const uint32_t menu_w = std::max(1u, context.guest_output_width / 2);
   const uint32_t menu_h = std::max(1u, context.guest_output_height / 2);
   if ((g_r.menu_blur_tex[0] == nullptr || g_r.menu_blur_w != menu_w ||
-       g_r.menu_blur_h != menu_h) &&
+       g_r.menu_blur_h != menu_h || g_r.menu_blur_format != output_format) &&
       g_r.pso_menu_gauss != nullptr) {
     for (int t = 0; t < 2; ++t) {
       if (g_r.menu_blur_srv[t]) device->DestroyDeferred(g_r.menu_blur_srv[t]);
@@ -4064,7 +4371,7 @@ bool EnsureBlurOutlineTargets(const NativeGuestOutputRenderContext& context) {
     nrhi::TextureDesc desc;
     desc.width = menu_w;
     desc.height = menu_h;
-    desc.format = context.guest_output->format();
+    desc.format = output_format;
     desc.initial_state = nrhi::ResourceState::kRenderTarget;
     desc.usage = nrhi::kTextureUsageRenderTarget;
     bool ok = true;
@@ -4085,6 +4392,7 @@ bool EnsureBlurOutlineTargets(const NativeGuestOutputRenderContext& context) {
     if (ok) {
       g_r.menu_blur_w = menu_w;
       g_r.menu_blur_h = menu_h;
+      g_r.menu_blur_format = output_format;
     } else {
       REXLOG_ERROR(
           "native-scene: menu blur intermediate creation failed; menu blur "
@@ -4159,6 +4467,10 @@ bool EnsureFallbackTextures(const NativeGuestOutputRenderContext& context) {
       return false;
     }
     uint8_t* mapping = static_cast<uint8_t*>(device->Map(g_r.white.upload));
+    if (mapping == nullptr) {
+      g_r.failed = true;
+      return false;
+    }
     std::memset(mapping, 0xFF, 4);
     device->Unmap(g_r.white.upload);
     context.cmd->CopyBufferToTexture(g_r.white.texture, 0, 0, g_r.white.upload,
@@ -4196,6 +4508,10 @@ bool EnsureFallbackTextures(const NativeGuestOutputRenderContext& context) {
       return false;
     }
     uint8_t* mapping = static_cast<uint8_t*>(device->Map(g_r.white_cube.upload));
+    if (mapping == nullptr) {
+      g_r.failed = true;
+      return false;
+    }
     for (uint32_t f = 0; f < 6; ++f) {
       std::memset(mapping + f * 512, 0x80, 4);
     }
@@ -4793,17 +5109,36 @@ void ProcessPrewarmEntry(uint8_t* base, const PrewarmEntry& e) {
     g_prewarm_out.push_back(std::move(res));
     return;
   }
+  // Every field this worker reads at the mesh address comes from ONE
+  // guarded snapshot (KI-26): registration hands the workers addresses that
+  // can go stale (map change, streaming decommit) before they are
+  // processed, and a raw load of an unmapped record faults the process.
+  // BuildItemFromMesh takes its own guarded header copy for the same reason.
   uint8_t record[0x60];
   DrawItem item{};
-  if (!GuestTryCopy(record, base + e.mesh, sizeof(record)) ||
-      !BuildItemFromMesh(base, e.mesh, item)) {
+  const bool record_ok =
+      e.mesh >= 0x10000 && GuestTryCopy(record, base + e.mesh, sizeof(record));
+  if (!record_ok) {
+    const uint64_t n = g_prewarm_unreadable.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (g_prewarm_unreadable_log_budget.load(std::memory_order_relaxed) > 0 &&
+        g_prewarm_unreadable_log_budget.fetch_sub(1, std::memory_order_relaxed) > 0) {
+      REXLOG_INFO("native-scene: prewarm skipped unreadable mesh record {:08X} "
+                  "(retries left {}, {} unreadable so far)",
+                  e.mesh, e.retries, n);
+    }
+  }
+  if (!record_ok || !BuildItemFromMesh(base, e.mesh, item)) {
     // Buffer objects can finish initializing shortly after registration;
     // retries are re-injected frame-paced by the render thread.
     bool dropped = false;
     {
       std::lock_guard<std::mutex> lock(g_prewarm_out_mutex);
       if (e.retries > 0) {
-        g_prewarm_retry.push_back({e.mesh, uint16_t(e.retries - 1)});
+        // Copy the whole entry: the miss flag routes the retry back to
+        // g_miss_queue in PrewarmCommit (KI-65).
+        PrewarmEntry retry = e;
+        --retry.retries;
+        g_prewarm_retry.push_back(retry);
       } else {
         g_prewarm_dropped.fetch_add(1, std::memory_order_relaxed);
         dropped = true;
@@ -4819,10 +5154,16 @@ void ProcessPrewarmEntry(uint8_t* base, const PrewarmEntry& e) {
   }
   // One representative draw entry so DecodeMesh's two-sided-sheet detection
   // keys off the real primitive type (empty draw lists would pass it
-  // unconditionally). Guarded: island params live outside the validated
-  // mesh record.
-  const uint32_t num_islands = REX_LOAD_U32(e.mesh + 0x38);
-  const uint32_t island_params = REX_LOAD_U32(e.mesh + 0x44);
+  // unconditionally). The island count (+0x38) and params pointer (+0x44)
+  // come from the guarded record snapshot; the params array they point at
+  // lives outside it, hence the guarded load.
+  const auto record_u32 = [&record](uint32_t off) {
+    uint32_t v;
+    std::memcpy(&v, record + off, sizeof(v));
+    return __builtin_bswap32(v);
+  };
+  const uint32_t num_islands = record_u32(0x38);
+  const uint32_t island_params = record_u32(0x44);
   uint32_t prim0 = 0;
   if (num_islands != 0 && num_islands < 4096 &&
       GuestTryLoadU32(base, island_params, &prim0)) {
@@ -4982,7 +5323,8 @@ void PrewarmWorkerLoop() {
       PrewarmResult res;
       res.mesh_valid =
           DecodeMesh(g_r.device, base, dyn.item, res.buffers, dyn.vb.data(),
-                     dyn.ib.empty() ? nullptr : dyn.ib.data());
+                     dyn.ib.empty() ? nullptr : dyn.ib.data(), dyn.vb.size(),
+                     dyn.ib.size());
       if (res.mesh_valid) {
         res.buffers.fingerprint = dyn.item.fingerprint;
         res.buffers.dyn_seq = dyn.seq;
@@ -5027,8 +5369,16 @@ void PrewarmCommit(const NativeGuestOutputRenderContext& context,
   {
     std::scoped_lock lock(g_prewarm_out_mutex, g_prewarm_mutex);
     if (!g_prewarm_retry.empty()) {
-      g_prewarm_queue.insert(g_prewarm_queue.end(), g_prewarm_retry.begin(),
-                             g_prewarm_retry.end());
+      // Draw-path misses go back to the priority FIFO (visible right now),
+      // speculative registrations back to the prewarm backlog (KI-65/66).
+      for (const PrewarmEntry& r : g_prewarm_retry) {
+        if (r.miss) {
+          g_miss_queue.push_back(r);
+          g_prewarm_miss_retries.fetch_add(1, std::memory_order_relaxed);
+        } else {
+          g_prewarm_queue.push_back(r);
+        }
+      }
       g_prewarm_retry.clear();
       g_prewarm_cv.notify_all();
     }
@@ -5356,8 +5706,8 @@ class SdkCvarOverride {
   // keep_user: when it returns true for the user's value, the override is
   // tracked but nothing is written (the forced readback length only
   // replaces a disabled <= 0 user setting, never a user-chosen length).
-  SdkCvarOverride(T& (*storage)(), T forced, bool (*keep_user)(T) = nullptr)
-      : storage_(storage), forced_(forced), keep_user_(keep_user) {}
+  SdkCvarOverride(const char* name, T& (*storage)(), T forced, bool (*keep_user)(T) = nullptr)
+      : name_(name), storage_(storage), forced_(forced), keep_user_(keep_user) {}
 
   void Hold(uint32_t owner, bool want) {
     if (want) {
@@ -5372,6 +5722,10 @@ class SdkCvarOverride {
     }
     if (owners_ == 0) {
       saved_ = storage_();
+      // Published before the forced write, so the dialog never sees the
+      // forced value while the hold still reads as off.
+      view_user_.store(saved_, std::memory_order_relaxed);
+      view_held_.store(true, std::memory_order_release);
       written_ = saved_ != forced_ && !(keep_user_ && keep_user_(saved_));
       if (written_) {
         storage_() = forced_;
@@ -5384,9 +5738,22 @@ class SdkCvarOverride {
       return;
     }
     owners_ &= ~owner;
-    if (owners_ == 0 && written_) {
-      storage_() = saved_;
-      written_ = false;
+    if (owners_ == 0) {
+      if (written_) {
+        // Someone else wrote the cvar while it was forced (the F12 dialog's
+        // old per-frame write-back did, KI-30). The user's saved value still
+        // wins, but say so: the window ran without its override from then on.
+        if (storage_() != forced_) {
+          REXLOG_WARN(
+              "native-scene: SDK cvar override on {} was overwritten while held "
+              "(forced {}, found {}); restoring the user's {}",
+              name_, forced_, storage_(), saved_);
+        }
+        storage_() = saved_;
+        written_ = false;
+      }
+      // Cleared after the restore, for the same reason as in Acquire.
+      view_held_.store(false, std::memory_order_release);
     }
   }
   // Returns true if any owner was holding it.
@@ -5399,14 +5766,30 @@ class SdkCvarOverride {
   }
   // The cvar currently carries the forced value in place of the user's.
   bool Overriding() const { return written_; }
+  // Read-only view for other threads (the F12 dialog, KI-30): true while
+  // any owner holds the cvar, with *user set to the user's own value that
+  // the last release restores. Everything else here stays render-thread
+  // only.
+  bool HeldView(T* user) const {
+    if (!view_held_.load(std::memory_order_acquire)) {
+      return false;
+    }
+    if (user != nullptr) {
+      *user = view_user_.load(std::memory_order_relaxed);
+    }
+    return true;
+  }
 
  private:
+  const char* name_;
   T& (*storage_)();
   T forced_;
   bool (*keep_user_)(T);
   uint32_t owners_ = 0;
   T saved_{};
   bool written_ = false;
+  std::atomic<bool> view_held_{false};
+  std::atomic<T> view_user_{};
 };
 
 // The photo grab target is 1152x640x4 = 0x2D0000 bytes (the same surface the
@@ -5415,17 +5798,20 @@ class SdkCvarOverride {
 constexpr int32_t kForceReadbackMaxLength = 0x2D0000;
 
 SdkCvarOverride<bool> g_ovr_suppress_draws(
+    "native_render_suppress_emulated_draws",
     []() -> bool& { return REXCVAR_GET(native_render_suppress_emulated_draws); }, false);
 SdkCvarOverride<int32_t> g_ovr_suppress_mode(
+    "native_render_suppress_mode",
     []() -> int32_t& { return REXCVAR_GET(native_render_suppress_mode); }, 3);
 SdkCvarOverride<bool> g_ovr_async_shaders(
-    []() -> bool& { return REXCVAR_GET(async_shader_compilation); }, false);
+    "async_shader_compilation", []() -> bool& { return REXCVAR_GET(async_shader_compilation); },
+    false);
 SdkCvarOverride<int32_t> g_ovr_readback_len(
-    []() -> int32_t& {
-      return REXCVAR_GET(native_render_force_resolve_readback_max_length);
-    },
+    "native_render_force_resolve_readback_max_length",
+    []() -> int32_t& { return REXCVAR_GET(native_render_force_resolve_readback_max_length); },
     kForceReadbackMaxLength, [](int32_t user) { return user > 0; });
 SdkCvarOverride<bool> g_ovr_readback_halfpx(
+    "readback_resolve_half_pixel_offset",
     []() -> bool& { return REXCVAR_GET(readback_resolve_half_pixel_offset); }, true);
 
 // RenderScene's early-out (native scene off / unsupported backend): the gates
@@ -5444,6 +5830,14 @@ void RestoreAllYieldOverrides() {
         "suppress mode, sync shaders, photo readback) restored");
   }
 }
+
+}  // namespace
+
+bool SuppressEmulatedDrawsOverride(bool* user_value) {
+  return g_ovr_suppress_draws.HeldView(user_value);
+}
+
+namespace {
 
 // Render-thread mirror of the presence-context check (set in YieldForMenus):
 // menu screens shorten the 2D texture liveness recheck cadence so in-place
@@ -5530,10 +5924,11 @@ bool YieldForMenus(const NativeGuestOutputRenderContext& context) {
   // - the texture is persistent guest state that was simply never filled).
   // While a menu context is up, clear the SDK suppress cvar so the emulated
   // pipeline keeps every RTT/composite current; the extra GPU cost is
-  // menu-only. The saved value is restored on the first gameplay frame, so a
-  // user toggle of the underlying cvar in the debug dialog survives (it is
-  // re-read at each menu entry). Held through g_ovr_suppress_draws, shared
-  // with the photo flow.
+  // menu-only. The saved value is restored on the first gameplay frame and
+  // re-read at each menu entry. The F12 dialog shows the saved value and
+  // locks its checkbox while the override is held (KI-30), so a dialog
+  // toggle only lands outside the window. Held through g_ovr_suppress_draws,
+  // shared with the photo flow.
   {
     static bool s_unsup_forced = false;
     const bool want =
@@ -5652,9 +6047,11 @@ bool YieldForMenus(const NativeGuestOutputRenderContext& context) {
       }
       REXLOG_INFO(
           "native-scene: gameplay (prewarm: {} meshes decoded, {} dropped, {} still "
-          "queued)",
+          "queued; mesh decode refusals: {} bad layout, {} map failures)",
           g_prewarm_done.load(std::memory_order_relaxed),
-          g_prewarm_dropped.load(std::memory_order_relaxed), queued);
+          g_prewarm_dropped.load(std::memory_order_relaxed), queued,
+          g_mesh_decode_rejected.load(std::memory_order_relaxed),
+          g_mesh_map_failed.load(std::memory_order_relaxed));
     }
   }
   if (in_loading) {
@@ -6424,11 +6821,13 @@ void ReleaseRetiredAndFlushCaches(const NativeGuestOutputRenderContext& context)
   // three cascade tiles with the captured light rows, then applies the
   // game's coverage blur + depth dilation. Runs before the main pass so the
   // scene shader can sample the finished atlas.
-// Read-only resolved-texture lookup (route -> store entry) for the caster
-// passes' alpha-test binding: the main pass owns decode scheduling and
-// live guest reads; an unresolved diffuse just casts opaque for the frames
-// a first-sight decode takes.
-static nrhi::TextureView* LookupResolvedTexture(uint32_t tex_ptr) {
+// Resolved-texture lookup (route -> store entry) for the caster passes'
+// alpha-test binding. It never decodes or reads the guest: the main pass
+// owns decode scheduling and live guest reads; an unresolved diffuse just
+// casts opaque for the frames a first-sight decode takes. It does stamp
+// the route and the store entry as used, so the LRUs keep them.
+static nrhi::TextureView* LookupResolvedTexture(uint32_t tex_ptr,
+                                                uint64_t frame_number) {
   if (tex_ptr == 0) {
     return nullptr;
   }
@@ -6436,10 +6835,18 @@ static nrhi::TextureView* LookupResolvedTexture(uint32_t tex_ptr) {
   if (rit == g_r.tex_routes.end()) {
     return nullptr;
   }
+  rit->second.last_used_frame = frame_number;
   auto sit = g_r.tex_store.find(rit->second.key);
   if (sit == g_r.tex_store.end() || !sit->second.valid) {
     return nullptr;
   }
+  // Stamp the store entry too (KI-41): a caster the main pass does not draw
+  // this frame (occlusion-culled, or outside the view) is still sampled
+  // here, and an unstamped entry looks idle to EvictTexStore. Evicted, it
+  // stays gone, because the caster passes never enqueue a decode, so the
+  // alpha-tested shadow would cast as a solid shape until the main pass
+  // draws the item again.
+  sit->second.last_used_frame = frame_number;
   return sit->second.srv;
 }
 
@@ -6797,7 +7204,8 @@ static void RenderStaticSunMap(const NativeGuestOutputRenderContext& context,
         cmd->SetRootConstants(0, 52, constants, 0);
         cmd->SetBufferSrv(3, g_r.bone_ring, bone_region);
         if (phase == 1) {
-          nrhi::TextureView* srv = LookupResolvedTexture(rec.diffuse_tex);
+          nrhi::TextureView* srv =
+              LookupResolvedTexture(rec.diffuse_tex, frame_number);
           cmd->SetTexture(1, srv != nullptr ? srv : g_r.white.srv);
         }
         cmd->SetVertexBuffer(mit->second.vb_view.buffer,
@@ -6831,7 +7239,8 @@ static void RenderStaticSunMap(const NativeGuestOutputRenderContext& context,
 
 bool RenderShadowAtlas(const NativeGuestOutputRenderContext& context,
                        const FrameScene& scene, uint32_t bone_region,
-                       int32_t debug_mode, uint32_t* out_draws) {
+                       int32_t debug_mode, uint64_t frame_number,
+                       uint32_t* out_draws) {
   nrhi::Cmd* cmd = context.cmd;
   const float* sh = scene.shadow_rows;
   bool shadow_ready = false;
@@ -6936,7 +7345,7 @@ bool RenderShadowAtlas(const NativeGuestOutputRenderContext& context,
       Caster c{&item, 0, false, false, nullptr};
       if (item.dynobj == 2) {
         c.clip = true;
-        c.clip_srv = LookupResolvedTexture(item.diffuse_tex);
+        c.clip_srv = LookupResolvedTexture(item.diffuse_tex, frame_number);
         any_clip = true;
       }
       if (skinned) {
@@ -7443,7 +7852,8 @@ void LogFrameStats(const FrameScene& scene, uint64_t frames, uint32_t drawn,
         "pre={:.2f}/{:.2f}ms settle[{:.2f}/{:.2f}ms n={} dec={} def={}] "
         "tail={:.2f}/{:.2f}ms twod={:.2f}/{:.2f}ms "
         "decode[mesh n={} avg={:.2f} max={:.2f}ms tex n={} avg={:.2f} max={:.2f}ms] "
-        "commit={:.2f}/{:.2f}ms itemcache[hit={} build={}] cam[chg={} rep={} maxstreak={}]",
+        "commit={:.2f}/{:.2f}ms itemcache[hit={} build={}] cam[chg={} rep={} maxstreak={}] "
+        "prewarm[miss_retry={}]",
         guest_dt_ms > 0.0 ? 1000.0 / guest_dt_ms : 0.0, g_pw_guest_dt.MaxMs(),
         g_pw_capture.AvgMs(), g_pw_capture.MaxMs(), g_pw_build.AvgMs(),
         g_pw_build.MaxMs(), g_pw_b2d.AvgMs(), g_pw_b2d.MaxMs(), g_pw_bspl.AvgMs(),
@@ -7470,7 +7880,8 @@ void LogFrameStats(const FrameScene& scene, uint64_t frames, uint32_t drawn,
         g_item_cache_builds.exchange(0, std::memory_order_relaxed),
         g_cam_changes.exchange(0, std::memory_order_relaxed),
         g_cam_repeats.exchange(0, std::memory_order_relaxed),
-        g_cam_max_streak.exchange(0, std::memory_order_relaxed));
+        g_cam_max_streak.exchange(0, std::memory_order_relaxed),
+        g_prewarm_miss_retries.load(std::memory_order_relaxed));
     // Deep per-item attribution (see the perf-items cvar): visibility-class
     // draw costs, completed-draw stage split, build-walk decomposition, and
     // the off-screen retention pass. Averages are per item (the windows Add
@@ -7540,7 +7951,7 @@ void LogFrameStats(const FrameScene& scene, uint64_t frames, uint32_t drawn,
         "rigid[pending={} dropped={} worldprops={}] "
         "rej[dyn={} range={} chain={} geom={} draws={} bbox={}] "
         "rr[decode_fail={} no_bones={} mesh_deferred={} tex_deferred={}] "
-        "store[n={} routes={} evict={}] "
+        "store[n={} routes={} sticky={} wsticky={} pend={} evict={} rpruned={}] "
         "heal[vfail={} demote={}] serve[sticky={} skipnew={} adstale={} adnone={}] "
         "shadow[valid={} ready={} draws={}] char[attempt={} valid={} drawn={} "
         "reused={}] dynobj[valid={} drawn={}] water[valid={} drawn={}] "
@@ -7566,7 +7977,9 @@ void LogFrameStats(const FrameScene& scene, uint64_t frames, uint32_t drawn,
         g_rej_chain.load(), g_rej_geom.load(), g_rej_draws.load(), g_rej_bbox.load(),
         g_rr_decode_fail.load(), g_rr_no_bones.load(), g_rr_mesh_deferred.load(),
         g_rr_tex_deferred.load(), g_r.tex_store.size(), g_r.tex_routes.size(),
-        g_store_evicted.load(), g_heal_verify_fail.load(),
+        g_r.tex_sticky.size(), g_r.words_sticky.size(),
+        g_r.tex_pending_first.size(), g_store_evicted.load(),
+        g_tex_routing_pruned.load(), g_heal_verify_fail.load(),
         g_demote_hold.load(),
         g_tex_sticky_served.load(), g_skip_new.load(), g_ad_stale_served.load(),
         g_ad_placeholder.load(), scene.shadow_valid,
@@ -7819,7 +8232,7 @@ static void TickShowcase(uint32_t output_width, bool hdr_on) {
 // rendered geometry: its NEAREST corner view-depth is farther than the
 // FARTHEST scene depth (tile MAX) in every occlusion-grid tile it covers.
 // The corners are projected with the view_proj the grid's depth was
-// rendered with (1-2 frames old; see the reduce in ApplySsaoPass), keeping
+// rendered with (1-2 frames old; see RecordOcclusionGrid), keeping
 // bounds and depth consistent under camera motion. Anything not provable -
 // invalid grid, a near-plane crosser, bounds leaving that frame's frustum -
 // classifies as visible; the consumers (telemetry and the occlusion cull)
@@ -7889,6 +8302,64 @@ bool ItemOccludedByGrid(const DrawItem& it, float depth_margin) {
 std::mutex g_occl_pub_mutex;
 std::vector<uint32_t> g_occl_pub_ctxs;
 std::atomic<int64_t> g_occl_pub_ms{0};
+
+// Occlusion-cull state log (KI-21: the cull used to stand down silently
+// with SSAO off). One line whenever the cull settles into the other state
+// (active <-> inactive), with the reason. Settled = held for
+// kOcclStateSettleFrames rendered frames, so one- or two-frame dips at
+// camera cuts (the camera gate) stay quiet; lines are at least
+// kOcclStateLogGapMs apart, and a switch inside that gap is logged late,
+// with the then-current state, so the log always ends on the real state.
+// Render thread only.
+constexpr uint32_t kOcclStateSettleFrames = 30;
+constexpr int64_t kOcclStateLogGapMs = 5000;
+struct OcclCullStateLog {
+  int stable = -1;  // settled state: -1 unknown, 0 inactive, 1 active
+  int logged = -1;  // state of the last line
+  const char* reason = "";
+  uint32_t hold = 0;      // frames the live state has differed from `stable`
+  uint32_t switches = 0;  // settled switches since the last line
+  int64_t last_log_ms = 0;
+};
+OcclCullStateLog g_occl_state_log;
+
+void NoteOcclCullState(bool active, const char* reason) {
+  OcclCullStateLog& st = g_occl_state_log;
+  const int cur = active ? 1 : 0;
+  if (cur == st.stable) {
+    st.hold = 0;
+    st.reason = reason;
+  } else if (++st.hold >= kOcclStateSettleFrames) {
+    st.stable = cur;
+    st.reason = reason;
+    st.hold = 0;
+    if (st.logged >= 0) {
+      ++st.switches;
+    }
+  }
+  if (st.stable < 0 || st.stable == st.logged) {
+    return;
+  }
+  const int64_t now_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now().time_since_epoch())
+          .count();
+  if (st.logged >= 0 && now_ms - st.last_log_ms < kOcclStateLogGapMs) {
+    return;
+  }
+  if (st.switches > 1) {
+    REXLOG_INFO(
+        "native-scene: occlusion cull {} ({}; {} switches since the last "
+        "line)",
+        st.stable ? "active" : "inactive", st.reason, st.switches);
+  } else {
+    REXLOG_INFO("native-scene: occlusion cull {} ({})",
+                st.stable ? "active" : "inactive", st.reason);
+  }
+  st.logged = st.stable;
+  st.switches = 0;
+  st.last_log_ms = now_ms;
+}
 
 }  // namespace
 
@@ -8076,9 +8547,8 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
   // Reset this frame's bone ring region (shared by the shadow casters and
   // the main pass: the shadow pass allocates first, the main pass appends).
   const uint64_t frame_number = g_frames_rendered.load(std::memory_order_relaxed);
-  const uint32_t bone_region =
-      uint32_t(frame_number % RendererState::kBoneRegions) *
-      RendererState::kBoneRegionSize;
+  const uint32_t bone_slot = g_r.bone_regions.Region(context.device, frame_number);
+  const uint32_t bone_region = bone_slot * RendererState::kBoneRegionSize;
   // A neutral b2 block prevents ordinary draws from inheriting body opacity.
   std::memset(g_r.bone_ring_cpu + bone_region, 0, 512u);
   g_r.bone_ring_offset = 512u;
@@ -8153,9 +8623,10 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         }
         REXLOG_INFO(
             "native-scene: taking over natively ({} items; prewarm {} done / {} dropped "
-            "/ {} queued)",
+            "/ {} queued / {} miss retries)",
             scene.items.size(), g_prewarm_done.load(std::memory_order_relaxed),
-            g_prewarm_dropped.load(std::memory_order_relaxed), queued);
+            g_prewarm_dropped.load(std::memory_order_relaxed), queued,
+            g_prewarm_miss_retries.load(std::memory_order_relaxed));
       }
     }
     settling = frame_number < g_settle_until_frame;
@@ -8221,6 +8692,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
   // mesh cache ages out streamed-out arenas the same way.
   UpdateEvictFpsEstimate(frame_number);
   EvictTexStore(frame_number, context.device->CurrentSubmission());
+  PruneTexRouting(frame_number);
   EvictMeshStore(frame_number);
   EvictCubeStore(frame_number, context.device->CurrentSubmission());
 
@@ -8231,7 +8703,8 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
   const int32_t debug_mode = REXCVAR_GET(skate3_native_render_scene_debug);
   cmd->ProfileRegion(nrhi::ProfileStage::kShadow);
   shadow_ready =
-      RenderShadowAtlas(context, scene, bone_region, debug_mode, &shadow_draws);
+      RenderShadowAtlas(context, scene, bone_region, debug_mode, frame_number,
+                        &shadow_draws);
   cmd->ProfileRegion(nrhi::ProfileStage::kStaticSun);
   RenderStaticSunMap(context, scene, bone_region, debug_mode, frame_number);
   g_pw_shadow.Add(perf_ns_since(shadow_t0));
@@ -8331,7 +8804,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
   // shader is also gated by sh_misc.y).
   if (g_r.shadow_cb != nullptr) {
     const uint32_t cb_offset =
-        uint32_t(frame_number % RendererState::kShadowCbRegions) *
+        g_r.shadow_cb_regions.Region(context.device, frame_number) *
         RendererState::kShadowCbSlice;
     float* cb = reinterpret_cast<float*>(g_r.shadow_cb_cpu + cb_offset);
     std::memset(cb, 0, RendererState::kShadowCbSlice);
@@ -8523,10 +8996,10 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
   uint32_t drawn = 0;
   uint32_t item_index = 0;
   // F7 scene-composition ring (RequestSceneRingDump): one compact signature
-  // per scene item per frame, ~900 frames deep. A 1-2 frame artifact (the
-  // dam-bank blue flash) is uncapturable by F10/F11; the ring lets a
-  // keypress seconds later name exactly which item appeared / vanished /
-  // changed textures on the artifact frame. Entries are recorded at
+  // per scene item per frame, kSceneRingFrames (2400) deep. A 1-2 frame
+  // artifact (the dam-bank blue flash) is uncapturable by F10/F11; the ring
+  // lets a keypress seconds later name exactly which item appeared /
+  // vanished / changed textures on the artifact frame. Entries are recorded at
   // classification below; draw_item stamps the issued-draw count, so an
   // item that early-returned (deferred mesh, skip-new, fade skip) shows
   // drawn=0 that frame.
@@ -8634,7 +9107,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         EnqueueWordsMiss(fkey, words);
       }
     } else if (fit->second.valid) {
-      g_r.words_sticky[site] = fkey;
+      g_r.words_sticky[site] = {fkey, frame_number};
       return &fit->second;
     } else if (!retained && frame_number >= fit->second.retry_after_frame) {
       // Failed words decode (payload was mid-stream at first sight): keep
@@ -8644,8 +9117,11 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       fit->second.retry_after_frame = frame_number + 30;
     }
     const auto pit = g_r.words_sticky.find(site);
-    if (pit != g_r.words_sticky.end() && pit->second != fkey) {
-      const auto old = g_r.tex_store.find(pit->second);
+    if (pit != g_r.words_sticky.end()) {
+      pit->second.last_used_frame = frame_number;
+    }
+    if (pit != g_r.words_sticky.end() && pit->second.words_key != fkey) {
+      const auto old = g_r.tex_store.find(pit->second.words_key);
       if (old != g_r.tex_store.end() && old->second.valid) {
         old->second.last_used_frame = frame_number;
         g_ad_stale_served.fetch_add(1, std::memory_order_relaxed);
@@ -8908,6 +9384,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         tex_pending = true;
         return &g_r.white;
       }
+      rit->second.last_used_frame = frame_number;
       const RendererState::TexRoute& route = rit->second;
       auto sit = g_r.tex_store.find(route.key);
       if (sit == g_r.tex_store.end()) {
@@ -9148,6 +9625,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       if (t != &g_r.white) {
         RendererState::TexStickySite& site = g_r.tex_sticky[skey];
         drop_foreign_site(site);
+        site.last_used_frame = frame_number;
         // Material-detail downgrade hold: the game's streaming demotes a
         // nearby mesh to its UN (undetailed) material for a fraction of a
         // second and back, the visible flash to completely different/
@@ -9227,6 +9705,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         const auto sit = g_r.tex_sticky.find(skey);
         if (sit != g_r.tex_sticky.end()) {
           drop_foreign_site(sit->second);
+          sit->second.last_used_frame = frame_number;
         }
         if (sit != g_r.tex_sticky.end() && sit->second.words_key != 0) {
           const auto old = g_r.tex_store.find(sit->second.words_key);
@@ -9266,9 +9745,10 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         // white flash: the emulated pop-in semantics (the game shows
         // streamed content only once its data is ready). Bounded so a
         // permanently failing texture still falls back to visible white.
-        const auto [pit, fresh] =
-            g_r.tex_pending_first.try_emplace(item.diffuse_tex, frame_number);
-        if (frame_number - pit->second < 20) {
+        const auto [pit, fresh] = g_r.tex_pending_first.try_emplace(
+            item.diffuse_tex, RendererState::PendingFirst{frame_number});
+        pit->second.last_used_frame = frame_number;
+        if (frame_number - pit->second.first_frame < 20) {
           g_skip_new.fetch_add(1, std::memory_order_relaxed);
           return;
         }
@@ -10155,9 +10635,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
           }
         }
       }
-      const uint32_t region =
-          uint32_t(frame_number % RendererState::kBoneRegions) *
-          RendererState::kRopaRegionSize;
+      const uint32_t region = bone_slot * RendererState::kRopaRegionSize;
       const uint32_t bytes = uint32_t(want_floats * sizeof(float));
       if (ng > 0 && total >= 0.5f && newest != nullptr &&
           buffers.vb_view.stride == 56 &&
@@ -10240,11 +10718,11 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       g_pw_di_submit.Add(ns(di_t3, di_t4));
     }
   };
-  // Profiling-mode consumption of the occlusion-grid readback ring (filled
-  // by the perf-items reduce in ApplySsaoPass on previous frames): newest
-  // completed slot wins, every completed slot retires. A grid that stops
-  // refreshing (AO off, loading flows) goes invalid instead of classifying
-  // against ancient depth.
+  // Consumption of the occlusion-grid readback ring (filled on previous
+  // frames by ApplySsaoPass, or by ApplyOcclusionGridPass with SSAO off):
+  // newest completed slot wins, every completed slot retires. A grid that
+  // stops refreshing (loading flows, no scene depth) goes invalid instead
+  // of classifying against ancient depth.
   const bool occl_cull_wanted =
       REXCVAR_GET(skate3_native_render_scene_occlusion_cull);
   if ((prof_items || occl_cull_wanted) && !g_r.occl_failed &&
@@ -10274,6 +10752,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
                   sizeof(g_r.occl_grid_vp));
       std::memcpy(g_r.occl_grid_cam, g_r.occl_cam[newest],
                   sizeof(g_r.occl_grid_cam));
+      g_r.occl_grid_src_ssao = g_r.occl_src_ssao[newest];
       g_r.occl_grid_frame = frame_number;
       g_r.occl_grid_valid = true;
       for (int i = 0; i < 2; ++i) {
@@ -10379,6 +10858,25 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       cam_d2 += d * d;
     }
     occl_cull_active = cam_d2 < 1.0f;
+  }
+  {
+    const char* occl_reason;
+    if (occl_cull_active) {
+      occl_reason = g_r.occl_grid_src_ssao
+                        ? "grid from the SSAO pass"
+                        : "grid from the standalone depth pass, SSAO off";
+    } else if (!occl_cull_wanted) {
+      occl_reason = "skate3_native_render_scene_occlusion_cull=false";
+    } else if (debug_mode != 0) {
+      occl_reason = "debug view";
+    } else if (g_r.occl_failed) {
+      occl_reason = "occlusion-grid resources failed";
+    } else if (!g_r.occl_grid_valid) {
+      occl_reason = "no occlusion grid in the last 240 frames";
+    } else {
+      occl_reason = "camera moved over 1 m since the grid's frame";
+    }
+    NoteOcclCullState(occl_cull_active, occl_reason);
   }
   std::vector<uint32_t> culled_ctxs;
   if (occl_cull_active) {
@@ -10948,7 +11446,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
     return it->second.valid ? &it->second : &g_r.white;
   };
   const uint32_t ui_region =
-      uint32_t(frame_number % RendererState::kUiRegions) * RendererState::kUiRegionSize;
+      g_r.ui_regions.Region(context.device, frame_number) * RendererState::kUiRegionSize;
   uint32_t ui_offset = 0;
   // A skipped spline strip or HUD draw is a visible hole; name it in the log
   // instead of dropping it silently (rolling-capped).
@@ -11133,16 +11631,28 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
     post_ran = true;
     ssao_ran = true;
   }
+  // Occlusion grid without SSAO (KI-21): the GTAO chain builds the grid
+  // when it runs; otherwise this standalone depth pass does, so the
+  // occlusion cull never depends on the AO setting. Exactly one grid build
+  // per frame either way. It leaves this frame's linear depth in
+  // ao_lin_depth, which SSR and the volumetrics then reuse like the AO
+  // plane.
+  bool lin_depth_ran = ssao_ran;
+  if (!ssao_ran && use_depth && !loading_native &&
+      ApplyOcclusionGridPass(context, cmd, scene, viewport, scissor)) {
+    post_ran = true;
+    lin_depth_ran = true;
+  }
 
   // ---- Screen-space reflections (ssr.hlsl) ----
   // March + composite onto the pre-tonemap HDR plane, between the AO pass
   // and the HDR post, so reflections tonemap and bloom exactly like
   // directly-visible scenery. The reflection G-buffer was drawn inside the
-  // scene pass (ssr_gbuf_ready); the SSAO linear-depth plane is reused when
-  // AO ran this frame.
+  // scene pass (ssr_gbuf_ready); the shared linear-depth plane is reused
+  // when the AO or occlusion-grid pass linearized this frame.
   cmd->ProfileRegion(nrhi::ProfileStage::kSsr);
   if (g_r.ssr_gbuf_ready &&
-      ApplySsrPass(context, cmd, scene, viewport, scissor, ssao_ran)) {
+      ApplySsrPass(context, cmd, scene, viewport, scissor, lin_depth_ran)) {
     post_ran = true;
   }
 
@@ -11153,7 +11663,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
   // so they bloom and tonemap like scene light.
   cmd->ProfileRegion(nrhi::ProfileStage::kVolumetrics);
   if (hdr_on && use_depth && !loading_native &&
-      ApplyVolumetricPass(context, cmd, scene, viewport, scissor, ssao_ran,
+      ApplyVolumetricPass(context, cmd, scene, viewport, scissor, lin_depth_ran,
                           frame_number)) {
     post_ran = true;
   }
@@ -11179,7 +11689,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
     cmd->SetBindingLayout(g_r.layout);
     if (g_r.shadow_cb != nullptr) {
       const uint32_t cb_offset =
-          uint32_t(frame_number % RendererState::kShadowCbRegions) *
+          g_r.shadow_cb_regions.Region(context.device, frame_number) *
         RendererState::kShadowCbSlice;
       cmd->SetConstantBuffer(6, g_r.shadow_cb, cb_offset);
       cmd->SetConstantBuffer(9, g_r.bone_ring, bone_region);
@@ -11343,7 +11853,9 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
            {-1.0f, 0.5f, 0, 0},
            {-0.5f, -0.888888896f, 1.0f, 1.77777779f}},
       };
-      const uint32_t cb_slot_base = uint32_t(frame_number % 4) * 10;
+      const uint32_t cb_slot_base =
+          g_r.pfx_cb_regions.Region(context.device, frame_number) *
+          RendererState::kPfxCbSlots;
       uint32_t cb_slot_next = 0;
       const int32_t pfx_debug =
           REXCVAR_GET(skate3_native_render_scene_photo_native_debug);
@@ -11583,7 +12095,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       cmd->SetBindingLayout(g_r.layout);
       if (g_r.shadow_cb != nullptr) {
         const uint32_t cb_offset =
-            uint32_t(frame_number % RendererState::kShadowCbRegions) *
+            g_r.shadow_cb_regions.Region(context.device, frame_number) *
         RendererState::kShadowCbSlice;
         cmd->SetConstantBuffer(6, g_r.shadow_cb, cb_offset);
         cmd->SetConstantBuffer(9, g_r.bone_ring, bone_region);
@@ -11615,7 +12127,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       if (vignette != nullptr && vignette != &g_r.white && vignette->valid &&
           vignette->srv != nullptr) {
         const uint64_t cb_offset =
-            uint64_t(frame_number % RendererState::kScreenFxCbRegions) *
+            uint64_t(g_r.screen_fx_cb_regions.Region(context.device, frame_number)) *
             RendererState::kScreenFxCbSlice;
         uint8_t* dst = g_r.screen_fx_cb_ptr + cb_offset;
         std::memset(dst, 0, RendererState::kScreenFxCbSlice);
@@ -11672,7 +12184,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         cmd->SetBindingLayout(g_r.layout);
         if (g_r.shadow_cb != nullptr) {
           const uint32_t frame_cb_offset =
-              uint32_t(frame_number % RendererState::kShadowCbRegions) *
+              g_r.shadow_cb_regions.Region(context.device, frame_number) *
               RendererState::kShadowCbSlice;
           cmd->SetConstantBuffer(6, g_r.shadow_cb, frame_cb_offset);
         }
@@ -12276,6 +12788,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
   MaybeDumpSceneRing();
   LogFrameStats(scene, frames, drawn, drawn_2d, drawn_spline, shadow_ready,
                 shadow_draws);
+  LogUploadRingStats(context.device, frames);
   return true;
 }
 
@@ -12313,6 +12826,9 @@ namespace skate3::native_scene {
 void Install() {}
 bool SceneFailed() { return false; }
 void ResetSceneFailure() {}
+bool SuppressEmulatedDrawsOverride(bool*) {
+  return false;
+}
 }  // namespace skate3::native_scene
 
 #endif  // REX_HAS_D3D12 || REX_HAS_VULKAN
