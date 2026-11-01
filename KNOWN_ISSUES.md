@@ -1974,7 +1974,7 @@ repro steps; the entry says where the problem is and how it would show.
   `gameplay (prewarm: N meshes ...)` counts match a same-machine baseline
   build without the fix (D3D12 3068 vs 3070, Vulkan 3056 vs 3056, 0 dropped,
   no unreadable records), with no new errors. Not yet played in-game.
-- **In-game test (2026-10-31):** 
+- **In-game test (2026-10-31):** Played ~100 min on the big rig (D3D12, 4K, MSAA x2) as one build stacking #38+#39+#47+#48 on main, with --skate3_native_render_scene_perf_log=true --skate3_native_render_scene_perf_items=true. User saw no problems. Log: prewarm 0 dropped and 0 decode refusals on every summary, prewarm[miss_retry=0] in all 1,202 samples, no 'guarded guest read failed' or 'DecodeMesh rejected', guest fps min 102 / avg 120, clean exit. Only ~2 area changes; not compared numerically with main; this PR was not tested on its own.
 
 ### Reviewed and ruled out (code review)
 
