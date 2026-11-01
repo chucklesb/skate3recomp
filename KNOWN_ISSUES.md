@@ -849,23 +849,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** switch both queues to `std::deque` if a profile shows lock
   contention. Turn the null re-queue into a plain wait.
 
-### KI-87: Raw guest loads in the `CaptureDynamicState` pre-check
-
-- **Status:** open · **Severity:** low–medium
-- **Area:** native renderer, guest memory safety
-- **Tracking:** none yet. Found while fixing KI-64 (#48). The biggest remaining
-  risk of the KI-64 kind.
-- **Where:** the world-path pre-check of `CaptureDynamicState` in
-  `src/skate3_native_scene.cpp`, called about 800 times a frame from
-  `OnSceneDrawList`. It reads `ctx → record → mesh → vdesc` and the vertex
-  elements raw (`REX_LOAD_U32(ctx)`, `REX_LOAD_U32(record)`,
-  `REX_LOAD_U16(vdesc + 8)` and others). Further down, `ctx + kCtxEffectList`
-  and `effect_list + kEffectListPassCount` are raw too.
-- **Problem:** a stale pointer there crashes the guest render thread, the same
-  way as KI-64.
-- **Fix:** reuse one ctx-head guarded copy, as #48's `BuildItemGeometry` does,
-  and measure the cost the same way #48 did.
-
 ### KI-88: Remaining raw guest loads elsewhere in capture (low risk)
 
 - **Status:** open · **Severity:** low
@@ -2118,6 +2101,35 @@ repro steps; the entry says where the problem is and how it would show.
   all in the top and bottom bands, which is the 16:9 behaviour. Not yet
   watched in play: needs a pan near traffic on an ultrawide output.
 - **In-game test (2026-10-31):** Played on the big rig as one build stacking #37+#50 on main 7e03084, 32:9 window (--skate3_ultrawide=true --skate3_ultrawide_target_aspect=3.56, 3840x1080 windowed, perf log on): one D3D12 run (~3.5 min gameplay, fps min 102 / avg 120) and one Vulkan run (~3.3 min, fps min 89 / avg 119). User saw nothing wrong at the screen edges on either backend. Both logs exited cleanly with no errors besides the known XMA noise. The user approved keeping #37's extra top/bottom (vertical plane) static-retention change. No log line proves the ultrawide path ran, so the evidence is visual; 21:9 was not run; this PR was not tested on its own.
+
+### KI-87: Raw guest loads in the `CaptureDynamicState` pre-check
+
+- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested unattended / awaiting in-game test · **Severity:** low–medium
+- **Area:** native renderer, guest memory safety
+- **Tracking:** rubensteezy/skate3recomp#PRNUM. Found while fixing KI-64 (#48).
+- **Where:** the world-path pre-check of `CaptureDynamicState` in
+  `src/skate3_native_scene.cpp`, called about 800 times a frame from
+  `OnSceneDrawList`. It read `ctx → record → mesh → vdesc` and the vertex
+  elements raw (`REX_LOAD_U32(ctx)`, `REX_LOAD_U32(record)`,
+  `REX_LOAD_U16(vdesc + 8)` and others). Further down, `ctx + kCtxEffectList`
+  and `effect_list + kEffectListPassCount` were raw too.
+- **Problem:** a stale pointer there crashes the guest render thread, the same
+  way as KI-64.
+- **Fix:** `CaptureDynamicState` makes one guarded copy of the MeshContext
+  head (`CopyCtxHead`, +0x00..+0x4B) up front. The pre-check, the effect-list
+  read and `BuildItemGeometry` (new overload taking the copied head) all use
+  it, so the capture path copies the head once instead of twice. The record
+  and mesh pointers are guarded single loads, and the vertex descriptor's
+  count and element table are one guarded copy each (the layout
+  `BuildItemFromMesh` reads). A failed read skips that capture (a failed
+  pass-count read keeps `passes = 1`) and is logged by `NoteGuestReadSkip`
+  as `guarded guest read failed at CaptureDynamicState ...`.
+- **Cost:** a clang-cl `/O2` microbenchmark of the old and new pre-check
+  (800 contexts, calls serialized as in the hook) measured +8 to +9 ns per
+  call, about 7 µs per frame, roughly 2% of capture time. In-game A/B boots
+  on a shared, loaded PC (guest fps about 29 on both builds) could not
+  resolve a difference: capture time moved with the unchanged frame build
+  from run to run. Item and draw counts matched main.
 
 ### Reviewed and ruled out (code review)
 
