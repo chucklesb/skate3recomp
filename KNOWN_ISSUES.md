@@ -2187,7 +2187,7 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-95: Shadow-atlas casters didn't stamp their mesh entries
 
-- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested unattended / awaiting in-game test · **Severity:** low–medium
+- **Status:** fix in review in rubensteezy/skate3recomp#59, tested unattended / awaiting in-game test · **Severity:** low–medium
 - **Area:** native renderer, shadows, mesh cache
 - **Where:** the caster loop of `RenderShadowAtlas` in
   `src/skate3_native_scene_gpu.cpp`.
