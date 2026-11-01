@@ -186,21 +186,6 @@ repro steps; the entry says where the problem is and how it would show.
   either backend, even when GPU-bound. With #28's 8 regions, the fallback
   that would need this wait can't trigger in normal operation.
 
-### KI-40: Photo FX constant slots have no bounds check
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, photo FX
-- **Tracking:** none yet. Found while fixing KI-16 (#28).
-- **Where:** `src/skate3_native_scene_gpu.cpp`, `RenderScene`, the photo FX
-  `fill_cb` lambda.
-- **Problem:** `cb_slot_next++` is never checked against
-  `RendererState::kPfxCbSlots` (10). Today at most 10 slots are used: depth
-  pack, accum feed, 6 passes, accum mode 2 and the debug view. One more pass
-  would silently write into the next frame's region, or past the end of the
-  buffer for the last region.
-- **Fix:** clamp it, or assert and log when `cb_slot_next` reaches
-  `kPfxCbSlots`.
-
 ### KI-42: Perf log line repeats the texture count
 
 - **Status:** open · **Severity:** low
@@ -1204,6 +1189,24 @@ repro steps; the entry says where the problem is and how it would show.
   inside `GuestTryCopy`.
 
 ## Resolved
+
+### KI-40: Photo FX constant slots have no bounds check
+
+- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, untested (build only;
+  the bound is not reachable today) · **Severity:** low
+- **Area:** native renderer, photo FX
+- **Tracking:** rubensteezy/skate3recomp#PRNUM. Found while fixing KI-16 (#28).
+- **Where:** `src/skate3_native_scene_gpu.cpp`, `RenderScene`, the photo FX
+  `fill_cb` lambda.
+- **Problem:** `cb_slot_next++` is never checked against
+  `RendererState::kPfxCbSlots` (10). Today at most 9 slots are used per frame
+  (depth pack, one accum pass for mode 1 or 2, 6 chain passes, the debug
+  view). One more pass would silently write into the next frame's region, or
+  past the end of the buffer for the last region.
+- **Fix:** `fill_cb` now checks `cb_slot_next` against `kPfxCbSlots`. When
+  the region is full it writes nothing, logs one warning (`photo FX constant
+  slots exhausted`) and the pass's draw is skipped (`pfx_draw`). A
+  `static_assert` keeps `kPfxCbSlots >= 9`. No change while slots fit.
 
 ### KI-72: The Defender trojan trigger shipped on main
 
