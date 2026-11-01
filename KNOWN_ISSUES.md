@@ -397,22 +397,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** release the buffers once a session's dumps are written, and
   add a counter to the file name.
 
-### KI-55: App callbacks that capture `this` are never cleared on shutdown
-
-- **Status:** open · **Severity:** low
-- **Area:** app lifetime
-- **Tracking:** none yet. Found while fixing KI-23 (#35).
-- **Where:** `OnPostSetup` / `OnShutdown` in `src/skate3_app_common.cpp`.
-- **Problem:** six callbacks capture `this` and are never cleared:
-  `input_system->SetActiveCallback`, `SetMenuChordCallback`,
-  `demo_path::SetUiInputProvider` and the three `options_menu::Set*Callback`.
-  The active callback also reads `simple_settings_dialog_` on the input path
-  while `OnShutdown` resets it on the UI thread. That's a data race or
-  use-after-free on any path where `OnShutdown` runs while the guest is
-  still alive. Today that is mainly Close Game on macOS (`QuitFromUIThread`,
-  which ends the guest after `OnShutdown`).
-- **Fix:** clear these callbacks (null or no-op) at the top of `OnShutdown`.
-
 ### KI-56: SDK key binds: duplicate registration and callbacks under the lock
 
 - **Status:** open · **Severity:** low
@@ -2118,6 +2102,37 @@ repro steps; the entry says where the problem is and how it would show.
   all in the top and bottom bands, which is the 16:9 behaviour. Not yet
   watched in play: needs a pan near traffic on an ultrawide output.
 - **In-game test (2026-10-31):** Played on the big rig as one build stacking #37+#50 on main 7e03084, 32:9 window (--skate3_ultrawide=true --skate3_ultrawide_target_aspect=3.56, 3840x1080 windowed, perf log on): one D3D12 run (~3.5 min gameplay, fps min 102 / avg 120) and one Vulkan run (~3.3 min, fps min 89 / avg 119). User saw nothing wrong at the screen edges on either backend. Both logs exited cleanly with no errors besides the known XMA noise. The user approved keeping #37's extra top/bottom (vertical plane) static-retention change. No log line proves the ultrawide path ran, so the evidence is visual; 21:9 was not run; this PR was not tested on its own.
+
+### KI-55: App callbacks that capture `this` are never cleared on shutdown
+
+- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested unattended / awaiting in-game test · **Severity:** low
+- **Area:** app lifetime
+- **Tracking:** Found while fixing KI-23 (#35).
+- **Where:** `OnPostSetup` / `OnShutdown` / `ToggleSimpleSettings` in
+  `src/skate3_app_common.cpp`.
+- **Problem:** seven callbacks capture `this` and were never cleared:
+  `input_system->SetActiveCallback`, `SetMenuChordCallback`,
+  `demo_path::SetUiInputProvider` and the four `options_menu::Set*Callback`
+  (open, save, restart, quit). The active callback also reads
+  `simple_settings_dialog_` on the input path while `OnShutdown` resets it
+  (and `ToggleSimpleSettings` first creates it) on the UI thread. That's a
+  data race or use-after-free on any path where `OnShutdown` runs while the
+  guest is still alive. Today that is mainly Close Game on macOS
+  (`QuitFromUIThread`, which ends the guest after `OnShutdown`).
+- **Why not just clear them:** every setter is a plain, unlocked
+  `std::function` store (`InputSystem::SetActiveCallback` also copies into
+  each driver) that the guest/input threads read and call without a lock.
+  Replacing one from the UI thread while another thread calls it is itself a
+  race that destroys the callable mid-call.
+- **Fix:** a `CallbackGate` (shared mutex + open flag, held by `shared_ptr`
+  so it outlives the app) is captured by all seven callbacks. Each takes the
+  lock shared and returns early (active = false, provider = null, the rest
+  no-op) once the gate is closed. `OnShutdown` closes it first, exclusively,
+  so a callback already running finishes before the dialogs are reset; it
+  logs `Skate 3 shutdown: app callbacks disabled`. The UI-thread lambdas the
+  callbacks post (menu chord, open settings) re-check the flag so a late post
+  can't recreate the settings dialog after shutdown. Writes of
+  `simple_settings_dialog_` (create and reset) take the lock exclusive.
 
 ### Reviewed and ruled out (code review)
 
