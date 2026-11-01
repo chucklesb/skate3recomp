@@ -1193,10 +1193,10 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-42: Perf log line repeats the texture count
 
-- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested
+- **Status:** fix in review in rubensteezy/skate3recomp#66, tested
   unattended / awaiting in-game test · **Severity:** low
 - **Area:** native renderer, diagnostics
-- **Tracking:** #PRNUM. Found while fixing KI-17 (#29).
+- **Tracking:** #66. Found while fixing KI-17 (#29).
 - **Where:** `LogFrameStats` in `src/skate3_native_scene_gpu.cpp`, the
   `native-scene: frame N ...` line.
 - **Problem:** `g_r.tex_store.size()` is logged three times: as
