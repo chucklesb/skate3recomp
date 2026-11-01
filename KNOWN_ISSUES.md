@@ -230,31 +230,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Fix:** clamp it, or assert and log when `cb_slot_next` reaches
   `kPfxCbSlots`.
 
-### KI-41: Shadow-pass textures can be evicted while still in use
-
-- **Status:** open (unconfirmed) · **Severity:** low–medium
-- **Area:** native renderer, shadows, texture cache
-- **Tracking:** none yet. Found while fixing KI-17 (#29).
-- **Where:** `LookupResolvedTexture` in `src/skate3_native_scene_gpu.cpp`,
-  called by `RenderShadowAtlas` for alpha-clip casters (`item.dynobj == 2`).
-  It is also called by `RenderStaticSunMap` for phase-1 `rec.diffuse_tex`,
-  but that pass is experimental since KI-5.
-- **Problem:** it reads the `tex_store` entry but never stamps its
-  `last_used_frame`. `EvictTexStore` picks eviction candidates by
-  `last_used_frame` alone, with a 5 s idle guard under byte pressure. A
-  texture used only by the shadow passes, such as an off-screen or culled
-  caster, looks idle and can be evicted. The caster passes never enqueue a
-  decode, so it stays gone until the main pass draws that item again.
-- **How it would show:** under texture-memory pressure, alpha-tested shadows
-  (foliage, fences) become solid shapes for casters outside the view.
-- **Evidence:** code reading only, not reproduced. #29 stamps the route in
-  that function but deliberately leaves the store entry alone.
-- **Next step:** after #29 lands, also set
-  `sit->second.last_used_frame = frame_number` there (#29 passes
-  `frame_number` in). Test with a small
-  `skate3_native_render_scene_tex_store_mb` near foliage and compare shadow
-  shapes with F5.
-
 ### KI-42: Perf log line repeats the texture count
 
 - **Status:** open · **Severity:** low
@@ -1949,6 +1924,36 @@ repro steps; the entry says where the problem is and how it would show.
   on the machine. Frame time should match main, and toggling the gate should
   not change it.
 - **In-game test (2026-10-29):** user on D3D12, 4K, about 6.5 minutes with the upload-ring log on and nothing compiling in the background: replay editor ran smoothly. Log: 118 fps average at the 120 fps cap (one 5 s dip to 94 fps), 0 fallbacks, no 'regions in flight' warnings, GPU at most 2 frames behind, region pick cost about 0.3 us per frame; switching the gate off and on again left the frame rate at 120. The earlier replay-editor slowdown was a build running on the same machine, not this change. Not re-tested on Vulkan.
+
+### KI-41: Shadow-pass textures could be evicted while still in use
+
+- **Status:** fixed in rubensteezy/skate3recomp#56, tested in-game on 2026-10-31 · **Severity:** low–medium
+- **Area:** native renderer, shadows, texture cache
+- **Where:** `LookupResolvedTexture` in `src/skate3_native_scene_gpu.cpp`.
+  `RenderShadowAtlas` calls it for alpha-clip casters (`item.dynobj == 2`) and
+  `RenderStaticSunMap` (experimental since KI-5) for phase-1
+  `rec.diffuse_tex`.
+- **Problem:** the lookup stamped the route but not the `tex_store` entry.
+  `EvictTexStore` picks candidates by `last_used_frame` alone, with a 5 s idle
+  guard under byte pressure. A texture that only the shadow passes sample (a
+  caster the main pass occlusion-culls or does not draw) looked idle and was
+  evicted. The caster passes never enqueue a decode, so it stayed gone and the
+  alpha-tested caster cast a solid shape until the main pass drew the item
+  again.
+- **Evidence:** reproduced with temporary counters (not committed) in the
+  lookup, on unattended `--skate3_demo_path=true` boots in the plaza spawn
+  with `--skate3_native_render_scene_experimental_static_shadows=true` and a
+  64 MB store budget (the debug build lowered the 256 MB floor). Over about
+  33,000 frames, shadow lookups of a key the shadow pass had sampled before but
+  that was no longer in the store: 228 of 9,588 on D3D12 and 229 of 9,588 on
+  Vulkan. With the stamp: 0 on both. The store held the same size (about
+  430 entries, 65 MB) either way. In this spawn, every lookup came from the
+  static sun map: no `dynobj == 2` casters were in view, so the default
+  settings did not hit it there. The evicted caster was off-screen, so the
+  screenshots showed no visible change.
+- **Fix:** `LookupResolvedTexture` also sets the store entry's
+  `last_used_frame` to the current frame. Both callers go through it.
+- **In-game test (2026-10-31):** Played ~15 min on the big rig (D3D12, 4K) with --skate3_native_render_scene_tex_store_mb=256: no tree/fence shadow cut-outs seen, 'tex store LRU start' logged 71 times (eviction pressure reached), clean exit. No log counter exists for the evicted-texture lookup, so the evidence is visual only.
 
 ### Reviewed and ruled out (code review)
 

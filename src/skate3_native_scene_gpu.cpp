@@ -6686,10 +6686,11 @@ void ReleaseRetiredAndFlushCaches(const NativeGuestOutputRenderContext& context)
   // three cascade tiles with the captured light rows, then applies the
   // game's coverage blur + depth dilation. Runs before the main pass so the
   // scene shader can sample the finished atlas.
-// Read-only resolved-texture lookup (route -> store entry) for the caster
-// passes' alpha-test binding: the main pass owns decode scheduling and
-// live guest reads; an unresolved diffuse just casts opaque for the frames
-// a first-sight decode takes.
+// Resolved-texture lookup (route -> store entry) for the caster passes'
+// alpha-test binding. It never decodes or reads the guest: the main pass
+// owns decode scheduling and live guest reads; an unresolved diffuse just
+// casts opaque for the frames a first-sight decode takes. It does stamp
+// the route and the store entry as used, so the LRUs keep them.
 static nrhi::TextureView* LookupResolvedTexture(uint32_t tex_ptr,
                                                 uint64_t frame_number) {
   if (tex_ptr == 0) {
@@ -6704,6 +6705,13 @@ static nrhi::TextureView* LookupResolvedTexture(uint32_t tex_ptr,
   if (sit == g_r.tex_store.end() || !sit->second.valid) {
     return nullptr;
   }
+  // Stamp the store entry too (KI-41): a caster the main pass does not draw
+  // this frame (occlusion-culled, or outside the view) is still sampled
+  // here, and an unstamped entry looks idle to EvictTexStore. Evicted, it
+  // stays gone, because the caster passes never enqueue a decode, so the
+  // alpha-tested shadow would cast as a solid shape until the main pass
+  // draws the item again.
+  sit->second.last_used_frame = frame_number;
   return sit->second.srv;
 }
 
