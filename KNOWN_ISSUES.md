@@ -577,28 +577,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** check whether the popup layout uses the +0 field at all, or
   needs another flag to show a title.
 
-### KI-72: The Defender trojan trigger still ships on main
-
-- **Status:** open · **Severity:** medium (blocks the next release)
-- **Area:** Windows release, exe icon
-- **Tracking:** rubensteezy/skate3recomp#18 (open). Raised again while fixing
-  KI-29 (#41).
-- **Where:** `EnsureExeIconResource` and `SpawnPreIconDeleter` in
-  `src/skate3_win_icon.cpp`.
-- **Problem:** #18 removes the self-patching exe icon that makes Defender flag
-  the Windows zip as a trojan, but it isn't merged. So `main` still patches
-  every fresh `skate3.exe` on first run, parks the old exe in `%TEMP%`, and
-  starts a hidden `powershell.exe -WindowStyle Hidden` deleter. Any release cut
-  from `main` keeps the trigger.
-- **Also:**
-  - #18 removes the `%TEMP%\skate3-pre-icon-*.old` sweep and has no
-    `.icon-new` cleanup. Once it merges, the hidden 100 MB parked exes and
-    crash leftovers already on v2.1.0 users' machines are never removed.
-  - #41 (KI-29) hardens the same self-patch code, so it conflicts with #18.
-- **Next step:** decide on #18 and merge it before the next release. Keep a
-  one-time, delete-only sweep of the old leftovers in it: either rebase #41
-  down to just its `CleanupStaleIconTemp`, or close #41.
-
 ### KI-73: Exe path lookup truncates on long install paths
 
 - **Status:** open · **Severity:** low
@@ -985,6 +963,10 @@ repro steps; the entry says where the problem is and how it would show.
   pressure there needs a code change.
 - **Next step:** if testing at low budgets matters, lower the floor for dev
   builds or add a debug cvar.
+- **Same for meshes (from KI-95, #59):** `skate3_native_render_scene_mesh_store_mb`
+  has the same `.range(256, 16384)` and `EvictMeshStore` the same
+  `std::max(256, …)`. The mesh working set is about 40 MB, so mesh-store
+  pressure can't be reproduced without a code change either.
 
 ### KI-98: B doesn't dismiss the Options menu's custom popups
 
@@ -1115,7 +1097,96 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** show a message box (or an ImGui notice in the wizard) with
   the `SKATE3_INSTALL_ISO` hint.
 
+### KI-106: `OnShutdown` cleanup never runs on Windows or Linux
+
+- **Status:** open · **Severity:** low
+- **Area:** app lifetime, SDK
+- **Tracking:** none yet. Found while fixing KI-55 (#57).
+- **Where:** `ReXApp::OnClosing` in rexglue-sdk `src/ui/rex_app.cpp`.
+- **Problem:** on Windows and Linux, window close and Restart Now `_Exit`
+  before `OnShutdown` is called, so the shutdown cleanup (KI-23's unbinds,
+  #57's callback gate) only runs on macOS. This is deliberate in the SDK (it
+  avoids teardown deadlocks), but it means nothing on Windows can show that
+  shutdown code ran.
+- **Next step:** document it next to `OnShutdown`, or decide whether any
+  cleanup must also run on the hard-exit path.
+
+### KI-107: Settings dialog visibility is read across threads without sync
+
+- **Status:** open · **Severity:** low
+- **Area:** app, settings dialog
+- **Tracking:** none yet. Found while fixing KI-55 (#57).
+- **Where:** the active-input callback in `src/skate3_app_common.cpp` reads
+  `SimpleSettingsDialog::visible()` on the input thread while the UI thread
+  runs Show/Hide.
+- **Problem:** a plain bool read and written on two threads: a data race,
+  probably harmless in practice.
+- **Next step:** make the flag atomic in the SDK if a sanitizer ever flags it.
+
+### KI-108: Backups made within the same second can be pruned out of order
+
+- **Status:** open · **Severity:** low
+- **Area:** profiles, safe file writes
+- **Tracking:** none yet. Found while fixing KI-80 (#58).
+- **Where:** `PruneBackups` in `src/skate3_safe_file.cpp` (shared by the
+  `.bad-` and `.dropped-` backups).
+- **Problem:** with more than 5 backups in one second, the base name sorts as
+  the oldest and is pruned, and the next backup reuses that freed name, so it
+  can be pruned first next time. Negligible in practice.
+- **Next step:** sort by stamp plus numeric suffix, or by write time.
+
+### KI-109: `LoadProfiles` runs twice at boot
+
+- **Status:** open · **Severity:** low
+- **Area:** profiles
+- **Tracking:** none yet. Found while fixing KI-80 (#58).
+- **Where:** `OnFinalizePaths` and `ApplySelectedProfileToRuntime`.
+- **Problem:** the file is parsed twice, so every load warning (for example
+  a skipped entry) is logged twice. Cosmetic.
+- **Next step:** load once and pass the result on, or log the warnings once.
+
+### KI-110: Decode/prewarm workers fault on wild guest pointers during streaming
+
+- **Status:** open (unconfirmed) · **Severity:** low–medium
+- **Area:** native renderer, streaming, guest memory safety
+- **Tracking:** none yet. Found while testing KI-87 (#60).
+- **Symptom:** one of 16 unattended D3D12 boots logged 271
+  `Unhandled guest access violation: read of guest 0x3F800000 / 0x69676874 ...`
+  lines during a streaming burst (frames ~1800–2400), from the threads that
+  also log `mesh ... decoded N verts outside bbox`, plus a one-off
+  `rej[chain=743]`. The process survived.
+- **Cause so far:** the bad addresses are a float (1.0f) and ASCII text read as
+  pointers, so some decode/prewarm path reads stale guest data. Not caused by
+  #60: those threads don't run `CaptureDynamicState`. Call site not found yet.
+- **Next step:** per-site logging (or a debugger) in the mesh decode/prewarm
+  path to find the faulting load, then guard it the way KI-64 did.
+
 ## Resolved
+
+### KI-72: The Defender trojan trigger shipped on main
+
+- **Status:** fixed in rubensteezy/skate3recomp#18, tested in-game on 2026-10-31 · **Severity:** medium (blocked the next release)
+- **Area:** Windows release, exe icon
+- **Tracking:** rubensteezy/skate3recomp#18 (merged 2026-10-31). Raised again while fixing
+  KI-29 (#41).
+- **Where:** `EnsureExeIconResource` and `SpawnPreIconDeleter` in
+  `src/skate3_win_icon.cpp`.
+- **Problem:** #18 removes the self-patching exe icon that makes Defender flag
+  the Windows zip as a trojan, but it isn't merged. So `main` still patches
+  every fresh `skate3.exe` on first run, parks the old exe in `%TEMP%`, and
+  starts a hidden `powershell.exe -WindowStyle Hidden` deleter. Any release cut
+  from `main` keeps the trigger.
+- **Also:**
+  - #18 removes the `%TEMP%\skate3-pre-icon-*.old` sweep and has no
+    `.icon-new` cleanup. Once it merges, the hidden 100 MB parked exes and
+    crash leftovers already on v2.1.0 users' machines are never removed.
+  - #41 (KI-29) hardens the same self-patch code, so it conflicts with #18.
+- **Next step:** decide on #18 and merge it before the next release. Keep a
+  one-time, delete-only sweep of the old leftovers in it: either rebase #41
+  down to just its `CleanupStaleIconTemp`, or close #41.
+- **In-game test (2026-10-31):** played ~13 min on the big rig (D3D12, 4K) on
+  main 9c57d88 after #18 merged: no win-icon, icon-patched or icon-new log lines,
+  clean exit. The old-leftover sweep and #41's conflict are still open (#41).
 
 ### KI-1: Texture pop-in and flicker while streaming
 
