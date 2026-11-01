@@ -504,21 +504,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** confirm by reading the code, then send misses back to
   `g_miss_queue` with their kind kept.
 
-### KI-67: Mesh decodes that always fail are retried every frame
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, streaming
-- **Tracking:** none yet. Found while fixing KI-27 (#39).
-- **Where:** `ProcessPrewarmEntry` → `PrewarmCommit` → the draw path in
-  `src/skate3_native_scene_gpu.cpp`.
-- **Problem:** a failed mesh decode is committed with `mesh_valid=false` and
-  its in-flight key is released. The next draw-path miss calls
-  `EnqueueMeshMiss` again, with no negative cache or backoff (textures have
-  `RetryBackoff`, meshes don't). So a mesh that can never decode costs a
-  pointless worker decode every frame it's visible. #39's new rejections are
-  cheap and run before any copy, but other failures still do the full work.
-- **Fix:** a per-mesh fail count with backoff, like `GuestTexture::fail_count`.
-
 ### KI-68: Prewarm log counts are misleading
 
 - **Status:** open · **Severity:** low
@@ -1162,6 +1147,32 @@ repro steps; the entry says where the problem is and how it would show.
   path to find the faulting load, then guard it the way KI-64 did.
 
 ## Resolved
+
+### KI-67: Mesh decodes that always fail are retried every frame
+
+- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested
+  unattended / awaiting in-game test · **Severity:** low
+- **Area:** native renderer, streaming
+- **Tracking:** rubensteezy/skate3recomp#PRNUM. Found while fixing KI-27 (#39).
+- **Where:** `ProcessPrewarmEntry` → `PrewarmCommit` → the draw path in
+  `src/skate3_native_scene_gpu.cpp`.
+- **Problem:** a failed mesh decode is committed with `mesh_valid=false` and
+  its in-flight key is released. The next draw-path miss calls
+  `EnqueueMeshMiss` again, with no negative cache or backoff (textures have
+  `RetryBackoff`, meshes don't). So a mesh that can never decode costs a
+  pointless worker decode every frame it's visible.
+- **Fix:** `PrewarmCommit` records each failed mesh decode in
+  `g_mesh_miss_fail` (fail count, payload fingerprint, retry frame) on the
+  texture ladder (`RetryBackoff`: 8/16/32/64 frames, capped at 120). Both
+  draw-path `EnqueueMeshMiss` sites skip the enqueue while
+  `MeshMissBackingOff` says the same payload is still backing off. A changed
+  payload fingerprint retries at once, the cap keeps retrying an unchanged
+  one, and a successful commit clears the entry.
+- **Measured** (unattended demo path, temporary counters plus a forced failure
+  of every 32nd mesh for 120 s): failing worker decodes went from ~320/s to
+  ~3/s. Once the forced failures stopped, the visible meshes decoded within
+  the next 10 s window in both runs. The plain demo path had no failing mesh
+  decodes at all.
 
 ### KI-72: The Defender trojan trigger shipped on main
 
