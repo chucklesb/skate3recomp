@@ -13,7 +13,9 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <deque>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -713,6 +715,8 @@ struct SceneRingFrame {
   std::vector<SceneRingItem> items;
 };
 inline std::deque<SceneRingFrame> g_scene_ring;  // render thread only
+// Ring depth in rendered frames: about 17 s at 144 fps (the RB+A dump is
+// documented as retroactive ~17 s), about 40 s at 60 fps.
 constexpr size_t kSceneRingFrames = 2400;
 inline std::atomic<bool> g_scene_ring_dump{false};
 

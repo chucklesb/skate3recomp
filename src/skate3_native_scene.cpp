@@ -1194,6 +1194,19 @@ REXCVAR_DEFINE_INT32(skate3_native_render_scene_perf_interval, 600, "Skate 3",
     .range(60, 6000)
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
+// KI-16 upload rings (UploadRingRegions). gate=false restores the pre-#28
+// `frame_number % N` region pick at runtime, for an A/B frame-rate check;
+// log=true writes one "upload rings:" counter line per perf interval.
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_upload_ring_gate, true, "Skate 3",
+                    "DEBUG: give each upload/constant ring region only after the "
+                    "GPU finished with it (KI-16). Off = the old frame_number % N "
+                    "pick, for A/B checks")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_upload_ring_log, false, "Skate 3",
+                    "DEBUG: log upload-ring pick counters, frame rate and GPU lag "
+                    "once per skate3_native_render_scene_perf_interval frames")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_occlusion_cull, true, "Skate 3",
                     "Skip drawing static world items whose bounds are "
                     "provably hidden behind already-rendered geometry (depth-"
@@ -1237,7 +1250,7 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_perf_items, false, "Skate 3",
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_ring, false, "Skate 3",
-                    "Record a rolling per-frame scene-composition ring (~900 "
+                    "Record a rolling per-frame scene-composition ring (2400 "
                     "frames); F7 dumps it to logs/scene_ring_<ts>.csv for "
                     "diffing 1-2 frame artifacts no capture can catch")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);

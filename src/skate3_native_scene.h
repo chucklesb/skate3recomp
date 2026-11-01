@@ -742,6 +742,13 @@ bool SceneFailed();
 // failure can succeed on retry; a persistent one simply re-latches).
 void ResetSceneFailure();
 
+// F12 debug dialog (UI thread): true while a menu or photo window holds the
+// render thread's override on the SDK's native_render_suppress_emulated_draws
+// cvar (SdkCvarOverride, KI-11), so the live cvar may carry the forced value.
+// *user_value then gets the user's own setting, which the window restores
+// when it closes. The dialog shows that value and leaves the cvar alone.
+bool SuppressEmulatedDrawsOverride(bool* user_value);
+
 // Debug-dialog cache flushes (F12 native-render debug menu): retire every
 // cached GPU texture / mesh decode so hot-toggled decode settings (mip
 // chains, revalidation, ...) rebuild immediately.
@@ -756,7 +763,7 @@ void FlushMeshCache();
 void RecordCameraSignal(double seconds);
 
 // F7: dump the rolling per-frame scene-composition ring (one compact
-// signature per item per frame for the last ~900 frames) to
+// signature per item per frame for the last 2400 frames) to
 // logs/scene_ring_<ts>.csv on the render thread's next frame. Diffing the
 // artifact frame against its neighbors names exactly which item appeared /
 // vanished / changed textures during a 1-2 frame flash no capture can catch.
