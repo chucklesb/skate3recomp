@@ -706,19 +706,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** when `save_blocked` is set, show a dialog or boot signed out.
   Confirm and document the default-profile write condition.
 
-### KI-80: Profiles with a missing id, gamertag or XUID are lost on the next save
-
-- **Status:** open · **Severity:** low–medium
-- **Area:** profiles
-- **Tracking:** none yet. Found while fixing KI-59 (#45).
-- **Where:** `LoadProfiles` in `src/skate3_user_settings.cpp`.
-- **Problem:** such entries are dropped at load (#45 adds a warning), so the
-  next save removes them from the file. With #36's stricter
-  `ParseXuidString`, more hand-edited XUID strings parse to 0 and are
-  dropped.
-- **Next step:** keep unusable entries unchanged on save, or back the file up
-  the first time anything is dropped.
-
 ### KI-81: Non-ASCII paths are mis-decoded, and `path.string()` may throw on them
 
 - **Status:** open (mis-decoding confirmed; throwing unverified) ·
@@ -2205,6 +2192,60 @@ repro steps; the entry says where the problem is and how it would show.
   already writes a temp file and renames it, but doesn't flush it to disk and
   rewrites a malformed file without a backup.
 - **In-game test (2026-10-31):** Played on the big rig as one build stacking #36+#45 on main 097e823, with the user's real profiles.toml (backed up first). Changed the gamertag Tom -> Tom- on the Esc overlay profile page and saved: the file was rewritten as valid TOML with the xuid unchanged (B13E07DFF9AB6772), no .tmp or backup left in the folder. After a restart the game showed Tom- and did not rewrite the file. No "Profiles:" log lines, clean exits. Not exercised in-game: a gamertag with a quote or backslash (escaping) and an unparseable file (backup path); those are covered only by the unattended tests in the PR. This PR was not tested on its own.
+
+### KI-80: Profiles with a missing id, gamertag or XUID are lost on the next save
+
+- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested unattended /
+  awaiting in-game test · **Severity:** low–medium
+- **Area:** profiles
+- **Tracking:** rubensteezy/skate3recomp#PRNUM. Found while fixing KI-59 (#45).
+- **Where:** `LoadProfiles` and `SaveProfiles` in
+  `src/skate3_user_settings.cpp`, `WriteBackupCopy` in
+  `src/skate3_safe_file.cpp`.
+- **Cause:** `LoadProfiles` skips `profiles` entries without a usable id,
+  gamertag and xuid (a hand-edited XUID that #36's stricter
+  `ParseXuidString` reads as 0, a missing field, a non-table entry). The
+  next save rewrites the file from the in-memory store, so they were gone
+  from disk with only a load-time warning.
+- **Fix:** before `SaveProfiles` replaces the file, it reads the current
+  file and checks whether the save would drop anything: an entry
+  `LoadProfiles` would skip, a `profiles` key that isn't an array, or a file
+  that no longer parses. If so, it first writes the old bytes to
+  `profiles.toml.dropped-YYYYMMDD-HHMMSS` in the same folder (crash-safe, via
+  `WriteFileAtomic`; the newest 5 are kept, separately from the `.bad-`
+  backups) and logs "the old file is backed up as <path>". If that backup
+  can't be written, the save is refused and the file is left as it was.
+  After the first such save the file has no unusable entries, so later saves
+  make no more backups. The load warning now says the next save backs the
+  file up first.
+- **Why a backup and not keeping the entries:** writing an unusable entry
+  back unchanged means re-serialising arbitrary TOML (nested tables,
+  non-table array items, comments) inside `[[profiles]]`, which the writer
+  can't do faithfully. A byte-exact copy of the old file loses nothing and
+  reuses the KI-59 backup code; the check runs at save time on the file
+  actually being replaced, so repeated `LoadProfiles` calls and repeated
+  saves of one store don't create duplicate backups.
+- **Tests:** a standalone harness (real `skate3_safe_file.cpp` and
+  `skate3_user_settings.cpp`, stub `rex/cvar.h` and `rex/logging.h`, the
+  SDK's toml++) passes: a file with one good entry and one entry with
+  `xuid = "12-34"` loads 1 profile with the warning; the first save leaves
+  one `.dropped-` backup byte-identical to the old file and a new file
+  without the bad entry; reloading logs no warning and two more saves make
+  no more backups; a clean file and a missing file make no backup;
+  `profiles = "oops"` and an entry without a gamertag are backed up; 7
+  rounds prune to 5 `.dropped-` backups and leave `.bad-` files alone; with
+  every backup name taken the save returns false and the file is unchanged;
+  an unparseable file at load still goes to `.bad-` (KI-59) with no extra
+  `.dropped-` copy; a file broken after load is backed up before the save.
+  Demo-path boot (relwithdebinfo, `--user_data_root=<scratch>`, signed in)
+  with a file holding one good profile and one with `xuid = "12-34-56"`:
+  logged the "skipped 1 entry ... backs the file up" warning, used the good
+  profile (save created under `B13E07DFF9AB6772`), and left the file
+  byte-identical. Startup only saves when there is no file, so the
+  backup-on-save path itself is covered by the harness only.
+- **Not tested in the game:** saving from the profile page of the settings
+  dialog with an unusable entry in the file, which needs a person at the
+  controls.
 
 ### Reviewed and ruled out (code review)
 
