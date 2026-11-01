@@ -2083,7 +2083,7 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-55: App callbacks that capture `this` are never cleared on shutdown
 
-- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested unattended / awaiting in-game test · **Severity:** low
+- **Status:** fix in review in rubensteezy/skate3recomp#57, tested unattended / awaiting in-game test · **Severity:** low
 - **Area:** app lifetime
 - **Tracking:** Found while fixing KI-23 (#35).
 - **Where:** `OnPostSetup` / `OnShutdown` / `ToggleSimpleSettings` in
