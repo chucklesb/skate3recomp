@@ -201,20 +201,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Fix:** clamp it, or assert and log when `cb_slot_next` reaches
   `kPfxCbSlots`.
 
-### KI-42: Perf log line repeats the texture count
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, diagnostics
-- **Tracking:** none yet. Found while fixing KI-17 (#29).
-- **Where:** `LogFrameStats` in `src/skate3_native_scene_gpu.cpp`, the
-  `native-scene: frame N ...` line.
-- **Problem:** `g_r.tex_store.size()` is logged three times: as
-  `2d[... textures=]`, as `textures=` and as `store[n=]`. The 2D
-  `textures=` field looks like a leftover from a separate 2D cache that no
-  longer exists, so it misleads.
-- **Fix:** drop the 2D `textures=` field, or make it count something
-  2D-specific.
-
 ### KI-43: A script/debug getter reads the scaled cull threshold
 
 - **Status:** open (unconfirmed) · **Severity:** low
@@ -1204,6 +1190,22 @@ repro steps; the entry says where the problem is and how it would show.
   inside `GuestTryCopy`.
 
 ## Resolved
+
+### KI-42: Perf log line repeats the texture count
+
+- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested
+  unattended / awaiting in-game test · **Severity:** low
+- **Area:** native renderer, diagnostics
+- **Tracking:** #PRNUM. Found while fixing KI-17 (#29).
+- **Where:** `LogFrameStats` in `src/skate3_native_scene_gpu.cpp`, the
+  `native-scene: frame N ...` line.
+- **Problem:** `g_r.tex_store.size()` is logged three times: as
+  `2d[... textures=]`, as `textures=` and as `store[n=]`. The 2D
+  `textures=` field looks like a leftover from a separate 2D cache that no
+  longer exists, so it misleads.
+- **Fix:** dropped the 2D `textures=` field. The line now reads
+  `2d[other= dropped= askip= astale=]`; all other fields keep their order.
+  No script in the repo parses the field.
 
 ### KI-72: The Defender trojan trigger shipped on main
 
