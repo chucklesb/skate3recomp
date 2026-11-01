@@ -2522,10 +2522,25 @@ bool BuildItemFromMesh(uint8_t* base, uint32_t mesh, DrawItem& item) {
           // fetch-constant type bits before trusting the pointer.
           // Guarded: the prewarm walks materials whose stream records /
           // texture objects may not be loaded yet.
+          // KI-110: some texture channels carry a +0x1C word that is not a
+          // pointer at all (seen: 0x3F800000 = 1.0f, 0x69676874 = "ight"),
+          // so this probe faults once per such channel during streaming
+          // bursts. The guard catches it and the guid lookup below takes
+          // over, but the SDK's vectored handler runs BEFORE the SEH guard
+          // and logs every caught fault as "Unhandled guest access
+          // violation". Name the site here so those lines can be told apart
+          // from a real unguarded load.
           const uint32_t stream = chan_u32(i, 0x1C);
           uint32_t tex = 0, tex_w0 = 0;
-          if (GuestTryLoadU32(base, stream, &tex) &&
-              GuestTryLoadU32(base, tex + 7 * 4, &tex_w0) && (tex_w0 & 3u) == 2u) {
+          if (!GuestTryLoadU32(base, stream, &tex)) {
+            if (stream >= 0x10000) {
+              NoteGuestReadSkip("material channel stream probe", stream);
+            }
+          } else if (!GuestTryLoadU32(base, tex + 7 * 4, &tex_w0)) {
+            if (tex >= 0x10000) {
+              NoteGuestReadSkip("material channel texture probe", tex + 7 * 4);
+            }
+          } else if ((tex_w0 & 3u) == 2u) {
             *slot = tex;
           }
           if (*slot == 0) {
