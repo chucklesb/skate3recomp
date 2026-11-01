@@ -2016,9 +2016,21 @@ bool ComputeItemFingerprint(uint8_t* base, DrawItem& item) {
 // channels, payload fingerprint) into the item. The draw list and world
 // transform are the caller's responsibility (world starts as identity).
 bool BuildItemFromMesh(uint8_t* base, uint32_t mesh, DrawItem& item) {
-  const uint32_t vdesc = REX_LOAD_U32(mesh + kMeshVertexDescriptor);
-  const uint32_t ib = REX_LOAD_U32(mesh + kMeshIndexBuffer);
-  const uint32_t vb = REX_LOAD_U32(mesh + kMeshVertexBuffer);
+  // Every mesh-record field the walk reads (bbox +0x00..0x1F, material
+  // +0x24, descriptor +0x28, IB +0x30, VB +0x34) comes from ONE guarded
+  // snapshot: the registration prewarm runs this on its decode workers
+  // against addresses registered earlier, and a raw load of a stale or
+  // unmapped record there faults the process instead of skipping the mesh
+  // (KI-26). Capture-path callers get the same clean failure.
+  uint32_t hdr[kMeshVertexBuffer / 4 + 1];
+  if (mesh < 0x10000 || !GuestTryCopy(hdr, REX_RAW_ADDR(mesh), sizeof(hdr))) {
+    g_rej_chain.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
+  const auto hdr_u32 = [&hdr](uint32_t off) { return BSwap32(hdr[off / 4]); };
+  const uint32_t vdesc = hdr_u32(kMeshVertexDescriptor);
+  const uint32_t ib = hdr_u32(kMeshIndexBuffer);
+  const uint32_t vb = hdr_u32(kMeshVertexBuffer);
   if (!GuestReadableApprox(base, vdesc) || !GuestReadableApprox(base, ib) ||
       !GuestReadableApprox(base, vb)) {
     g_rej_chain.fetch_add(1, std::memory_order_relaxed);
@@ -2128,8 +2140,8 @@ bool BuildItemFromMesh(uint8_t* base, uint32_t mesh, DrawItem& item) {
 
   // Mesh BBox = two Vector4s at +0x00/+0x10. Reject NaN/absurd bounds.
   for (int axis = 0; axis < 3; ++axis) {
-    const float lo = LoadGuestF32(base, mesh + axis * 4);
-    const float hi = LoadGuestF32(base, mesh + 0x10 + axis * 4);
+    const float lo = std::bit_cast<float>(hdr_u32(axis * 4));
+    const float hi = std::bit_cast<float>(hdr_u32(0x10 + axis * 4));
     if (!(hi - lo < 50000.0f)) {
       g_rej_bbox.fetch_add(1, std::memory_order_relaxed);
       return false;
@@ -2203,7 +2215,7 @@ bool BuildItemFromMesh(uint8_t* base, uint32_t mesh, DrawItem& item) {
   // loading, where raw reads fault the thread. (The capture path gets the
   // same copies; one memcpy per material beats ~8 volatile loads per
   // channel anyway.)
-  const uint32_t material = REX_LOAD_U32(mesh + kMeshMaterial);
+  const uint32_t material = hdr_u32(kMeshMaterial);
   uint32_t mat_head[3] = {};
   if (GuestReadableApprox(base, material) &&
       GuestTryCopy(mat_head, REX_RAW_ADDR(material), sizeof(mat_head))) {

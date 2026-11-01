@@ -124,13 +124,6 @@ repro steps; the entry says where the problem is and how it would show.
   static retention test, so on ultrawide outputs vehicles at the screen edges
   can drop out of retention too early.
 
-### KI-26: ProcessPrewarmEntry does an unguarded read on a worker
-
-- **Status:** open · **Severity:** low · was BT-19
-- **Where:** `src/skate3_native_scene_gpu.cpp`
-- **Problem:** it does a guarded copy into `record` that is never used, then a
-  raw `REX_LOAD` on the worker thread.
-
 ### KI-27: DecodeMesh input validation
 
 - **Status:** open · **Severity:** low · was BT-20
@@ -1954,6 +1947,34 @@ repro steps; the entry says where the problem is and how it would show.
 - **Fix:** `LookupResolvedTexture` also sets the store entry's
   `last_used_frame` to the current frame. Both callers go through it.
 - **In-game test (2026-10-31):** Played ~15 min on the big rig (D3D12, 4K) with --skate3_native_render_scene_tex_store_mb=256: no tree/fence shadow cut-outs seen, 'tex store LRU start' logged 71 times (eviction pressure reached), clean exit. No log counter exists for the evicted-texture lookup, so the evidence is visual only.
+
+### KI-26: ProcessPrewarmEntry did an unguarded read on a worker
+
+- **Status:** fixed in rubensteezy/skate3recomp#38, tested in-game on 2026-10-31
+- **Tracking:** rubensteezy/skate3recomp#38
+- **Problem:** `ProcessPrewarmEntry` (`src/skate3_native_scene_gpu.cpp`) made
+  a guarded copy of the mesh record into `record` and never used it. It then
+  read the island count (+0x38) and island-params pointer (+0x44) with raw
+  `REX_LOAD_U32` on the prewarm decode worker. `BuildItemFromMesh`
+  (`src/skate3_native_scene.cpp`), which the worker calls next, also read the
+  mesh's bbox, material, vertex descriptor and buffer pointers with raw loads.
+- **Cause:** registration hands the workers mesh addresses that can go stale
+  (map change, streaming decommit) before a worker gets to them. On Windows a
+  raw load of an unmapped page there is an access violation that kills the
+  process. On POSIX the worker's read-fault recovery hides it but reads junk.
+  The guarded copy only covered the record at the moment it was taken.
+- **Fix:** the worker reads +0x38 and +0x44 from the guarded `record`
+  snapshot. `BuildItemFromMesh` now takes one guarded copy of the mesh header
+  (+0x00..+0x37) and reads every field from it, so both the prewarm and the
+  capture callers fail cleanly instead of faulting. An unreadable record
+  skips the entry through the existing frame-paced retry/drop path, is
+  counted in `g_prewarm_unreadable`, and logs
+  `prewarm skipped unreadable mesh record` (first 16 only).
+- **Tested:** unattended demo-path boots on D3D12 and Vulkan. The
+  `gameplay (prewarm: N meshes ...)` counts match a same-machine baseline
+  build without the fix (D3D12 3068 vs 3070, Vulkan 3056 vs 3056, 0 dropped,
+  no unreadable records), with no new errors. Not yet played in-game.
+- **In-game test (2026-10-31):** Played ~100 min on the big rig (D3D12, 4K, MSAA x2) as one build stacking #38+#39+#47+#48 on main, with --skate3_native_render_scene_perf_log=true --skate3_native_render_scene_perf_items=true. User saw no problems. Log: prewarm 0 dropped and 0 decode refusals on every summary, prewarm[miss_retry=0] in all 1,202 samples, no 'guarded guest read failed' or 'DecodeMesh rejected', guest fps min 102 / avg 120, clean exit. Only ~2 area changes; not compared numerically with main; this PR was not tested on its own.
 
 ### Reviewed and ruled out (code review)
 

@@ -5010,10 +5010,25 @@ void ProcessPrewarmEntry(uint8_t* base, const PrewarmEntry& e) {
     g_prewarm_out.push_back(std::move(res));
     return;
   }
+  // Every field this worker reads at the mesh address comes from ONE
+  // guarded snapshot (KI-26): registration hands the workers addresses that
+  // can go stale (map change, streaming decommit) before they are
+  // processed, and a raw load of an unmapped record faults the process.
+  // BuildItemFromMesh takes its own guarded header copy for the same reason.
   uint8_t record[0x60];
   DrawItem item{};
-  if (!GuestTryCopy(record, base + e.mesh, sizeof(record)) ||
-      !BuildItemFromMesh(base, e.mesh, item)) {
+  const bool record_ok =
+      e.mesh >= 0x10000 && GuestTryCopy(record, base + e.mesh, sizeof(record));
+  if (!record_ok) {
+    const uint64_t n = g_prewarm_unreadable.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (g_prewarm_unreadable_log_budget.load(std::memory_order_relaxed) > 0 &&
+        g_prewarm_unreadable_log_budget.fetch_sub(1, std::memory_order_relaxed) > 0) {
+      REXLOG_INFO("native-scene: prewarm skipped unreadable mesh record {:08X} "
+                  "(retries left {}, {} unreadable so far)",
+                  e.mesh, e.retries, n);
+    }
+  }
+  if (!record_ok || !BuildItemFromMesh(base, e.mesh, item)) {
     // Buffer objects can finish initializing shortly after registration;
     // retries are re-injected frame-paced by the render thread.
     bool dropped = false;
@@ -5036,10 +5051,16 @@ void ProcessPrewarmEntry(uint8_t* base, const PrewarmEntry& e) {
   }
   // One representative draw entry so DecodeMesh's two-sided-sheet detection
   // keys off the real primitive type (empty draw lists would pass it
-  // unconditionally). Guarded: island params live outside the validated
-  // mesh record.
-  const uint32_t num_islands = REX_LOAD_U32(e.mesh + 0x38);
-  const uint32_t island_params = REX_LOAD_U32(e.mesh + 0x44);
+  // unconditionally). The island count (+0x38) and params pointer (+0x44)
+  // come from the guarded record snapshot; the params array they point at
+  // lives outside it, hence the guarded load.
+  const auto record_u32 = [&record](uint32_t off) {
+    uint32_t v;
+    std::memcpy(&v, record + off, sizeof(v));
+    return __builtin_bswap32(v);
+  };
+  const uint32_t num_islands = record_u32(0x38);
+  const uint32_t island_params = record_u32(0x44);
   uint32_t prim0 = 0;
   if (num_islands != 0 && num_islands < 4096 &&
       GuestTryLoadU32(base, island_params, &prim0)) {

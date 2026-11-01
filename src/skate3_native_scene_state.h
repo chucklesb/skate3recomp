@@ -180,6 +180,11 @@ inline std::unordered_map<uint32_t, uint64_t> g_prewarm_seen;
 inline std::unordered_map<uint32_t, uint64_t> g_prewarm_tex_seen;
 inline std::atomic<uint64_t> g_prewarm_done{0};     // entries fully warm-decoded
 inline std::atomic<uint64_t> g_prewarm_dropped{0};  // entries given up on
+// Prewarm entries whose mesh record failed the guarded read (stale or
+// unmapped registration address); skipped and retried, never dereferenced
+// raw. The log budget rate-limits the per-entry line.
+inline std::atomic<uint64_t> g_prewarm_unreadable{0};
+inline std::atomic<int32_t> g_prewarm_unreadable_log_budget{16};
 inline std::atomic<bool> g_prewarm_workers_started{false};
 // tInstance::m_pRModel offset, confirmed at runtime by the material
 // cross-check probe in OnAddRenderInstance (Skate 2 layout: +0x78).
