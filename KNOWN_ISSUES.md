@@ -1216,6 +1216,22 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** `create_directories` before opening, as `WriteSnapshotLocked`
   does.
 
+### KI-115: Signed-in demo path never reaches gameplay on a fresh profile
+
+- **Status:** open · **Severity:** low (test tooling)
+- **Area:** demo path, unattended testing
+- **Tracking:** none yet. Found while fixing KI-92 (#68).
+- **Where:** `src/skate3_demo_path.cpp`, signed-in mode
+  (`--skate3_demo_path_signed_in=true`).
+- **Problem:** with a `--user_data_root` that has no save yet, the boot loops
+  on "gameplay context 0; enabling dialog A auto-tap" every 8 s and never
+  reaches gameplay (it saves only an ALIAS_SKATER file). Unattended agents
+  can't test signed-in paths, such as the player's garments with the sim
+  active. Signed-out demo runs also never reach the sim-active rigid garment
+  path (`ropa[rigid=0]`) with tap inputs.
+- **Next step:** find which new-profile dialog the auto-tap doesn't clear, or
+  keep a seeded test profile with a finished save for agents to copy in.
+
 ## Resolved
 
 ### KI-72: The Defender trojan trigger shipped on main
