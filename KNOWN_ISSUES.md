@@ -555,23 +555,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** switch them to `GuestTryLoadU32`. That's a few guarded calls
   per item per frame, so measure the cost with `perf_items`.
 
-### KI-65: Prewarm retries lose the visible-miss priority
-
-- **Status:** open · **Severity:** low–medium
-- **Area:** native renderer, streaming
-- **Tracking:** none yet. Found while fixing KI-26 (#38).
-- **Where:** the retry branch of `ProcessPrewarmEntry` in
-  `src/skate3_native_scene_gpu.cpp`.
-- **Problem:** the retry is pushed as
-  `g_prewarm_retry.push_back({e.mesh, uint16_t(e.retries - 1)})`, which drops
-  `e.miss`. `PrewarmCommit` then puts it back into the LIFO
-  `g_prewarm_queue`, not `g_miss_queue`. So a mesh the player can see, whose
-  first build failed, waits behind the speculative prewarm backlog and the
-  per-frame commit cap. That looks like longer pop-in or white surfaces while
-  streaming.
-- **Fix:** copy `e`, decrement its retries, and send miss retries back to
-  `g_miss_queue`.
-
 ### KI-66: Prewarm workers re-queue texture and cube misses as meshes at startup
 
 - **Status:** open (unconfirmed) · **Severity:** low
@@ -2007,6 +1990,40 @@ repro steps; the entry says where the problem is and how it would show.
   `--skate3_demo_path=true` boots on D3D12 (3067 meshes) and Vulkan (3056),
   inside the usual 3056 to 3070 range, with 0 dropped, 0 layout rejections
   and 0 map failures. Not yet checked in a hands-on session.
+- **In-game test (2026-10-31):** Played ~100 min on the big rig (D3D12, 4K, MSAA x2) as one build stacking #38+#39+#47+#48 on main, with --skate3_native_render_scene_perf_log=true --skate3_native_render_scene_perf_items=true. User saw no problems. Log: prewarm 0 dropped and 0 decode refusals on every summary, prewarm[miss_retry=0] in all 1,202 samples, no 'guarded guest read failed' or 'DecodeMesh rejected', guest fps min 102 / avg 120, clean exit. Only ~2 area changes; not compared numerically with main; this PR was not tested on its own.
+
+### KI-65: Prewarm retries lost the visible-miss priority
+
+- **Status:** fixed in rubensteezy/skate3recomp#47, tested in-game on 2026-10-31
+- **Tracking:** rubensteezy/skate3recomp#47. Found while fixing KI-26 (#38).
+- **Problem:** a mesh the player can see (a draw-path miss) whose first build
+  failed waited behind the speculative prewarm backlog and the per-frame
+  commit cap, which shows as longer pop-in or white surfaces while streaming.
+- **Cause:** the retry branch of `ProcessPrewarmEntry`
+  (`src/skate3_native_scene_gpu.cpp`) pushed
+  `g_prewarm_retry.push_back({e.mesh, uint16_t(e.retries - 1)})`, a new entry
+  with `miss` cleared. `PrewarmCommit` then put every retry into the LIFO
+  `g_prewarm_queue`. The retry lost its place in the miss FIFO, and its
+  result lost `PrewarmResult::miss`, so the commit no longer let it past the
+  32-per-frame gameplay cap.
+- **Fix:** the retry copies `e` and decrements its retries, so `miss` (and
+  every other field) survives. `PrewarmCommit` sends retries with `miss` set
+  back to `g_miss_queue` and the speculative ones back to `g_prewarm_queue`.
+  The retry count and backoff are unchanged (that's KI-67). Miss retries
+  routed back are counted in `g_prewarm_miss_retries`, shown as
+  `/ N miss retries` on the "taking over natively" line and as
+  `prewarm[miss_retry=N]` at the end of the perf line
+  (`skate3_native_render_scene_perf_log`).
+- **Tested:** unattended `--skate3_demo_path=true` boots, cwd = the install
+  folder. Prewarm counts match the usual baseline: D3D12 3068 and 3070,
+  Vulkan 3056, 0 dropped, 0 miss retries (no natural build failures in the
+  demo). With a temporary local-only hook that kept failing every 8th
+  speculative mesh (356 dropped, so the draw path missed them) and failed the
+  first build of each such miss, 91 (D3D12) and 92 (Vulkan) miss retries went
+  back to `g_miss_queue`, workers took them from there with `retries=7`, every
+  one built with `res.miss=true`, and the counter then stayed flat. Forced
+  speculative retries still went to `g_prewarm_queue`. Not yet checked in a
+  hands-on streaming session.
 - **In-game test (2026-10-31):** Played ~100 min on the big rig (D3D12, 4K, MSAA x2) as one build stacking #38+#39+#47+#48 on main, with --skate3_native_render_scene_perf_log=true --skate3_native_render_scene_perf_items=true. User saw no problems. Log: prewarm 0 dropped and 0 decode refusals on every summary, prewarm[miss_retry=0] in all 1,202 samples, no 'guarded guest read failed' or 'DecodeMesh rejected', guest fps min 102 / avg 120, clean exit. Only ~2 area changes; not compared numerically with main; this PR was not tested on its own.
 
 ### Reviewed and ruled out (code review)

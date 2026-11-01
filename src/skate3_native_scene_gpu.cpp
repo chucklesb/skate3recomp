@@ -719,6 +719,9 @@ std::vector<PrewarmResult> g_prewarm_out;
 // thread re-injects them each frame so retries are frame-paced instead of
 // hot-spinning the workers.
 std::vector<PrewarmEntry> g_prewarm_retry;  // under g_prewarm_out_mutex
+// Draw-path miss retries routed back to g_miss_queue by PrewarmCommit
+// (KI-65): visible content whose first build failed.
+std::atomic<uint64_t> g_prewarm_miss_retries{0};
 
 // Shader sources live in src/native/shaders/*.hlsl; the build embeds them
 // into this generated header (cmake/EmbedShaders.cmake) so the exe stays
@@ -5131,7 +5134,11 @@ void ProcessPrewarmEntry(uint8_t* base, const PrewarmEntry& e) {
     {
       std::lock_guard<std::mutex> lock(g_prewarm_out_mutex);
       if (e.retries > 0) {
-        g_prewarm_retry.push_back({e.mesh, uint16_t(e.retries - 1)});
+        // Copy the whole entry: the miss flag routes the retry back to
+        // g_miss_queue in PrewarmCommit (KI-65).
+        PrewarmEntry retry = e;
+        --retry.retries;
+        g_prewarm_retry.push_back(retry);
       } else {
         g_prewarm_dropped.fetch_add(1, std::memory_order_relaxed);
         dropped = true;
@@ -5362,8 +5369,16 @@ void PrewarmCommit(const NativeGuestOutputRenderContext& context,
   {
     std::scoped_lock lock(g_prewarm_out_mutex, g_prewarm_mutex);
     if (!g_prewarm_retry.empty()) {
-      g_prewarm_queue.insert(g_prewarm_queue.end(), g_prewarm_retry.begin(),
-                             g_prewarm_retry.end());
+      // Draw-path misses go back to the priority FIFO (visible right now),
+      // speculative registrations back to the prewarm backlog (KI-65/66).
+      for (const PrewarmEntry& r : g_prewarm_retry) {
+        if (r.miss) {
+          g_miss_queue.push_back(r);
+          g_prewarm_miss_retries.fetch_add(1, std::memory_order_relaxed);
+        } else {
+          g_prewarm_queue.push_back(r);
+        }
+      }
       g_prewarm_retry.clear();
       g_prewarm_cv.notify_all();
     }
@@ -7837,7 +7852,8 @@ void LogFrameStats(const FrameScene& scene, uint64_t frames, uint32_t drawn,
         "pre={:.2f}/{:.2f}ms settle[{:.2f}/{:.2f}ms n={} dec={} def={}] "
         "tail={:.2f}/{:.2f}ms twod={:.2f}/{:.2f}ms "
         "decode[mesh n={} avg={:.2f} max={:.2f}ms tex n={} avg={:.2f} max={:.2f}ms] "
-        "commit={:.2f}/{:.2f}ms itemcache[hit={} build={}] cam[chg={} rep={} maxstreak={}]",
+        "commit={:.2f}/{:.2f}ms itemcache[hit={} build={}] cam[chg={} rep={} maxstreak={}] "
+        "prewarm[miss_retry={}]",
         guest_dt_ms > 0.0 ? 1000.0 / guest_dt_ms : 0.0, g_pw_guest_dt.MaxMs(),
         g_pw_capture.AvgMs(), g_pw_capture.MaxMs(), g_pw_build.AvgMs(),
         g_pw_build.MaxMs(), g_pw_b2d.AvgMs(), g_pw_b2d.MaxMs(), g_pw_bspl.AvgMs(),
@@ -7864,7 +7880,8 @@ void LogFrameStats(const FrameScene& scene, uint64_t frames, uint32_t drawn,
         g_item_cache_builds.exchange(0, std::memory_order_relaxed),
         g_cam_changes.exchange(0, std::memory_order_relaxed),
         g_cam_repeats.exchange(0, std::memory_order_relaxed),
-        g_cam_max_streak.exchange(0, std::memory_order_relaxed));
+        g_cam_max_streak.exchange(0, std::memory_order_relaxed),
+        g_prewarm_miss_retries.load(std::memory_order_relaxed));
     // Deep per-item attribution (see the perf-items cvar): visibility-class
     // draw costs, completed-draw stage split, build-walk decomposition, and
     // the off-screen retention pass. Averages are per item (the windows Add
@@ -8606,9 +8623,10 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         }
         REXLOG_INFO(
             "native-scene: taking over natively ({} items; prewarm {} done / {} dropped "
-            "/ {} queued)",
+            "/ {} queued / {} miss retries)",
             scene.items.size(), g_prewarm_done.load(std::memory_order_relaxed),
-            g_prewarm_dropped.load(std::memory_order_relaxed), queued);
+            g_prewarm_dropped.load(std::memory_order_relaxed), queued,
+            g_prewarm_miss_retries.load(std::memory_order_relaxed));
       }
     }
     settling = frame_number < g_settle_until_frame;
