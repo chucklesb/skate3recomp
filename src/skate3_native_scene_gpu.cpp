@@ -57,13 +57,6 @@
 #if defined(_WIN32)
 #include <windows.h>
 #endif
-// Only for the compile-time guest output format checks (KI-77).
-#if defined(REX_HAS_D3D12) && REX_HAS_D3D12
-#include <rex/ui/d3d12/d3d12_presenter.h>
-#endif
-#if defined(REX_HAS_VULKAN) && REX_HAS_VULKAN
-#include <rex/ui/vulkan/presenter.h>
-#endif
 #endif
 #include "skate3_native_scene_state.h"
 #include "skate3_native_scene_gpu_internal.h"
@@ -4300,24 +4293,6 @@ bool EnsureShadowResources(const NativeGuestOutputRenderContext& context) {
   }
   return true;
 }
-
-// The blur targets take the guest output format (blur_format), and the photo
-// grab reads blur_tex[0] back at RendererState::kGrabBytesPerPixel. The SDK
-// fixes that format at compile time; if it ever changes to a format that is
-// not 4 bytes per pixel, the grab pitch and CPU tiling must change with it
-// (KI-77).
-#if defined(REX_HAS_D3D12) && REX_HAS_D3D12
-static_assert(rex::ui::d3d12::D3D12Presenter::kGuestOutputFormat ==
-                  DXGI_FORMAT_R10G10B10A2_UNORM,
-              "guest output format changed: update kGrabBytesPerPixel and the "
-              "photo grab tiling");
-#endif
-#if defined(REX_HAS_VULKAN) && REX_HAS_VULKAN
-static_assert(rex::ui::vulkan::VulkanPresenter::kGuestOutputFormat ==
-                  VK_FORMAT_A2B10G10R10_UNORM_PACK32,
-              "guest output format changed: update kGrabBytesPerPixel and the "
-              "photo grab tiling");
-#endif
 
 // Blur intermediates + the output-sized selection-outline mask. Failures
 // only disable their feature, never abort the native path.
