@@ -1206,10 +1206,10 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-77: Photo grab assumes 4-byte output pixels
 
-- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, build-only
+- **Status:** fix in review in rubensteezy/skate3recomp#67, build-only
   (compile-time check, no runtime change) · **Severity:** low
 - **Area:** native renderer, photo grab
-- **Tracking:** #PRNUM. Found while fixing KI-32 (#44).
+- **Tracking:** #67. Found while fixing KI-32 (#44).
 - **Where:** `RendererState::kGrabRowPitch = kBlurWidth * 4`; the grab reads
   `blur_tex[0]`, which uses the output format.
 - **Problem:** that's correct for today's fixed R10G10B10A2 output. If the output
