@@ -51,28 +51,101 @@ uint64_t StableXuidForId(std::string_view id) {
   return 0xB13E000000000000ull | (hash & 0x00003FFFFFFFFFFFull);
 }
 
+bool IsHexDigit(char c) {
+  return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+bool IsDecimalDigit(char c) {
+  return c >= '0' && c <= '9';
+}
+
+// Parses the `xuid` string of a profiles.toml entry. The only writer,
+// FormatXuid, emits exactly 16 uppercase hex digits (zero padded), and that
+// form must keep reading back as hex. The rules, in order:
+//   - a `0x` / `0X` prefix: hex, 1 to 16 digits after the prefix.
+//   - exactly 16 hex digits: hex.
+//   - only decimal digits, any other length: decimal.
+//   - any other run of 1 to 15 hex digits with a letter A-F in it: hex,
+//     since it can't be a decimal number (hand-edited files).
+// Ambiguous case: 16 decimal digits ("1234567890123456") read as hex,
+// because that is what FormatXuid writes for a XUID whose hex form has no
+// letters. A decimal XUID of exactly 16 digits has to be written in hex or
+// as a TOML integer (`xuid = 1234567890123456`, which LoadProfiles also
+// accepts). Real decimal XUIDs (E000... / B13E... in hex) have 19 or 20
+// digits and are unaffected.
+// Anything else (empty, signs, other characters, out of range) returns 0,
+// which LoadProfiles treats as "no XUID".
 uint64_t ParseXuidString(std::string_view value) {
-  std::string text(value);
-  if (text.starts_with("0x") || text.starts_with("0X")) {
-    text.erase(0, 2);
+  while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) {
+    value.remove_prefix(1);
   }
+  while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) {
+    value.remove_suffix(1);
+  }
+
+  int base = 0;
+  if (value.size() > 2 && value[0] == '0' && (value[1] == 'x' || value[1] == 'X')) {
+    value.remove_prefix(2);
+    base = 16;
+  }
+  if (value.empty()) {
+    return 0;
+  }
+  const bool all_hex = std::all_of(value.begin(), value.end(), IsHexDigit);
+  const bool all_decimal = std::all_of(value.begin(), value.end(), IsDecimalDigit);
+  if (base == 0) {
+    if (all_hex && value.size() == 16) {
+      base = 16;
+    } else if (all_decimal) {
+      base = 10;
+    } else if (all_hex) {
+      base = 16;
+    } else {
+      return 0;
+    }
+  }
+  if (base == 16 && (!all_hex || value.size() > 16)) {
+    return 0;
+  }
+
   uint64_t parsed = 0;
-  auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), parsed, 16);
-  if (ec == std::errc() && ptr == text.data() + text.size()) {
-    return parsed;
+  auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), parsed, base);
+  if (ec != std::errc() || ptr != value.data() + value.size()) {
+    return 0;
   }
-  parsed = 0;
-  std::from_chars(value.data(), value.data() + value.size(), parsed, 10);
   return parsed;
 }
 
+// Quotes `value` as a TOML basic string. Per the TOML spec, `"` and `\` are
+// escaped, the control characters with a short form use it (\b \t \n \f \r),
+// and every other control character (U+0000-U+001F, U+007F) is written as
+// \uXXXX. Bytes >= 0x80 pass through, so UTF-8 text stays as it is.
+// LoadProfiles reads the file back with toml++, which decodes all of these.
 std::string TomlString(std::string_view value) {
-  std::string out = "\"";
-  for (char c : value) {
-    if (c == '\\' || c == '"') {
-      out.push_back('\\');
+  static constexpr char kHex[] = "0123456789ABCDEF";
+  std::string out;
+  out.reserve(value.size() + 2);
+  out.push_back('"');
+  for (char ch : value) {
+    const auto c = static_cast<unsigned char>(ch);
+    switch (c) {
+      case '"': out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\b': out += "\\b"; break;
+      case '\t': out += "\\t"; break;
+      case '\n': out += "\\n"; break;
+      case '\f': out += "\\f"; break;
+      case '\r': out += "\\r"; break;
+      default:
+        if (c < 0x20 || c == 0x7F) {
+          out += "\\u00";
+          out.push_back(kHex[c >> 4]);
+          out.push_back(kHex[c & 0xF]);
+        } else {
+          out.push_back(ch);
+        }
+        break;
     }
-    out.push_back(c);
   }
   out.push_back('"');
   return out;
