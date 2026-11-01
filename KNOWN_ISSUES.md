@@ -1190,9 +1190,9 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-75: Scene ring dumps taken in the same second overwrite each other
 
-- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested unattended / awaiting in-game test · **Severity:** low
+- **Status:** fix in review in rubensteezy/skate3recomp#64, tested unattended / awaiting in-game test · **Severity:** low
 - **Area:** native renderer, diagnostics
-- **Tracking:** rubensteezy/skate3recomp#PRNUM. Found while fixing KI-32 (#44).
+- **Tracking:** rubensteezy/skate3recomp#64. Found while fixing KI-32 (#44).
 - **Where:** `MaybeDumpSceneRing` in `src/skate3_native_scene_state.h`.
   `SnapshotStem` in `src/native/skate3_native_diagnostics.cpp` uses the same
   seconds-only naming.
