@@ -350,6 +350,7 @@ set(SKATE3_COMMON_SOURCES
     src/skate3_native_scene_gpu.cpp
     src/skate3_native_scene_post.cpp
     src/skate3_options_menu.cpp
+    src/skate3_safe_file.cpp
     src/skate3_screenshot.cpp
     src/skate3_shader_disasm.cpp
     src/skate3_title_update_installer.cpp
