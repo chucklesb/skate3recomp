@@ -1150,10 +1150,10 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-67: Mesh decodes that always fail are retried every frame
 
-- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested
+- **Status:** fix in review in rubensteezy/skate3recomp#61, tested
   unattended / awaiting in-game test · **Severity:** low
 - **Area:** native renderer, streaming
-- **Tracking:** rubensteezy/skate3recomp#PRNUM. Found while fixing KI-27 (#39).
+- **Tracking:** rubensteezy/skate3recomp#61. Found while fixing KI-27 (#39).
 - **Where:** `ProcessPrewarmEntry` → `PrewarmCommit` → the draw path in
   `src/skate3_native_scene_gpu.cpp`.
 - **Problem:** a failed mesh decode is committed with `mesh_valid=false` and
