@@ -1147,11 +1147,11 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-110: Decode/prewarm workers fault on wild guest pointers during streaming
 
-- **Status:** open · logging fix in review in rubensteezy/skate3recomp#PRNUM,
+- **Status:** open · logging fix in review in rubensteezy/skate3recomp#62,
   untested (fault not reproduced) · **Severity:** low (log noise; no unguarded
   load found)
 - **Area:** native renderer, streaming, guest memory safety
-- **Tracking:** rubensteezy/skate3recomp#PRNUM. Found while testing KI-87 (#60).
+- **Tracking:** rubensteezy/skate3recomp#62. Found while testing KI-87 (#60).
 - **Symptom:** one of 16 unattended D3D12 boots logged 271
   `Unhandled guest access violation: read of guest 0x3F800000 / 0x69676874 ...`
   lines during a streaming burst (frames ~1800–2400), from the threads that
@@ -1169,7 +1169,7 @@ repro steps; the entry says where the problem is and how it would show.
   lookup then takes over, so the output is unchanged. Every guest read on
   the worker paths (`ProcessPrewarmEntry`, `BuildItemFromMesh`, `DecodeMesh`,
   the texture staging) is already guarded.
-- **Fix:** #PRNUM names the site. A caught probe fault now also logs
+- **Fix:** #62 names the site. A caught probe fault now also logs
   `guarded guest read failed at material channel stream probe` (throttled
   to one line per 10 s), so the "Unhandled" lines can be matched to it.
 - **Next step:** if the noise matters, have the SDK skip the error log for
