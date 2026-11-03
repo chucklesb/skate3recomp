@@ -1036,9 +1036,9 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-91: Frame rate is uncapped by default
 
-- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested unattended / awaiting in-game test · **Severity:** low
+- **Status:** fix in review in rubensteezy/skate3recomp#73, tested unattended / awaiting in-game test · **Severity:** low
 - **Area:** settings defaults
-- **Tracking:** #PRNUM. Noticed while checking KI-38 (#49).
+- **Tracking:** #73. Noticed while checking KI-38 (#49).
 - **Problem:** at default settings both backends ran at about 4.4 ms per
   frame (about 225 fps), costing power and heat for no benefit.
 - **Fix:** `skate3_guest_fps_cap` now defaults to 120 and
