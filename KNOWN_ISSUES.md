@@ -1186,14 +1186,20 @@ repro steps; the entry says where the problem is and how it would show.
 - **Problem:** these write through pointers read a moment earlier. A stale
   instance pointer would be a write fault, or would corrupt guest memory if
   the page has been reused.
-- **Fix:** before each store, the hook does a guarded read of the instance head
-  and the target word (a failure is logged through the KI-64 skip counter as
-  "auto-exposure pin output a/b"). It then applies the game's own gate: the
-  big-endian u16 at `inst+2` must be greater than 2. Otherwise the game writes
-  to a static scratch at 0x820D0850, and the hook now skips the store too.
-- **Unattended test (2026-11-01):** D3D12 demo path, about 9000 frames. The
-  gate passed on every logged call (inst_a count 7, inst_b count 4). There were
-  no skip warnings, and "auto-exposure re-pinned" logs as before.
+- **Fix:** before each store, the hook does a guarded read of the target word
+  (a failure skips the store and is logged through the KI-64 skip counter as
+  "auto-exposure pin output a/b"). Otherwise the stores are exactly the old
+  ones.
+- **Tried and dropped:** a first version also required the big-endian u16 at
+  `inst+2` to be greater than 2, mirroring the game's own check (it writes to
+  a static scratch at 0x820D0850 otherwise). A photo-editor play-test on that
+  build showed a slightly darker saved photo, so the gate was removed. Why the
+  stores matter when that value is 2 or less is not established; the consumers
+  of those fields were not traced.
+- **Unattended test (2026-11-02):** D3D12 demo path, about 5000+ calls. Every
+  store ran (inst_a count 7, inst_b count 4, both would have passed the old
+  gate too), with no skip warnings, and "auto-exposure re-pinned" logs as
+  before. The photo editor and shutter burst were not exercised.
 
 ### KI-72: The Defender trojan trigger shipped on main
 
