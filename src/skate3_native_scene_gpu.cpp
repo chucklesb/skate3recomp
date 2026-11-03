@@ -7999,7 +7999,7 @@ void LogFrameStats(const FrameScene& scene, uint64_t frames, uint32_t drawn,
     REXLOG_INFO(
         "native-scene: frame {} items={} draws={} draws_2d={} drawn_2d={} "
         "splines[{}/{}] "
-        "2d[other={} dropped={} askip={} astale={} textures={}] cached_meshes={} mesh_mb={} textures={} tex_mb={} "
+        "2d[other={} dropped={} askip={} astale={}] cached_meshes={} mesh_mb={} textures={} tex_mb={} "
         "vs_uploads={} palettes={} palette_base_plus1={} ropa[rigid={} stale={} rescued={} relax={} caster={} incoh={} stretch={} blend={} blendmiss={}] dyn_gap={} skinned={} skinned_skipped={} foreign_bank={} "
         "rigid[pending={} dropped={} worldprops={}] "
         "rej[dyn={} range={} chain={} geom={} draws={} bbox={}] "
@@ -8014,7 +8014,7 @@ void LogFrameStats(const FrameScene& scene, uint64_t frames, uint32_t drawn,
         frames, scene.items.size(), drawn, g_draws_2d.load(), drawn_2d,
         drawn_spline, g_draws_spline.load(),
         g_draws_2d_other.load(), g_draws_2d_dropped.load(),
-        g_2d_async_skip.load(), g_2d_async_stale.load(), g_r.tex_store.size(),
+        g_2d_async_skip.load(), g_2d_async_stale.load(),
         g_r.meshes.size(), g_mesh_store_bytes >> 20, g_r.tex_store.size(),
         g_tex_store_bytes >> 20,
         g_vs_uploads.load(), g_palette_snapshots.load(), g_palette_base_plus1.load(),
