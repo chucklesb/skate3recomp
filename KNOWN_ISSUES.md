@@ -1106,6 +1106,25 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** find which new-profile dialog the auto-tap doesn't clear, or
   keep a seeded test profile with a finished save for agents to copy in.
 
+### KI-116: The saved photo can look slightly darker than the editor preview
+
+- **Status:** open (unconfirmed, single report) · **Severity:** low–medium
+- **Area:** native renderer, photo mode
+- **Tracking:** none yet. Reported while play-testing #63 (batch4, D3D12,
+  MSAA x8).
+- **Symptom:** after a trick, in the photo editor the world brightness looked
+  correct, but the picture picked after editing looked slightly darker than
+  what was shown in the editor. No numbers or screenshots yet.
+- **Cause so far:** unknown. Not caused by the old "world stays dark after the
+  shutter" bug (#63 fixed that). Two candidates: (1) #63 now skips the
+  max-exposure store where the game uses its own scratch output, which could
+  change the exposure the shot is rendered with; (2) the shutter burst renders
+  and tone-maps through a different path (suppression lifted, full
+  readbacks) than the editor's live postfx chain, which would predate #63.
+- **Next step:** take the same photo on a build without #63 (`main2`) and on
+  one with it, and compare the saved photo with the editor preview. If both
+  are darker, compare the two render paths' tone mapping and exposure inputs.
+
 ## Resolved
 
 ### KI-72: The Defender trojan trigger shipped on main
