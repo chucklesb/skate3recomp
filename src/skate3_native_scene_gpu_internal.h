@@ -553,6 +553,21 @@ class UploadRingRegions {
   Stats stats_{};
 };
 
+// Bytes per pixel of the color formats a render target here can take; 0 for
+// anything else. Used for the photo-grab readback pitch (KI-77).
+constexpr uint32_t ColorFormatBytesPerPixel(nrhi::Format format) {
+  switch (format) {
+    case nrhi::Format::kR8G8B8A8_UNORM:
+    case nrhi::Format::kR10G10B10A2_UNORM:
+    case nrhi::Format::kR11G11B10_FLOAT:
+      return 4;
+    case nrhi::Format::kR16G16B16A16_FLOAT:
+      return 8;
+    default:
+      return 0;
+  }
+}
+
 struct RendererState {
   nrhi::Device* device = nullptr;
   nrhi::BindingLayout* layout = nullptr;  // main scene binding layout (was the root signature)
@@ -593,6 +608,8 @@ struct RendererState {
   // game's fixed 1152x640 internal resolution + a view of the guest output
   // (re-created when the output texture changes). Steady state for
   // blur_tex is RENDER_TARGET; blur_format is the format it was built with.
+  // blur_format follows the guest output format, which the photo grab reads
+  // back at kGrabBytesPerPixel (see kGrabFormat below, KI-77).
   static constexpr uint32_t kBlurWidth = 1152;
   static constexpr uint32_t kBlurHeight = 640;
   nrhi::Texture* blur_tex[2] = {nullptr, nullptr};
@@ -623,7 +640,21 @@ struct RendererState {
   // buffers so no frame ever waits on the GPU (a full kFull-style drain per
   // frame was the old path's stall). Row pitch 1152*4 = 4608 is already
   // 256-aligned.
-  static constexpr uint32_t kGrabRowPitch = kBlurWidth * 4;
+  // KI-77: blur_tex[0] has the guest output format, which the SDK fixes at
+  // compile time (D3D12Presenter / VulkanPresenter::kGuestOutputFormat =
+  // R10G10B10A2, nrhi::Format::kR10G10B10A2_UNORM; see native_rhi.h). Those
+  // presenter headers can't be included here (they pull in renderdoc), so
+  // kGrabFormat restates it and the pitch is derived from it. If the SDK's
+  // output format changes, change kGrabFormat: a non-32-bit format then fails
+  // the static_assert, because WriteGrabToGuest tiles 32-bit pixels.
+  static constexpr nrhi::Format kGrabFormat = nrhi::Format::kR10G10B10A2_UNORM;
+  static constexpr uint32_t kGrabBytesPerPixel =
+      ColorFormatBytesPerPixel(kGrabFormat);
+  static_assert(kGrabBytesPerPixel == 4,
+                "photo grab CPU tiling (WriteGrabToGuest) reads 32-bit pixels");
+  static constexpr uint32_t kGrabRowPitch = kBlurWidth * kGrabBytesPerPixel;
+  static_assert(kGrabRowPitch % 256 == 0,
+                "grab readback rows must stay 256-byte aligned");
   nrhi::Buffer* grab_readback[2] = {nullptr, nullptr};
   uint8_t* grab_readback_ptr[2] = {nullptr, nullptr};
   uint64_t grab_submission[2] = {0, 0};
