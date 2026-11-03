@@ -135,7 +135,7 @@ inline std::vector<PrewarmEntry> g_prewarm_queue;
 // content that is visible RIGHT NOW (white / skipped),
 // served FIFO with strict priority over the speculative registration
 // backlog in g_prewarm_queue. Guarded by g_prewarm_mutex.
-inline std::vector<PrewarmEntry> g_miss_queue;
+inline std::deque<PrewarmEntry> g_miss_queue;
 // Steady-state draw-path misses currently being decoded on the workers (one
 // in-flight decode per key; the commit erases). Guarded by g_prewarm_mutex.
 // This is the panning-hitch fix: a texture decode averages ~10 ms (max ~70 ms
@@ -161,7 +161,7 @@ struct DynDecodeJob {
   std::vector<uint8_t> vb;  // big-endian guest payload snapshots
   std::vector<uint8_t> ib;
 };
-inline std::vector<DynDecodeJob> g_dyn_jobs;  // FIFO; guarded by g_prewarm_mutex
+inline std::deque<DynDecodeJob> g_dyn_jobs;  // FIFO; guarded by g_prewarm_mutex
 // Push-side dedupe: clone instances share one tRModelData, so the same mesh
 // registers many times per load, but a permanent per-address set silently
 // DISABLED the prewarm for re-streamed content (the streamer reuses the
