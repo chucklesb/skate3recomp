@@ -1020,19 +1020,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** in the rexglue-skate3 fork, skip or demote the log for faults
   inside `GuestTryCopy`.
 
-### KI-114: Scene ring dump doesn't create `logs/` before writing
-
-- **Status:** open (code reading only) · **Severity:** low
-- **Area:** native renderer, diagnostics
-- **Tracking:** none yet. Found while fixing KI-75 (#64).
-- **Where:** `MaybeDumpSceneRing` in `src/skate3_native_scene_state.h`.
-- **Problem:** it opens `logs/scene_ring_*.csv` relative to the working
-  directory with `std::ofstream` and never creates `logs/`. If the folder is
-  missing the dump fails with only a "native-scene ring: cannot open"
-  warning. Probably harmless, since the logger likely creates `logs/` first.
-- **Next step:** `create_directories` before opening, as `WriteSnapshotLocked`
-  does.
-
 ### KI-116: The saved photo can look slightly darker than the editor preview
 
 - **Status:** open (seen once, not reproduced) · **Severity:** low–medium
@@ -2532,6 +2519,20 @@ repro steps; the entry says where the problem is and how it would show.
   dialog with an unusable entry in the file, which needs a person at the
   controls.
 - **In-game test (2026-11-02):** Played on the big rig in two builds, batch4 (main b612978 + #57-#68) and batch5 (main fb33910 + #58 #62 #63 #64 #69 #70), D3D12, with the user's real profiles.toml backed up first and an extra [[profiles]] entry (id oldhand, gamertag OldHand, xuid 12-34-56) appended. On load the log warned 'skipped 1 entry without a usable id, gamertag and xuid; the next profile save first backs the file up as profiles.toml.dropped-<time>'. After the user changed the gamertag and saved, the log showed 'has entries this save drops; the old file is backed up as ...profiles.toml.dropped-<stamp>'; in both runs the folder then held the saved profiles.toml (the extra entry gone, xuid unchanged) plus exactly one .dropped file, byte-identical to the edited file, and no .tmp files. Not confirmed: that a second save in the same session makes no second backup (only one backup and one log line existed, but it was not confirmed the user saved twice). The original profiles.toml was restored afterwards.
+
+### KI-114: Scene ring dump doesn't create `logs/` before writing
+
+- **Status:** fixed in rubensteezy/skate3recomp#64, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, diagnostics
+- **Tracking:** none yet. Found while fixing KI-75 (#64).
+- **Where:** `MaybeDumpSceneRing` in `src/skate3_native_scene_state.h`.
+- **Problem:** it opens `logs/scene_ring_*.csv` relative to the working
+  directory with `std::ofstream` and never creates `logs/`. If the folder is
+  missing the dump fails with only a "native-scene ring: cannot open"
+  warning. Probably harmless, since the logger likely creates `logs/` first.
+- **Next step:** `create_directories` before opening, as `WriteSnapshotLocked`
+  does.
+- **In-game test (2026-11-02):** The scene-ring dump (this fix included) wrote four files on the big rig into the build's logs folder with 'native-scene ring: wrote N frames -> <path>' logged; see KI-75 and #64.
 
 ### Reviewed and ruled out (code review)
 
