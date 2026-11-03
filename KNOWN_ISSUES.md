@@ -1041,8 +1041,8 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-29: Icon updater leaves `.icon-new` behind
 
-- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested unattended / awaiting in-game test · **Severity:** low · was BT-22
-- **Tracking:** PRNUM supersedes #41 (the full hardening of the updater, which
+- **Status:** fix in review in rubensteezy/skate3recomp#72, tested unattended / awaiting in-game test · **Severity:** low · was BT-22
+- **Tracking:** #72 supersedes #41 (the full hardening of the updater, which
   conflicted with #18 and is moot now that #18 removed the self-patch).
 - **Where:** `src/skate3_win_icon.cpp`, `CleanupStaleIconTemp`.
 - **Problem:** builds before #18 patched the exe icon through a copy named
