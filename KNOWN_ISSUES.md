@@ -390,22 +390,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** release the buffers once a session's dumps are written, and
   add a counter to the file name.
 
-### KI-55: App callbacks that capture `this` are never cleared on shutdown
-
-- **Status:** open · **Severity:** low
-- **Area:** app lifetime
-- **Tracking:** none yet. Found while fixing KI-23 (#35).
-- **Where:** `OnPostSetup` / `OnShutdown` in `src/skate3_app_common.cpp`.
-- **Problem:** six callbacks capture `this` and are never cleared:
-  `input_system->SetActiveCallback`, `SetMenuChordCallback`,
-  `demo_path::SetUiInputProvider` and the three `options_menu::Set*Callback`.
-  The active callback also reads `simple_settings_dialog_` on the input path
-  while `OnShutdown` resets it on the UI thread. That's a data race or
-  use-after-free on any path where `OnShutdown` runs while the guest is
-  still alive. Today that is mainly Close Game on macOS (`QuitFromUIThread`,
-  which ends the guest after `OnShutdown`).
-- **Fix:** clear these callbacks (null or no-op) at the top of `OnShutdown`.
-
 ### KI-56: SDK key binds: duplicate registration and callbacks under the lock
 
 - **Status:** open · **Severity:** low
@@ -576,28 +560,6 @@ repro steps; the entry says where the problem is and how it would show.
   popup shows only the message and the buttons.
 - **Next step:** check whether the popup layout uses the +0 field at all, or
   needs another flag to show a title.
-
-### KI-72: The Defender trojan trigger still ships on main
-
-- **Status:** open · **Severity:** medium (blocks the next release)
-- **Area:** Windows release, exe icon
-- **Tracking:** rubensteezy/skate3recomp#18 (open). Raised again while fixing
-  KI-29 (#41).
-- **Where:** `EnsureExeIconResource` and `SpawnPreIconDeleter` in
-  `src/skate3_win_icon.cpp`.
-- **Problem:** #18 removes the self-patching exe icon that makes Defender flag
-  the Windows zip as a trojan, but it isn't merged. So `main` still patches
-  every fresh `skate3.exe` on first run, parks the old exe in `%TEMP%`, and
-  starts a hidden `powershell.exe -WindowStyle Hidden` deleter. Any release cut
-  from `main` keeps the trigger.
-- **Also:**
-  - #18 removes the `%TEMP%\skate3-pre-icon-*.old` sweep and has no
-    `.icon-new` cleanup. Once it merges, the hidden 100 MB parked exes and
-    crash leftovers already on v2.1.0 users' machines are never removed.
-  - #41 (KI-29) hardens the same self-patch code, so it conflicts with #18.
-- **Next step:** decide on #18 and merge it before the next release. Keep a
-  one-time, delete-only sweep of the old leftovers in it: either rebase #41
-  down to just its `CleanupStaleIconTemp`, or close #41.
 
 ### KI-73: Exe path lookup truncates on long install paths
 
@@ -964,6 +926,10 @@ repro steps; the entry says where the problem is and how it would show.
   pressure there needs a code change.
 - **Next step:** if testing at low budgets matters, lower the floor for dev
   builds or add a debug cvar.
+- **Same for meshes (from KI-95, #59):** `skate3_native_render_scene_mesh_store_mb`
+  has the same `.range(256, 16384)` and `EvictMeshStore` the same
+  `std::max(256, …)`. The mesh working set is about 40 MB, so mesh-store
+  pressure can't be reproduced without a code change either.
 
 ### KI-98: B doesn't dismiss the Options menu's custom popups
 
@@ -1094,7 +1060,167 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** show a message box (or an ImGui notice in the wizard) with
   the `SKATE3_INSTALL_ISO` hint.
 
+### KI-106: `OnShutdown` cleanup never runs on Windows or Linux
+
+- **Status:** open · **Severity:** low
+- **Area:** app lifetime, SDK
+- **Tracking:** none yet. Found while fixing KI-55 (#57).
+- **Where:** `ReXApp::OnClosing` in rexglue-sdk `src/ui/rex_app.cpp`.
+- **Problem:** on Windows and Linux, window close and Restart Now `_Exit`
+  before `OnShutdown` is called, so the shutdown cleanup (KI-23's unbinds,
+  #57's callback gate) only runs on macOS. This is deliberate in the SDK (it
+  avoids teardown deadlocks), but it means nothing on Windows can show that
+  shutdown code ran.
+- **Next step:** document it next to `OnShutdown`, or decide whether any
+  cleanup must also run on the hard-exit path.
+
+### KI-107: Settings dialog visibility is read across threads without sync
+
+- **Status:** open · **Severity:** low
+- **Area:** app, settings dialog
+- **Tracking:** none yet. Found while fixing KI-55 (#57).
+- **Where:** the active-input callback in `src/skate3_app_common.cpp` reads
+  `SimpleSettingsDialog::visible()` on the input thread while the UI thread
+  runs Show/Hide.
+- **Problem:** a plain bool read and written on two threads: a data race,
+  probably harmless in practice.
+- **Next step:** make the flag atomic in the SDK if a sanitizer ever flags it.
+
+### KI-108: Backups made within the same second can be pruned out of order
+
+- **Status:** open · **Severity:** low
+- **Area:** profiles, safe file writes
+- **Tracking:** none yet. Found while fixing KI-80 (#58).
+- **Where:** `PruneBackups` in `src/skate3_safe_file.cpp` (shared by the
+  `.bad-` and `.dropped-` backups).
+- **Problem:** with more than 5 backups in one second, the base name sorts as
+  the oldest and is pruned, and the next backup reuses that freed name, so it
+  can be pruned first next time. Negligible in practice.
+- **Next step:** sort by stamp plus numeric suffix, or by write time.
+
+### KI-109: `LoadProfiles` runs twice at boot
+
+- **Status:** open · **Severity:** low
+- **Area:** profiles
+- **Tracking:** none yet. Found while fixing KI-80 (#58).
+- **Where:** `OnFinalizePaths` and `ApplySelectedProfileToRuntime`.
+- **Problem:** the file is parsed twice, so every load warning (for example
+  a skipped entry) is logged twice. Cosmetic.
+- **Next step:** load once and pass the result on, or log the warnings once.
+
+### KI-110: Decode/prewarm workers fault on wild guest pointers during streaming
+
+- **Status:** open (unconfirmed) · **Severity:** low–medium
+- **Area:** native renderer, streaming, guest memory safety
+- **Tracking:** none yet. Found while testing KI-87 (#60).
+- **Symptom:** one of 16 unattended D3D12 boots logged 271
+  `Unhandled guest access violation: read of guest 0x3F800000 / 0x69676874 ...`
+  lines during a streaming burst (frames ~1800–2400), from the threads that
+  also log `mesh ... decoded N verts outside bbox`, plus a one-off
+  `rej[chain=743]`. The process survived.
+- **Cause so far:** the bad addresses are a float (1.0f) and ASCII text read as
+  pointers, so some decode/prewarm path reads stale guest data. Not caused by
+  #60: those threads don't run `CaptureDynamicState`. Call site not found yet.
+- **Next step:** per-site logging (or a debugger) in the mesh decode/prewarm
+  path to find the faulting load, then guard it the way KI-64 did.
+
+### KI-111: `WarmItemResources` ignores the mesh decode backoff during settle
+
+- **Status:** open · **Severity:** low
+- **Area:** native renderer, mesh streaming
+- **Tracking:** none yet. Found while fixing KI-67 (#61).
+- **Where:** `WarmItemResources` in `src/skate3_native_scene_gpu.cpp`.
+- **Problem:** the KI-67 backoff (`MeshMissBackingOff`) is checked only on the
+  draw path. The settle-time warm pass still retries a mesh whose decode keeps
+  failing, every settle frame, so the wasted decodes KI-67 removed can come
+  back while a scene settles.
+- **Next step:** check `MeshMissBackingOff` before decoding in
+  `WarmItemResources` too.
+
+### KI-112: Prewarm drops a mesh after 8 failures without recording a backoff
+
+- **Status:** open · **Severity:** low
+- **Area:** native renderer, prewarm worker
+- **Tracking:** none yet. Found while fixing KI-67 (#61).
+- **Where:** the 8-failure drop in `ProcessPrewarmEntry`
+  (`src/skate3_native_scene_gpu.cpp`).
+- **Problem:** when the prewarm worker gives up on an entry it releases the key
+  but does not mark the mesh in the KI-67 failure table, so the draw path
+  retries it at once. Not seen in any run so far.
+- **Next step:** record the failure in `g_mesh_miss_fail` when the entry is
+  dropped.
+
+### KI-113: SDK logs caught guest faults as "Unhandled guest access violation"
+
+- **Status:** open · **Severity:** low
+- **Area:** SDK memory, diagnostics
+- **Tracking:** none yet. Found while investigating KI-110 (#62).
+- **Where:** `Memory::AccessViolationCallback` in rexglue-sdk
+  `src/system/xmemory.cpp`.
+- **Problem:** on Windows the SDK's exception handler runs before the
+  `GuestTryCopy` guard and logs every guest-range fault as an error, including
+  faults the guard then catches. So guarded probes that fail cleanly look like
+  crashes in the log (that's what made KI-110 look like a raw load). Each
+  caught fault also takes the handler's global critical-region lock; minor at
+  a few hundred per streaming burst.
+- **Next step:** in the rexglue-skate3 fork, skip or demote the log for faults
+  inside `GuestTryCopy`.
+
+### KI-114: Scene ring dump doesn't create `logs/` before writing
+
+- **Status:** open (code reading only) · **Severity:** low
+- **Area:** native renderer, diagnostics
+- **Tracking:** none yet. Found while fixing KI-75 (#64).
+- **Where:** `MaybeDumpSceneRing` in `src/skate3_native_scene_state.h`.
+- **Problem:** it opens `logs/scene_ring_*.csv` relative to the working
+  directory with `std::ofstream` and never creates `logs/`. If the folder is
+  missing the dump fails with only a "native-scene ring: cannot open"
+  warning. Probably harmless, since the logger likely creates `logs/` first.
+- **Next step:** `create_directories` before opening, as `WriteSnapshotLocked`
+  does.
+
+### KI-115: Signed-in demo path never reaches gameplay on a fresh profile
+
+- **Status:** open · **Severity:** low (test tooling)
+- **Area:** demo path, unattended testing
+- **Tracking:** none yet. Found while fixing KI-92 (#68).
+- **Where:** `src/skate3_demo_path.cpp`, signed-in mode
+  (`--skate3_demo_path_signed_in=true`).
+- **Problem:** with a `--user_data_root` that has no save yet, the boot loops
+  on "gameplay context 0; enabling dialog A auto-tap" every 8 s and never
+  reaches gameplay (it saves only an ALIAS_SKATER file). Unattended agents
+  can't test signed-in paths, such as the player's garments with the sim
+  active. Signed-out demo runs also never reach the sim-active rigid garment
+  path (`ropa[rigid=0]`) with tap inputs.
+- **Next step:** find which new-profile dialog the auto-tap doesn't clear, or
+  keep a seeded test profile with a finished save for agents to copy in.
+
 ## Resolved
+
+### KI-72: The Defender trojan trigger shipped on main
+
+- **Status:** fixed in rubensteezy/skate3recomp#18, tested in-game on 2026-10-31 · **Severity:** medium (blocked the next release)
+- **Area:** Windows release, exe icon
+- **Tracking:** rubensteezy/skate3recomp#18 (merged 2026-10-31). Raised again while fixing
+  KI-29 (#41).
+- **Where:** `EnsureExeIconResource` and `SpawnPreIconDeleter` in
+  `src/skate3_win_icon.cpp`.
+- **Problem:** #18 removes the self-patching exe icon that makes Defender flag
+  the Windows zip as a trojan, but it isn't merged. So `main` still patches
+  every fresh `skate3.exe` on first run, parks the old exe in `%TEMP%`, and
+  starts a hidden `powershell.exe -WindowStyle Hidden` deleter. Any release cut
+  from `main` keeps the trigger.
+- **Also:**
+  - #18 removes the `%TEMP%\skate3-pre-icon-*.old` sweep and has no
+    `.icon-new` cleanup. Once it merges, the hidden 100 MB parked exes and
+    crash leftovers already on v2.1.0 users' machines are never removed.
+  - #41 (KI-29) hardens the same self-patch code, so it conflicts with #18.
+- **Next step:** decide on #18 and merge it before the next release. Keep a
+  one-time, delete-only sweep of the old leftovers in it: either rebase #41
+  down to just its `CleanupStaleIconTemp`, or close #41.
+- **In-game test (2026-10-31):** played ~13 min on the big rig (D3D12, 4K) on
+  main 9c57d88 after #18 merged: no win-icon, icon-patched or icon-new log lines,
+  clean exit. The old-leftover sweep and #41's conflict are still open (#41).
 
 ### KI-1: Texture pop-in and flicker while streaming
 
@@ -2185,9 +2311,49 @@ repro steps; the entry says where the problem is and how it would show.
   rewrites a malformed file without a backup.
 - **In-game test (2026-10-31):** Played on the big rig as one build stacking #36+#45 on main 097e823, with the user's real profiles.toml (backed up first). Changed the gamertag Tom -> Tom- on the Esc overlay profile page and saved: the file was rewritten as valid TOML with the xuid unchanged (B13E07DFF9AB6772), no .tmp or backup left in the folder. After a restart the game showed Tom- and did not rewrite the file. No "Profiles:" log lines, clean exits. Not exercised in-game: a gamertag with a quote or backslash (escaping) and an unparseable file (backup path); those are covered only by the unattended tests in the PR. This PR was not tested on its own.
 
+### KI-55: App callbacks that capture `this` are never cleared on shutdown
+
+- **Status:** fixed in rubensteezy/skate3recomp#57, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** app lifetime
+- **Tracking:** Found while fixing KI-23 (#35).
+- **Where:** `OnPostSetup` / `OnShutdown` / `ToggleSimpleSettings` in
+  `src/skate3_app_common.cpp`.
+- **Problem:** seven callbacks capture `this` and were never cleared:
+  `input_system->SetActiveCallback`, `SetMenuChordCallback`,
+  `demo_path::SetUiInputProvider` and the four `options_menu::Set*Callback`
+  (open, save, restart, quit). The active callback also reads
+  `simple_settings_dialog_` on the input path while `OnShutdown` resets it
+  (and `ToggleSimpleSettings` first creates it) on the UI thread. That's a
+  data race or use-after-free on any path where `OnShutdown` runs while the
+  guest is still alive. Today that is mainly Close Game on macOS
+  (`QuitFromUIThread`, which ends the guest after `OnShutdown`).
+- **Why not just clear them:** every setter is a plain, unlocked
+  `std::function` store (`InputSystem::SetActiveCallback` also copies into
+  each driver) that the guest/input threads read and call without a lock.
+  Replacing one from the UI thread while another thread calls it is itself a
+  race that destroys the callable mid-call.
+- **Fix:** a `CallbackGate` (shared mutex + open flag, held by `shared_ptr`
+  so it outlives the app) is captured by all seven callbacks. Each takes the
+  lock shared and returns early (active = false, provider = null, the rest
+  no-op) once the gate is closed. `OnShutdown` closes it first, exclusively,
+  so a callback already running finishes before the dialogs are reset; it
+  logs `Skate 3 shutdown: app callbacks disabled`. The UI-thread lambdas the
+  callbacks post (menu chord, open settings) re-check the flag so a late post
+  can't recreate the settings dialog after shutdown. Writes of
+  `simple_settings_dialog_` (create and reset) take the lock exclusive.
+- **Tested:** relwithdebinfo build, unattended demo-path boot (100 s, into
+  gameplay; the gated active callback and intro-skip provider run on every
+  input poll) then a normal window close: the process exited with code 0
+  within a second, log ends with `Title terminated; hard-exiting process.`
+  On Windows, window close and Restart Now both go through
+  `ReXApp::OnClosing`, which hard-exits before `OnShutdown`, so the new
+  shutdown path (and its log line) only runs on macOS, or when there is no
+  window. Not tested there.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. Changed MSAA to x8 in Options and pressed Restart Now: the log shows 'Options menu: restart-required settings applied; restarting', a clean shutdown, and the new process started normally with MSAA x8 pipelines. The shutdown-callback gate matters mainly on macOS; nothing showed it running on Windows.
+
 ### KI-95: Shadow-atlas casters didn't stamp their mesh entries
 
-- **Status:** fix in review in rubensteezy/skate3recomp#59, tested unattended / awaiting in-game test · **Severity:** low–medium
+- **Status:** fixed in rubensteezy/skate3recomp#59, tested in-game on 2026-11-02 · **Severity:** low–medium
 - **Area:** native renderer, shadows, mesh cache
 - **Where:** the caster loop of `RenderShadowAtlas` in
   `src/skate3_native_scene_gpu.cpp`.
@@ -2207,6 +2373,7 @@ repro steps; the entry says where the problem is and how it would show.
   (341 and 52). The store stayed at about 550 entries either way.
 - **Fix:** the gather loop does `find` instead of `contains` and sets
   `mit->second.last_used_frame = frame_number` for every caster it keeps.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. The atlas mesh stamp was exercised: 'mesh store LRU start/done' ran 8 times in the first run (it triggers on the 24,576 mesh-count cap, not the MB cap), each evicting about 3,100-3,700 meshes, with 0 guarded read failures after any of them and no shadow problems seen by the player.
 
 ### Reviewed and ruled out (code review)
 
