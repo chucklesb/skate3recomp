@@ -493,19 +493,6 @@ repro steps; the entry says where the problem is and how it would show.
   small debug cvar that triggers a popup flush (`sub_825D8AF0` →
   `sub_82D0A738`) would let the flush path be tested unattended.
 
-### KI-70: Restart prompt's Discard doesn't check it's acting on the Options state
-
-- **Status:** open · **Severity:** low
-- **Area:** Options menu
-- **Tracking:** none yet. Found while fixing KI-28 (#40). Code reading only.
-- **Where:** the Discard branch of the `sub_8260EA48` hook in
-  `src/skate3_options_menu.cpp`.
-- **Problem:** it uses `OptionsState()` (`owner+180`) without checking that the
-  object is a FrontEndState_Options. If the Options state is gone when Discard
-  fires, `PageOf` reads +68 of whatever object is there and could call
-  `sub_8260D078` on it. Unlikely, because the popup is modal over Options.
-- **Fix:** check the state's vtable against 0x823034B0 before acting.
-
 ### KI-71: Restart prompt shows no title
 
 - **Status:** open · **Severity:** low
@@ -545,23 +532,6 @@ repro steps; the entry says where the problem is and how it would show.
   happens.
 - **Next step:** if that warning ever appears, add a "user set while held" path
   that updates `saved_`.
-
-### KI-75: Scene ring dumps taken in the same second overwrite each other
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, diagnostics
-- **Tracking:** none yet. Found while fixing KI-32 (#44).
-- **Where:** `MaybeDumpSceneRing` in `src/skate3_native_scene_state.h`.
-  `SnapshotStem` in `src/native/skate3_native_diagnostics.cpp` uses the same
-  seconds-only naming.
-- **Problem:** the dump file is `logs/scene_ring_<time in seconds>.csv`, so an
-  F7 dump and an RB+A dump in the same second overwrite each other. That's the
-  same bug #44 fixes for screenshots. A snapshot takes several frames, so a
-  clash there is unlikely.
-- **Also:** the comment in `skate3_screenshot.h` says A/B captures "share one
-  timestamp". They actually share a tag with its own HH:MM:SS, and the file
-  stamps differ.
-- **Fix:** reuse #44's millisecond stamp, and reword the comment.
 
 ### KI-76: Scene ring may use about 150 MB while on (debug only)
 
@@ -712,24 +682,6 @@ repro steps; the entry says where the problem is and how it would show.
   is still in flight, the miss's key is cleared, and the draw path can queue
   a second decode of X. That wastes worker time but has no visual effect.
 - **Fix:** erase only when `e.miss` is set.
-
-### KI-86: The prewarm miss queue pops from the front of a vector
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, streaming performance
-- **Tracking:** none yet. Found while fixing KI-65 (#47).
-- **Where:** `PrewarmWorkerLoop` in `src/skate3_native_scene_gpu.cpp`, and
-  `skate3_native_scene_state.h`.
-- **Problem:** `g_miss_queue.erase(g_miss_queue.begin())` costs time in
-  proportion to the queue length (capped at 65536) while `g_prewarm_mutex` is
-  held, so a large streaming burst could stall the workers. `g_dyn_jobs` has
-  the same pattern.
-- **Also:** the null base/device re-queue in `PrewarmWorkerLoop` is close to
-  dead code (the workers start only once `g_r.device` is set, and nothing
-  resets it). It never decrements retries, so if it ever ran for long it
-  would spin entries every 100 ms per worker without end.
-- **Next step:** switch both queues to `std::deque` if a profile shows lock
-  contention. Turn the null re-queue into a plain wait.
 
 ### KI-88: Remaining raw guest loads elsewhere in capture (low risk)
 
@@ -1094,25 +1046,9 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** `create_directories` before opening, as `WriteSnapshotLocked`
   does.
 
-### KI-115: Signed-in demo path never reaches gameplay on a fresh profile
-
-- **Status:** open · **Severity:** low (test tooling)
-- **Area:** demo path, unattended testing
-- **Tracking:** none yet. Found while fixing KI-92 (#68).
-- **Where:** `src/skate3_demo_path.cpp`, signed-in mode
-  (`--skate3_demo_path_signed_in=true`).
-- **Problem:** with a `--user_data_root` that has no save yet, the boot loops
-  on "gameplay context 0; enabling dialog A auto-tap" every 8 s and never
-  reaches gameplay (it saves only an ALIAS_SKATER file). Unattended agents
-  can't test signed-in paths, such as the player's garments with the sim
-  active. Signed-out demo runs also never reach the sim-active rigid garment
-  path (`ropa[rigid=0]`) with tap inputs.
-- **Next step:** find which new-profile dialog the auto-tap doesn't clear, or
-  keep a seeded test profile with a finished save for agents to copy in.
-
 ### KI-116: The saved photo can look slightly darker than the editor preview
 
-- **Status:** open (unconfirmed, single report) · **Severity:** low–medium
+- **Status:** open (seen once, not reproduced) · **Severity:** low–medium
 - **Area:** native renderer, photo mode
 - **Tracking:** none yet. Reported while play-testing #63 (batch4, D3D12,
   MSAA x8).
@@ -1125,9 +1061,13 @@ repro steps; the entry says where the problem is and how it would show.
   change the exposure the shot is rendered with; (2) the shutter burst renders
   and tone-maps through a different path (suppression lifted, full
   readbacks) than the editor's live postfx chain, which would predate #63.
-- **Next step:** take the same photo on a build without #63 (`main2`) and on
-  one with it, and compare the saved photo with the editor preview. If both
-  are darker, compare the two render paths' tone mapping and exposure inputs.
+- **Evidence so far (visual impressions, photos not saved):** darker on
+  batch4 (with #63's `> 2` gate); fine on `main2` (no #63); fine on batch5
+  (the same #63 gate again). So one darker photo in three sessions, and the
+  log lines about auto-exposure were identical in all three.
+- **Next step:** if it shows up again, save the editor preview and the saved
+  photo (a screenshot of each) and note the build. #63 was changed to drop
+  the gate (`pr63b`); a photo session on that build is queued.
 
 ## Resolved
 
@@ -2465,6 +2405,91 @@ repro steps; the entry says where the problem is and how it would show.
   slots exhausted`) and the pass's draw is skipped (`pfx_draw`). A
   `static_assert` keeps `kPfxCbSlots >= 9`. No change while slots fit.
 - **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 at MSAA x8, the user's normal signed-in profile, in a photo editor session of about 4.5 minutes. The photo FX chain ran: 'photo postfx pipeline ready (9 passes, msaa=8)' and 'photo editor postfx chain LIVE (native; accum mode 0, vignette resolved, grain resolved)', with 0 'photo FX constant slots exhausted' lines and nothing wrong seen in the editor effects. Not confirmed: whether the DoF and focus sliders were moved. The bound is not reachable today, so this shows only that the photo chain still works with the check in place. This PR was not tested on its own.
+
+### KI-70: Restart prompt's Discard doesn't check it's acting on the Options state
+
+- **Status:** fixed in rubensteezy/skate3recomp#69, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** Options menu
+- **Tracking:** #69. Found while fixing KI-28 (#40). Code reading only.
+- **Where:** the Discard branch of the `sub_8260EA48` hook in
+  `src/skate3_options_menu.cpp`.
+- **Problem:** it uses `OptionsState()` (`owner+180`) without checking that the
+  object is a FrontEndState_Options. If the Options state is gone when Discard
+  fires, `PageOf` reads +68 of whatever object is there and could call
+  `sub_8260D078` on it. Unlikely, because the popup is modal over Options.
+- **Fix:** `IsOptionsState` does a guarded read (`GuestTryCopy`) of the state's
+  vtable and compares it with 0x823034B0 before `PageOf` / `sub_8260D078`. On a
+  mismatch the Back is skipped and one warning is logged
+  (`Discard skipped, state ... is not FrontEndState_Options`). The staged
+  choices are still dropped, as the player asked.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch5 (main fb33910 + #58 #62 #63 #64 #69 #70), D3D12, about 23 minutes with 8 loading screens. This PR was not tested on its own. In Options the user changed a restart-required option, backed out and chose Discard Changes: the log shows 'restart prompt shown (popup 2)' then 'restart prompt answered (button 1)' with no 'Discard skipped', and the option kept its old value. Restart Now also still worked ('restart prompt answered (button 0)', 'restart-required settings applied; restarting', and the new process came up with MSAA x4).
+
+### KI-86: The prewarm miss queue pops from the front of a vector
+
+- **Status:** fixed in rubensteezy/skate3recomp#70, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, streaming performance
+- **Tracking:** #70. Found while fixing KI-65 (#47).
+- **Where:** `PrewarmWorkerLoop` in `src/skate3_native_scene_gpu.cpp`, and
+  `skate3_native_scene_state.h`.
+- **Problem:** `g_miss_queue.erase(g_miss_queue.begin())` costs time in
+  proportion to the queue length (capped at 65536) while `g_prewarm_mutex` is
+  held, so a large streaming burst could stall the workers. `g_dyn_jobs` has
+  the same pattern.
+- **Also:** the null base/device re-queue in `PrewarmWorkerLoop` is close to
+  dead code (the workers start only once `g_r.device` is set, and nothing
+  resets it). It never decrements retries, so if it ever ran for long it
+  would spin entries every 100 ms per worker without end.
+- **Fix:** both queues are `std::deque` now, popped with `pop_front()` (same
+  FIFO order, caps and priority). The null base/device check runs before
+  dequeuing and just waits 100 ms, so nothing is popped, re-queued or
+  dropped.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch5 (main fb33910 + #58 #62 #63 #64 #69 #70), D3D12, about 23 minutes with 8 loading screens. This PR was not tested on its own. The user played with fast traversal and a cloth-wearing character and saw no missing meshes or stuck cloth. Prewarm went 0 -> 2,575 -> 9,299 -> 27,007 meshes decoded with 0 dropped, 0 bad layout, 0 map failures; the last summary still showed 663 queued and no later summary was logged. ropa[rigid=611711 stale=26 rescued=1]; the mesh store LRU ran 15 times with no failures; 0 'DecodeMesh rejected'.
+
+### KI-115: Signed-in demo path never reached gameplay on a fresh profile
+
+- **Status:** fixed in rubensteezy/skate3recomp#71, tested in-game on 2026-11-02 · **Severity:** low (test tooling)
+- **Area:** demo path, unattended testing
+- **Tracking:** rubensteezy/skate3recomp#71, with SDK branch `ki115-demo-keyboard-accept` in rubensteezy/rexglue-skate3. Found while fixing KI-92 (#68).
+- **Where:** `src/skate3_demo_path.cpp` (`StartBootAssistIfNeeded`), `XamShowKeyboardUI_entry` in `third_party/rexglue-sdk/src/kernel/xam/xam_ui.cpp`.
+- **Cause:** a profile with no save goes through screens the dialog A auto-tap can't finish (FE screen ids from the FE push-state stack): 9, 24 (FMV), 10, then 46 = the "welcome new team" name prompt, 63, 67, then 46 again (skater name) and 15 = the create-a-skater editor. Screen 46 is `XamShowKeyboardUI`, which opened an ImGui dialog nobody clicked, so the boot waited on it forever. The SDK's headless branch, which the demo path could have used, also returned the default text byte-reversed (`value()` is the guest's unswapped big-endian UTF-16 and was swapped again), so the game rejected the name and asked again in a loop. The editor, screen 15, ignores A and Start.
+- **Fix:** the SDK keyboard dialog now takes the headless branch when `skate3_demo_path` is on (log: "auto-accepting keyboard dialog with its default text"), and the default text is copied in the right byte order (an empty default becomes "Skate3"). The demo path's new boot-assist worker polls the FE stack before gameplay and, on screen 15, turns the A auto-tap off and taps B then A in pairs ("boot screen 15 has its own inputs"). The first version tapped once a second and failed on the big rig; here a 1500 ms spacing reproduced it (the confirm tap must follow the opening tap closely, and how soon varies), so the gap inside each pair now cycles 700/400/1000/250/1300/550 ms, the hold escalates 8/24/60 polls, and Start/Y/Back fallbacks follow after 4 passes. Logs: "boot screen 15 tap ...", a status line every 15 s, and "boot screen 15 left after N taps (last tap ...)", which leaves the editor. `--skate3_demo_path_boot_screen_inputs=<id>:<token>|<token>,...` adds or overrides rules for other screens. The probe also logs "FE stack [...]" changes and each FE screen push with its caller.
+- **Tests:** 3 fresh `--user_data_root` signed-in boots each logged "gameplay reached" (about 25 s after the keyboard prompt); 2 signed-out boots still reach gameplay and never touch the boot assist rules.
+- **Not covered:** signed-out demo runs still skip the sim-active rigid garment path with tap inputs; the player's garments with the sim active are now reachable through the signed-in path.
+- **In-game test (2026-11-02):** Played on the big rig as its own build (pr71b, PR #71 at f5057c2), D3D12, three runs. Run 1, signed-in demo path from an empty user-data folder: the first version of this PR got stuck on the create-a-skater screen there; the retimed version reached 'gameplay reached; boot automation complete' about 45 s after start, with the A tap (24-poll hold, second pass) leaving screen 15 and no Start/Y/Back fallback needed. Run 2, signed-out demo path, empty folder: reached gameplay in about 17 s. Run 3, a normal launch with the user's real profile and no flags: looked normal, no demo-path or keyboard-dialog lines, profiles.toml unchanged. Not exercised: the normal ImGui keyboard dialog with its default text (no name prompt came up), and an existing signed-in profile through the demo path. The tap timing fix rests on one big-rig run.
+
+### KI-75: Scene ring dumps taken in the same second overwrite each other
+
+- **Status:** fixed in rubensteezy/skate3recomp#64, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, diagnostics
+- **Tracking:** rubensteezy/skate3recomp#64. Found while fixing KI-32 (#44).
+- **Where:** `MaybeDumpSceneRing` in `src/skate3_native_scene_state.h`.
+  `SnapshotStem` in `src/native/skate3_native_diagnostics.cpp` uses the same
+  seconds-only naming.
+- **Problem:** the dump file is `logs/scene_ring_<time in seconds>.csv`, so an
+  F7 dump and an RB+A dump in the same second overwrite each other. That's the
+  same bug #44 fixes for screenshots. A snapshot takes several frames, so a
+  clash there is unlikely.
+- **Also:** the comment in `skate3_screenshot.h` says A/B captures "share one
+  timestamp". They actually share a tag with its own HH:MM:SS, and the file
+  stamps differ.
+- **Fix:** #44's strictly increasing millisecond stamp now lives in
+  `src/native/skate3_file_stamp.h` and names screenshots, scene ring dumps
+  (`logs/scene_ring_YYYYMMDD_HHMMSS_mmm.csv`) and snapshot stems
+  (`snapshot_YYYYMMDD_HHMMSS_mmm`), so no two diagnostic files get the same
+  stamp. The `skate3_screenshot.h` comment is reworded. Covered by
+  `tests/file_stamp_test.cpp`.
+- **In-game test (big rig, batch5):** pressing F7 produced no file and no log
+  line. F7 and RB+A are only polled with
+  `--skate3_native_render_capture_hotkeys=true` (default off), and the test
+  used only `--skate3_native_render_scene_ring=true`. Not a regression.
+- **Follow-up fix (also KI-114):** the dump is now written to
+  `<exe dir>/logs/scene_ring_<stamp>.csv`, the same folder as the game log
+  (it used the working directory before), and the folder is created if
+  missing. Success logs `native-scene ring: wrote N frames -> <full path>`;
+  failure logs an error (`DUMP FAILED`). An empty ring warns. With the ring on
+  and the hotkeys off, the game warns once at startup that F7 / RB+A are off.
+  The `skate3_native_render_scene_ring` help text now names the hotkeys flag.
+- **In-game test (2026-11-02):** Played on the big rig as its own build (pr64b, PR #64 at baecf95), D3D12, MSAA x4, with --skate3_native_render_scene_ring=true --skate3_native_render_capture_hotkeys=true. The first big-rig attempt (batch5) wrote nothing because the hotkeys flag was missing; that was a wrong test step, not a regression, and this PR now logs it. Four dumps worked: RB+A twice and F7 twice, each logging 'scene ring dump requested' then 'native-scene ring: wrote 2400 frames -> <path>', all in the build's logs folder with different millisecond suffixes (scene_ring_20261102_214825_966, _214831_029, _214833_600, _214835_767); the user noticed a minor hitch of about 0.2-1.0 s per dump. Not exercised on the big rig: two presses within the same second (the F7 presses were about 2 s apart); that case was covered by the PR's unattended run, which wrote two dumps in one second with different names.
 
 ### Reviewed and ruled out (code review)
 
