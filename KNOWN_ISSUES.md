@@ -186,21 +186,6 @@ repro steps; the entry says where the problem is and how it would show.
   either backend, even when GPU-bound. With #28's 8 regions, the fallback
   that would need this wait can't trigger in normal operation.
 
-### KI-40: Photo FX constant slots have no bounds check
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, photo FX
-- **Tracking:** none yet. Found while fixing KI-16 (#28).
-- **Where:** `src/skate3_native_scene_gpu.cpp`, `RenderScene`, the photo FX
-  `fill_cb` lambda.
-- **Problem:** `cb_slot_next++` is never checked against
-  `RendererState::kPfxCbSlots` (10). Today at most 10 slots are used: depth
-  pack, accum feed, 6 passes, accum mode 2 and the debug view. One more pass
-  would silently write into the next frame's region, or past the end of the
-  buffer for the last region.
-- **Fix:** clamp it, or assert and log when `cb_slot_next` reaches
-  `kPfxCbSlots`.
-
 ### KI-43: A script/debug getter reads the scaled cull threshold
 
 - **Status:** open (unconfirmed) · **Severity:** low
@@ -589,20 +574,6 @@ repro steps; the entry says where the problem is and how it would show.
   hundred MB of CSV. It's off by default and debug-only.
 - **Next step:** measure it, and put the real size in the cvar help text.
 
-### KI-77: Photo grab assumes 4-byte output pixels
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, photo grab
-- **Tracking:** none yet. Found while fixing KI-32 (#44).
-- **Where:** `RendererState::kGrabRowPitch = kBlurWidth * 4`; the grab reads
-  `blur_tex[0]`, which uses the output format.
-- **Problem:** that's correct for today's fixed R10G10B10A2 output. If the output
-  format ever changed (the case #44 now guards for the blur targets), the
-  pitch and the CPU tiling would be wrong. The output format is a compile-time
-  constant in the SDK (`kGuestOutputFormat`), so nothing at runtime changes it
-  today.
-- **Fix:** add a static check or a comment next to #44's format key.
-
 ### KI-78: SDK settings.toml handling has the same reset and flush gaps as KI-59
 
 - **Status:** open (code reading only) · **Severity:** low–medium
@@ -828,20 +799,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** decide whether release defaults should turn on vsync or a
   frame cap. Settings > Display already has Framerate Cap and V-Sync rows.
 
-### KI-92: `ScoreRigidAffine` has no in-front-of-camera check
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, player garments
-- **Tracking:** none yet. Found while fixing KI-61 (#50).
-- **Where:** `ScoreRigidAffine` in `src/skate3_native_scene.cpp`.
-- **Problem:** its strict count accepts a sample when `|x|` and `|y|` are within
-  1.5·|w|, without requiring `clip[3] > 0`. So a matrix that places the
-  garment behind the camera can still score well. `RefinePaletteBase` has
-  that check, and its comment explains it exists for exactly this case. The
-  structural tail-row check on the matrix block reduces the risk.
-- **Fix:** add `clip[3] > 0.0f` to the strict count, then re-test the player's
-  tee (Ropa, sim active) up close.
-
 ### KI-93: Character shadows may be cut off at the edges on 32:9 ultrawide
 
 - **Status:** open (unverified) · **Severity:** low–medium
@@ -1064,19 +1021,36 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-110: Decode/prewarm workers fault on wild guest pointers during streaming
 
-- **Status:** open (unconfirmed) · **Severity:** low–medium
+- **Status:** open · logging fix in rubensteezy/skate3recomp#62, played in
+  batch4 without the fault appearing (not reproduced) · **Severity:** low
+  (log noise; no unguarded load found)
 - **Area:** native renderer, streaming, guest memory safety
-- **Tracking:** none yet. Found while testing KI-87 (#60).
+- **Tracking:** rubensteezy/skate3recomp#62. Found while testing KI-87 (#60).
 - **Symptom:** one of 16 unattended D3D12 boots logged 271
   `Unhandled guest access violation: read of guest 0x3F800000 / 0x69676874 ...`
   lines during a streaming burst (frames ~1800–2400), from the threads that
   also log `mesh ... decoded N verts outside bbox`, plus a one-off
   `rej[chain=743]`. The process survived.
-- **Cause so far:** the bad addresses are a float (1.0f) and ASCII text read as
-  pointers, so some decode/prewarm path reads stale guest data. Not caused by
-  #60: those threads don't run `CaptureDynamicState`. Call site not found yet.
-- **Next step:** per-site logging (or a debugger) in the mesh decode/prewarm
-  path to find the faulting load, then guard it the way KI-64 did.
+- **Cause:** these are faults that a guard already caught. The SDK's vectored
+  handler (`Memory::AccessViolationCallback`, `xmemory.cpp`) runs before the
+  `GuestTryCopy` SEH guard and logs every guest-range fault as "Unhandled",
+  even ones the guard then handles. A real unguarded load on a decode worker
+  would have ended the process on Windows. The log shows the same four
+  addresses (0x3F800000, 0x36E7213A, 0x33F15B4C, 0x69676874), one line each,
+  once per mesh, on all 8 decode workers. That pattern fits the material
+  channel loop in `BuildItemFromMesh`: `GuestTryLoadU32(stream)` on the
+  channel's +0x1C word, which for some materials is not a pointer. The guid
+  lookup then takes over, so the output is unchanged. Every guest read on
+  the worker paths (`ProcessPrewarmEntry`, `BuildItemFromMesh`, `DecodeMesh`,
+  the texture staging) is already guarded.
+- **Fix:** #62 names the site. A caught probe fault now also logs
+  `guarded guest read failed at material channel stream probe` (throttled
+  to one line per 10 s), so the "Unhandled" lines can be matched to it.
+- **Next step:** if the noise matters, have the SDK skip the error log for
+  faults inside `GuestTryCopy`. That change belongs in the rexglue-skate3 fork.
+- **In-game test:** played on the big rig in batch4 (D3D12, about 17 minutes
+  over two runs): 0 "Unhandled guest access violation" lines, so the new
+  probe note was never seen firing and the fault is still not reproduced.
 
 ### KI-111: `WarmItemResources` ignores the mesh decode backoff during settle
 
@@ -1133,6 +1107,25 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** `create_directories` before opening, as `WriteSnapshotLocked`
   does.
 
+### KI-116: The saved photo can look slightly darker than the editor preview
+
+- **Status:** open (unconfirmed, single report) · **Severity:** low–medium
+- **Area:** native renderer, photo mode
+- **Tracking:** none yet. Reported while play-testing #63 (batch4, D3D12,
+  MSAA x8).
+- **Symptom:** after a trick, in the photo editor the world brightness looked
+  correct, but the picture picked after editing looked slightly darker than
+  what was shown in the editor. No numbers or screenshots yet.
+- **Cause so far:** unknown. Not caused by the old "world stays dark after the
+  shutter" bug (#63 fixed that). Two candidates: (1) #63 now skips the
+  max-exposure store where the game uses its own scratch output, which could
+  change the exposure the shot is rendered with; (2) the shutter burst renders
+  and tone-maps through a different path (suppression lifted, full
+  readbacks) than the editor's live postfx chain, which would predate #63.
+- **Next step:** take the same photo on a build without #63 (`main2`) and on
+  one with it, and compare the saved photo with the editor preview. If both
+  are darker, compare the two render paths' tone mapping and exposure inputs.
+
 ## Resolved
 
 ### KI-115: Signed-in demo path never reached gameplay on a fresh profile
@@ -1142,7 +1135,7 @@ repro steps; the entry says where the problem is and how it would show.
 - **Tracking:** rubensteezy/skate3recomp#71, with SDK branch `ki115-demo-keyboard-accept` in rubensteezy/rexglue-skate3. Found while fixing KI-92 (#68).
 - **Where:** `src/skate3_demo_path.cpp` (`StartBootAssistIfNeeded`), `XamShowKeyboardUI_entry` in `third_party/rexglue-sdk/src/kernel/xam/xam_ui.cpp`.
 - **Cause:** a profile with no save goes through screens the dialog A auto-tap can't finish (FE screen ids from the FE push-state stack): 9, 24 (FMV), 10, then 46 = the "welcome new team" name prompt, 63, 67, then 46 again (skater name) and 15 = the create-a-skater editor. Screen 46 is `XamShowKeyboardUI`, which opened an ImGui dialog nobody clicked, so the boot waited on it forever. The SDK's headless branch, which the demo path could have used, also returned the default text byte-reversed (`value()` is the guest's unswapped big-endian UTF-16 and was swapped again), so the game rejected the name and asked again in a loop. The editor, screen 15, ignores A and Start.
-- **Fix:** the SDK keyboard dialog now takes the headless branch when `skate3_demo_path` is on (log: "auto-accepting keyboard dialog with its default text"), and the default text is copied in the right byte order (an empty default becomes "Skate3"). The demo path's new boot-assist worker polls the FE stack before gameplay and, on screen 15, turns the A auto-tap off and taps B then A once a second ("boot screen 15 has its own inputs"), which leaves the editor. `--skate3_demo_path_boot_screen_inputs=<id>:<token>|<token>,...` adds or overrides rules for other screens. The probe also logs "FE stack [...]" changes and each FE screen push with its caller.
+- **Fix:** the SDK keyboard dialog now takes the headless branch when `skate3_demo_path` is on (log: "auto-accepting keyboard dialog with its default text"), and the default text is copied in the right byte order (an empty default becomes "Skate3"). The demo path's new boot-assist worker polls the FE stack before gameplay and, on screen 15, turns the A auto-tap off and taps B then A in pairs ("boot screen 15 has its own inputs"). The first version tapped once a second and failed on the big rig; here a 1500 ms spacing reproduced it (the confirm tap must follow the opening tap closely, and how soon varies), so the gap inside each pair now cycles 700/400/1000/250/1300/550 ms, the hold escalates 8/24/60 polls, and Start/Y/Back fallbacks follow after 4 passes. Logs: "boot screen 15 tap ...", a status line every 15 s, and "boot screen 15 left after N taps (last tap ...)", which leaves the editor. `--skate3_demo_path_boot_screen_inputs=<id>:<token>|<token>,...` adds or overrides rules for other screens. The probe also logs "FE stack [...]" changes and each FE screen push with its caller.
 - **Tests:** 3 fresh `--user_data_root` signed-in boots each logged "gameplay reached" (about 25 s after the keyboard prompt); 2 signed-out boots still reach gameplay and never touch the boot assist rules.
 - **Not covered:** signed-out demo runs still skip the sim-active rigid garment path with tap inputs; the player's garments with the sim active are now reachable through the signed-in path.
 
@@ -2395,6 +2388,66 @@ repro steps; the entry says where the problem is and how it would show.
   `2d[other= dropped= askip= astale=]`; all other fields keep their order.
   No script in the repo parses the field.
 - **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. The 'native-scene: frame N' lines show 2d[other= dropped= askip= astale=] with no textures= inside the brackets, and textures= still follows mesh_mb=.
+
+### KI-77: Photo grab assumes 4-byte output pixels
+
+- **Status:** fixed in rubensteezy/skate3recomp#67, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, photo grab
+- **Tracking:** #67. Found while fixing KI-32 (#44).
+- **Where:** `RendererState::kGrabRowPitch = kBlurWidth * 4`; the grab reads
+  `blur_tex[0]`, which uses the output format.
+- **Problem:** that's correct for today's fixed R10G10B10A2 output. If the output
+  format ever changed (the case #44 now guards for the blur targets), the
+  pitch and the CPU tiling would be wrong. The output format is a compile-time
+  constant in the SDK (`kGuestOutputFormat`), so nothing at runtime changes it
+  today.
+- **Fix:** `RendererState::kGrabFormat` restates the output format
+  (`nrhi::Format::kR10G10B10A2_UNORM`), the pitch is derived from it through
+  `ColorFormatBytesPerPixel`, and a `static_assert` requires 4 bytes per pixel
+  because `WriteGrabToGuest` tiles 32-bit pixels. Comments next to
+  `blur_format` and `kGrabFormat` say to change it with the SDK. It can't
+  compare against the SDK's `kGuestOutputFormat` directly: the presenter
+  headers pull in `renderdoc_app.h`, which the app can't include. No runtime
+  change.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. Compile-time check only: batch4 built with it and ran, and there is nothing to observe in play.
+
+### KI-92: `ScoreRigidAffine` has no in-front-of-camera check
+
+- **Status:** fixed in rubensteezy/skate3recomp#68, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, player garments
+- **Tracking:** #68. Found while fixing KI-61 (#50).
+- **Where:** `ScoreRigidAffine` in `src/skate3_native_scene.cpp`.
+- **Problem:** its strict count accepted a sample when `|x|` and `|y|` were
+  within 1.5·|w|, without requiring `clip[3] > 0`. So a matrix that places the
+  garment behind the camera could still score well. `RefinePaletteBase` has
+  that check, and its comment explains it exists for exactly this case. The
+  structural tail-row check on the matrix block reduced the risk.
+- **Fix:** the strict count now also requires `clip[3] > 0.0f`. The only gate
+  on the score is `rigid_score >= 8 || front_all`, and `front_all` already
+  required w > 0, so samples in front of the camera score as before.
+- **Test:** unattended signed-out demo boots with a temporary old-vs-new score
+  comparison: no differences, every `ropa mesh ... score=16`. The garments
+  stayed sim-inactive there (`ropa[rigid=0 ...]`), so the rigid branch still
+  needs the in-game check: the player's tee (Ropa, sim active) up close.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. The player confirmed the tee looked fine. ropa[rigid=N] rose to 342,431 in the first run (stale=17326, rescued=14602) and ended at 81,532 with stale=0 in the second; there was no run on main to compare stale= against.
+
+### KI-40: Photo FX constant slots have no bounds check
+
+- **Status:** fixed in rubensteezy/skate3recomp#65, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, photo FX
+- **Tracking:** rubensteezy/skate3recomp#65. Found while fixing KI-16 (#28).
+- **Where:** `src/skate3_native_scene_gpu.cpp`, `RenderScene`, the photo FX
+  `fill_cb` lambda.
+- **Problem:** `cb_slot_next++` is never checked against
+  `RendererState::kPfxCbSlots` (10). Today at most 9 slots are used per frame
+  (depth pack, one accum pass for mode 1 or 2, 6 chain passes, the debug
+  view). One more pass would silently write into the next frame's region, or
+  past the end of the buffer for the last region.
+- **Fix:** `fill_cb` now checks `cb_slot_next` against `kPfxCbSlots`. When
+  the region is full it writes nothing, logs one warning (`photo FX constant
+  slots exhausted`) and the pass's draw is skipped (`pfx_draw`). A
+  `static_assert` keeps `kPfxCbSlots >= 9`. No change while slots fit.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 at MSAA x8, the user's normal signed-in profile, in a photo editor session of about 4.5 minutes. The photo FX chain ran: 'photo postfx pipeline ready (9 passes, msaa=8)' and 'photo editor postfx chain LIVE (native; accum mode 0, vignette resolved, grain resolved)', with 0 'photo FX constant slots exhausted' lines and nothing wrong seen in the editor effects. Not confirmed: whether the DoF and focus sliders were moved. The bound is not reachable today, so this shows only that the photo chain still works with the check in place. This PR was not tested on its own.
 
 ### Reviewed and ruled out (code review)
 

@@ -2522,10 +2522,25 @@ bool BuildItemFromMesh(uint8_t* base, uint32_t mesh, DrawItem& item) {
           // fetch-constant type bits before trusting the pointer.
           // Guarded: the prewarm walks materials whose stream records /
           // texture objects may not be loaded yet.
+          // KI-110: some texture channels carry a +0x1C word that is not a
+          // pointer at all (seen: 0x3F800000 = 1.0f, 0x69676874 = "ight"),
+          // so this probe faults once per such channel during streaming
+          // bursts. The guard catches it and the guid lookup below takes
+          // over, but the SDK's vectored handler runs BEFORE the SEH guard
+          // and logs every caught fault as "Unhandled guest access
+          // violation". Name the site here so those lines can be told apart
+          // from a real unguarded load.
           const uint32_t stream = chan_u32(i, 0x1C);
           uint32_t tex = 0, tex_w0 = 0;
-          if (GuestTryLoadU32(base, stream, &tex) &&
-              GuestTryLoadU32(base, tex + 7 * 4, &tex_w0) && (tex_w0 & 3u) == 2u) {
+          if (!GuestTryLoadU32(base, stream, &tex)) {
+            if (stream >= 0x10000) {
+              NoteGuestReadSkip("material channel stream probe", stream);
+            }
+          } else if (!GuestTryLoadU32(base, tex + 7 * 4, &tex_w0)) {
+            if (tex >= 0x10000) {
+              NoteGuestReadSkip("material channel texture probe", tex + 7 * 4);
+            }
+          } else if ((tex_w0 & 3u) == 2u) {
             *slot = tex;
           }
           if (*slot == 0) {
@@ -4342,8 +4357,8 @@ float CharFadeAlpha(const DrawItem& item) {
 // clip at the player's position; the skinned interpretation scores 0/31.
 // Transform up to 6 sample vertices of the item by the affine at register m
 // (3 column-vector [R | t] rows) and project them with the bank's own
-// viewproj (c0..c3). Returns the count of samples inside the clip volume,
-// -1 when unscorable. A stale bank (the submit-exit capture can run after
+// viewproj (c0..c3). Returns the fraction (0..16) of samples in front of the
+// projection and inside the strict clip band, -1 when unscorable. A stale bank (the submit-exit capture can run after
 // ANOTHER mesh's draw when this mesh's own draws are deferred) holds some
 // other object's matrix at c188/c191; geometry projected with it lands
 // far off-clip, while the true matrix scores full (validated offline:
@@ -4391,7 +4406,12 @@ int ScoreRigidAffine(uint8_t* base, uint32_t bank, uint32_t m, const DrawItem& i
     }
     const float aw = std::abs(clip[3]) < 1.0f ? 1.0f : std::abs(clip[3]);
     ++n;
-    if (std::abs(clip[0]) <= x_band * aw && std::abs(clip[1]) <= 1.5f * aw) {
+    // In FRONT of the projection (w > 0) and inside the strict band, as in
+    // RefinePaletteBase: without the w check a stale/foreign matrix that
+    // places the garment BEHIND the camera can still land |x|,|y| within
+    // the band and pass the >= 8 acceptance gate (KI-92).
+    if (clip[3] > 0.0f && std::abs(clip[0]) <= x_band * aw &&
+        std::abs(clip[1]) <= 1.5f * aw) {
       ++ok;
     }
     if (clip[3] > 0.0f && std::abs(clip[0]) <= 6.0f * aw &&
