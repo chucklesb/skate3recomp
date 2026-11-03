@@ -533,23 +533,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** if that warning ever appears, add a "user set while held" path
   that updates `saved_`.
 
-### KI-75: Scene ring dumps taken in the same second overwrite each other
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, diagnostics
-- **Tracking:** none yet. Found while fixing KI-32 (#44).
-- **Where:** `MaybeDumpSceneRing` in `src/skate3_native_scene_state.h`.
-  `SnapshotStem` in `src/native/skate3_native_diagnostics.cpp` uses the same
-  seconds-only naming.
-- **Problem:** the dump file is `logs/scene_ring_<time in seconds>.csv`, so an
-  F7 dump and an RB+A dump in the same second overwrite each other. That's the
-  same bug #44 fixes for screenshots. A snapshot takes several frames, so a
-  clash there is unlikely.
-- **Also:** the comment in `skate3_screenshot.h` says A/B captures "share one
-  timestamp". They actually share a tag with its own HH:MM:SS, and the file
-  stamps differ.
-- **Fix:** reuse #44's millisecond stamp, and reword the comment.
-
 ### KI-76: Scene ring may use about 150 MB while on (debug only)
 
 - **Status:** open (estimate, not measured) · **Severity:** low
@@ -2461,6 +2444,40 @@ repro steps; the entry says where the problem is and how it would show.
 - **Tests:** 3 fresh `--user_data_root` signed-in boots each logged "gameplay reached" (about 25 s after the keyboard prompt); 2 signed-out boots still reach gameplay and never touch the boot assist rules.
 - **Not covered:** signed-out demo runs still skip the sim-active rigid garment path with tap inputs; the player's garments with the sim active are now reachable through the signed-in path.
 - **In-game test (2026-11-02):** Played on the big rig as its own build (pr71b, PR #71 at f5057c2), D3D12, three runs. Run 1, signed-in demo path from an empty user-data folder: the first version of this PR got stuck on the create-a-skater screen there; the retimed version reached 'gameplay reached; boot automation complete' about 45 s after start, with the A tap (24-poll hold, second pass) leaving screen 15 and no Start/Y/Back fallback needed. Run 2, signed-out demo path, empty folder: reached gameplay in about 17 s. Run 3, a normal launch with the user's real profile and no flags: looked normal, no demo-path or keyboard-dialog lines, profiles.toml unchanged. Not exercised: the normal ImGui keyboard dialog with its default text (no name prompt came up), and an existing signed-in profile through the demo path. The tap timing fix rests on one big-rig run.
+
+### KI-75: Scene ring dumps taken in the same second overwrite each other
+
+- **Status:** fixed in rubensteezy/skate3recomp#64, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, diagnostics
+- **Tracking:** rubensteezy/skate3recomp#64. Found while fixing KI-32 (#44).
+- **Where:** `MaybeDumpSceneRing` in `src/skate3_native_scene_state.h`.
+  `SnapshotStem` in `src/native/skate3_native_diagnostics.cpp` uses the same
+  seconds-only naming.
+- **Problem:** the dump file is `logs/scene_ring_<time in seconds>.csv`, so an
+  F7 dump and an RB+A dump in the same second overwrite each other. That's the
+  same bug #44 fixes for screenshots. A snapshot takes several frames, so a
+  clash there is unlikely.
+- **Also:** the comment in `skate3_screenshot.h` says A/B captures "share one
+  timestamp". They actually share a tag with its own HH:MM:SS, and the file
+  stamps differ.
+- **Fix:** #44's strictly increasing millisecond stamp now lives in
+  `src/native/skate3_file_stamp.h` and names screenshots, scene ring dumps
+  (`logs/scene_ring_YYYYMMDD_HHMMSS_mmm.csv`) and snapshot stems
+  (`snapshot_YYYYMMDD_HHMMSS_mmm`), so no two diagnostic files get the same
+  stamp. The `skate3_screenshot.h` comment is reworded. Covered by
+  `tests/file_stamp_test.cpp`.
+- **In-game test (big rig, batch5):** pressing F7 produced no file and no log
+  line. F7 and RB+A are only polled with
+  `--skate3_native_render_capture_hotkeys=true` (default off), and the test
+  used only `--skate3_native_render_scene_ring=true`. Not a regression.
+- **Follow-up fix (also KI-114):** the dump is now written to
+  `<exe dir>/logs/scene_ring_<stamp>.csv`, the same folder as the game log
+  (it used the working directory before), and the folder is created if
+  missing. Success logs `native-scene ring: wrote N frames -> <full path>`;
+  failure logs an error (`DUMP FAILED`). An empty ring warns. With the ring on
+  and the hotkeys off, the game warns once at startup that F7 / RB+A are off.
+  The `skate3_native_render_scene_ring` help text now names the hotkeys flag.
+- **In-game test (2026-11-02):** Played on the big rig as its own build (pr64b, PR #64 at baecf95), D3D12, MSAA x4, with --skate3_native_render_scene_ring=true --skate3_native_render_capture_hotkeys=true. The first big-rig attempt (batch5) wrote nothing because the hotkeys flag was missing; that was a wrong test step, not a regression, and this PR now logs it. Four dumps worked: RB+A twice and F7 twice, each logging 'scene ring dump requested' then 'native-scene ring: wrote 2400 frames -> <path>', all in the build's logs folder with different millisecond suffixes (scene_ring_20261102_214825_966, _214831_029, _214833_600, _214835_767); the user noticed a minor hitch of about 0.2-1.0 s per dump. Not exercised on the big rig: two presses within the same second (the F7 presses were about 2 s apart); that case was covered by the PR's unattended run, which wrote two dumps in one second with different names.
 
 ### Reviewed and ruled out (code review)
 
