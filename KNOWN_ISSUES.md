@@ -1216,23 +1216,18 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** `create_directories` before opening, as `WriteSnapshotLocked`
   does.
 
-### KI-115: Signed-in demo path never reaches gameplay on a fresh profile
-
-- **Status:** open · **Severity:** low (test tooling)
-- **Area:** demo path, unattended testing
-- **Tracking:** none yet. Found while fixing KI-92 (#68).
-- **Where:** `src/skate3_demo_path.cpp`, signed-in mode
-  (`--skate3_demo_path_signed_in=true`).
-- **Problem:** with a `--user_data_root` that has no save yet, the boot loops
-  on "gameplay context 0; enabling dialog A auto-tap" every 8 s and never
-  reaches gameplay (it saves only an ALIAS_SKATER file). Unattended agents
-  can't test signed-in paths, such as the player's garments with the sim
-  active. Signed-out demo runs also never reach the sim-active rigid garment
-  path (`ropa[rigid=0]`) with tap inputs.
-- **Next step:** find which new-profile dialog the auto-tap doesn't clear, or
-  keep a seeded test profile with a finished save for agents to copy in.
-
 ## Resolved
+
+### KI-115: Signed-in demo path never reached gameplay on a fresh profile
+
+- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested unattended · **Severity:** low (test tooling)
+- **Area:** demo path, unattended testing
+- **Tracking:** rubensteezy/skate3recomp#PRNUM, with SDK branch `ki115-demo-keyboard-accept` in rubensteezy/rexglue-skate3. Found while fixing KI-92 (#68).
+- **Where:** `src/skate3_demo_path.cpp` (`StartBootAssistIfNeeded`), `XamShowKeyboardUI_entry` in `third_party/rexglue-sdk/src/kernel/xam/xam_ui.cpp`.
+- **Cause:** a profile with no save goes through screens the dialog A auto-tap can't finish (FE screen ids from the FE push-state stack): 9, 24 (FMV), 10, then 46 = the "welcome new team" name prompt, 63, 67, then 46 again (skater name) and 15 = the create-a-skater editor. Screen 46 is `XamShowKeyboardUI`, which opened an ImGui dialog nobody clicked, so the boot waited on it forever. The SDK's headless branch, which the demo path could have used, also returned the default text byte-reversed (`value()` is the guest's unswapped big-endian UTF-16 and was swapped again), so the game rejected the name and asked again in a loop. The editor, screen 15, ignores A and Start.
+- **Fix:** the SDK keyboard dialog now takes the headless branch when `skate3_demo_path` is on (log: "auto-accepting keyboard dialog with its default text"), and the default text is copied in the right byte order (an empty default becomes "Skate3"). The demo path's new boot-assist worker polls the FE stack before gameplay and, on screen 15, turns the A auto-tap off and taps B then A once a second ("boot screen 15 has its own inputs"), which leaves the editor. `--skate3_demo_path_boot_screen_inputs=<id>:<token>|<token>,...` adds or overrides rules for other screens. The probe also logs "FE stack [...]" changes and each FE screen push with its caller.
+- **Tests:** 3 fresh `--user_data_root` signed-in boots each logged "gameplay reached" (about 25 s after the keyboard prompt); 2 signed-out boots still reach gameplay and never touch the boot assist rules.
+- **Not covered:** signed-out demo runs still skip the sim-active rigid garment path with tap inputs; the player's garments with the sim active are now reachable through the signed-in path.
 
 ### KI-72: The Defender trojan trigger shipped on main
 

@@ -49,7 +49,8 @@ REXCVAR_DEFINE_STRING(skate3_demo_path_boot_screen_inputs, "", "Skate 3",
                       "Demo path: extra per-screen boot inputs, 'id:token|token...' entries "
                       "separated by commas (FE screen ids as logged by 'FE stack'). While that "
                       "screen is on top of the FE stack before gameplay, the tokens are tapped "
-                      "in turn instead of the dialog A auto-tap. Added to the built-in rules");
+                      "in turn instead of the dialog A auto-tap. Takes precedence over the "
+                      "built-in rule (screen 15, the new-profile skater editor: b|a)");
 REXCVAR_DEFINE_BOOL(skate3_intro_movie_skip, true, "Skate 3",
                     "Skip the frontend intro movie when A or Start is pressed "
                     "(the default keyboard bindings make that Space and Enter)");
@@ -186,6 +187,20 @@ extern "C" REX_FUNC(Skate3DemoPath_SetFrontEndStateHook) {
 
   sub_82D0AFA0(ctx, base);
 }
+
+// Probe: FE screen pushes (screen id in r4), logged with the caller so
+// unknown boot screens can be traced to the code that opens them.
+#define SKATE3_FE_PUSH_PROBE(addr)                                                    \
+  extern "C" REX_FUNC(sub_##addr) {                                                   \
+    if (ProbeEnabled()) {                                                             \
+      REXLOG_INFO("Skate 3 demo path: FE push via sub_" #addr " id={} lr=0x{:08X}",    \
+                  ctx.r4.u32, static_cast<uint32_t>(ctx.lr));                         \
+    }                                                                                 \
+    __imp__sub_##addr(ctx, base);                                                     \
+  }
+SKATE3_FE_PUSH_PROBE(82D0ABE0)
+SKATE3_FE_PUSH_PROBE(82D0AB30)
+SKATE3_FE_PUSH_PROBE(82D0AEF0)
 
 extern "C" REX_FUNC(Skate3DemoPath_LanguageSelectStateHook) {
   g_guest_base.store(base, std::memory_order_relaxed);
@@ -509,6 +524,12 @@ void StartBootAssistIfNeeded() {
   if (!ParseBootScreenRules(REXCVAR_GET(skate3_demo_path_boot_screen_inputs), &rules)) {
     rules.clear();
   }
+  // Built-in rule (after any user rules, which win): a fresh profile's
+  // startup create-a-skater editor (FE screen 15) ignores the A auto-tap
+  // and Start; B asks to leave it and A accepts, which ends the boot flow.
+  // (The "welcome new team" and skater name prompts, screen 46, are keyboard
+  // dialogs the SDK accepts by itself in demo-path mode.)
+  rules.push_back({15, {rex::input::X_INPUT_GAMEPAD_B, rex::input::X_INPUT_GAMEPAD_A}});
   g_boot_assist = std::thread([rules = std::move(rules)] {
     constexpr auto kPoll = std::chrono::milliseconds(50);
     constexpr int64_t kTapIntervalMs = 1000;
