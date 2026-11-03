@@ -714,17 +714,6 @@ repro steps; the entry says where the problem is and how it would show.
   more than once per `g_frames_rendered` value, or at the ROPA generation
   ring. Then fix the comment.
 
-### KI-91: Frame rate is uncapped by default
-
-- **Status:** open (decision) · **Severity:** low
-- **Area:** settings defaults
-- **Tracking:** none yet. Noticed while checking KI-38 (#49).
-- **Problem:** the SDK `vsync` cvar defaults to false, and at default settings
-  both backends ran at about 4.4 ms per frame (about 225 fps). That may cost
-  power and heat for no benefit, especially on laptops.
-- **Next step:** decide whether release defaults should turn on vsync or a
-  frame cap. Settings > Display already has Framerate Cap and V-Sync rows.
-
 ### KI-93: Character shadows may be cut off at the edges on 32:9 ultrawide
 
 - **Status:** open (unverified) · **Severity:** low–medium
@@ -1044,6 +1033,19 @@ repro steps; the entry says where the problem is and how it would show.
   the gate (`pr63b`); a photo session on that build is queued.
 
 ## Resolved
+
+### KI-91: Frame rate is uncapped by default
+
+- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested unattended / awaiting in-game test · **Severity:** low
+- **Area:** settings defaults
+- **Tracking:** #PRNUM. Noticed while checking KI-38 (#49).
+- **Problem:** at default settings both backends ran at about 4.4 ms per
+  frame (about 225 fps), costing power and heat for no benefit.
+- **Fix:** `skate3_guest_fps_cap` now defaults to 120 and
+  `skate3_guest_fps_cap_auto` to false (`src/skate3_native_render.cpp`), and
+  the pacer logs "skate3 frame cap in effect" when the cap changes. Values
+  already saved in a player's `settings.toml` still win. V-Sync is unchanged.
+  Settings > Display > Framerate Cap shows "120 FPS" and still changes it.
 
 ### KI-72: The Defender trojan trigger shipped on main
 
