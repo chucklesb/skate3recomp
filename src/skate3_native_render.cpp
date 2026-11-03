@@ -35,8 +35,9 @@ REXCVAR_DEFINE_INT32(skate3_native_render_log_interval, 0, "Skate 3",
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_perf_log);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_occlusion_cull_guest);
-REXCVAR_DEFINE_DOUBLE(skate3_guest_fps_cap, 0.0, "Skate 3",
-                      "Pace the guest render loop to this frame rate (0 = uncapped). The "
+REXCVAR_DEFINE_DOUBLE(skate3_guest_fps_cap, 120.0, "Skate 3",
+                      "Pace the guest render loop to this frame rate (0 = uncapped; default "
+                      "120, KI-91). The "
                       "guest produces frames at irregular 2-9 ms intervals; the display "
                       "(especially with G-Sync/VRR, which follows present times directly) "
                       "turns that variance into visible irregular judder that no content "
@@ -46,8 +47,8 @@ REXCVAR_DEFINE_DOUBLE(skate3_guest_fps_cap, 0.0, "Skate 3",
                       "~1.5 ms before the target, then spin.")
     .range(0.0, 1000.0)
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
-REXCVAR_DEFINE_BOOL(skate3_guest_fps_cap_auto, true, "Skate 3",
-                    "Derive the guest frame cap from the display the window is on: "
+REXCVAR_DEFINE_BOOL(skate3_guest_fps_cap_auto, false, "Skate 3",
+                    "Off by default (the fixed skate3_guest_fps_cap of 120 applies, KI-91). Derive the guest frame cap from the display the window is on: "
                     "cap a safety margin below the refresh rate (4 fps or 5%, "
                     "whichever is larger; see rex::ui::Window::AutoFrameCapHz), "
                     "the VRR recipe above, without hand-tuning per monitor. Above "
@@ -272,6 +273,12 @@ void PaceGuestFrame() {
     if (auto_cap > 0.0) {
       cap = auto_cap;
     }
+  }
+  static double s_logged_cap = -1.0;
+  if (cap != s_logged_cap) {
+    s_logged_cap = cap;
+    REXLOG_INFO("skate3 frame cap in effect: {} fps (auto={}, 0 = uncapped)", cap,
+                REXCVAR_GET(skate3_guest_fps_cap_auto));
   }
   static std::chrono::steady_clock::time_point s_next{};
   if (cap < 1.0) {
