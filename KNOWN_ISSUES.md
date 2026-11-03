@@ -1123,26 +1123,6 @@ repro steps; the entry says where the problem is and how it would show.
 
 ## Resolved
 
-### KI-92: `ScoreRigidAffine` has no in-front-of-camera check
-
-- **Status:** fix in review in rubensteezy/skate3recomp#68, tested unattended /
-  awaiting in-game test · **Severity:** low
-- **Area:** native renderer, player garments
-- **Tracking:** #68. Found while fixing KI-61 (#50).
-- **Where:** `ScoreRigidAffine` in `src/skate3_native_scene.cpp`.
-- **Problem:** its strict count accepted a sample when `|x|` and `|y|` were
-  within 1.5·|w|, without requiring `clip[3] > 0`. So a matrix that places the
-  garment behind the camera could still score well. `RefinePaletteBase` has
-  that check, and its comment explains it exists for exactly this case. The
-  structural tail-row check on the matrix block reduced the risk.
-- **Fix:** the strict count now also requires `clip[3] > 0.0f`. The only gate
-  on the score is `rigid_score >= 8 || front_all`, and `front_all` already
-  required w > 0, so samples in front of the camera score as before.
-- **Test:** unattended signed-out demo boots with a temporary old-vs-new score
-  comparison: no differences, every `ropa mesh ... score=16`. The garments
-  stayed sim-inactive there (`ropa[rigid=0 ...]`), so the rigid branch still
-  needs the in-game check: the player's tee (Ropa, sim active) up close.
-
 ### KI-72: The Defender trojan trigger shipped on main
 
 - **Status:** fixed in rubensteezy/skate3recomp#18, tested in-game on 2026-10-31 · **Severity:** medium (blocked the next release)
@@ -2414,6 +2394,26 @@ repro steps; the entry says where the problem is and how it would show.
   headers pull in `renderdoc_app.h`, which the app can't include. No runtime
   change.
 - **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. Compile-time check only: batch4 built with it and ran, and there is nothing to observe in play.
+
+### KI-92: `ScoreRigidAffine` has no in-front-of-camera check
+
+- **Status:** fixed in rubensteezy/skate3recomp#68, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, player garments
+- **Tracking:** #68. Found while fixing KI-61 (#50).
+- **Where:** `ScoreRigidAffine` in `src/skate3_native_scene.cpp`.
+- **Problem:** its strict count accepted a sample when `|x|` and `|y|` were
+  within 1.5·|w|, without requiring `clip[3] > 0`. So a matrix that places the
+  garment behind the camera could still score well. `RefinePaletteBase` has
+  that check, and its comment explains it exists for exactly this case. The
+  structural tail-row check on the matrix block reduced the risk.
+- **Fix:** the strict count now also requires `clip[3] > 0.0f`. The only gate
+  on the score is `rigid_score >= 8 || front_all`, and `front_all` already
+  required w > 0, so samples in front of the camera score as before.
+- **Test:** unattended signed-out demo boots with a temporary old-vs-new score
+  comparison: no differences, every `ropa mesh ... score=16`. The garments
+  stayed sim-inactive there (`ropa[rigid=0 ...]`), so the rigid branch still
+  needs the in-game check: the player's tee (Ropa, sim active) up close.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. The player confirmed the tee looked fine. ropa[rigid=N] rose to 342,431 in the first run (stale=17326, rescued=14602) and ended at 81,532 with stale=0 in the second; there was no run on main to compare stale= against.
 
 ### Reviewed and ruled out (code review)
 
