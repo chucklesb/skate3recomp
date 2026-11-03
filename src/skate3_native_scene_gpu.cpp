@@ -5307,6 +5307,16 @@ void PrewarmWorkerLoop() {
       std::this_thread::sleep_for(std::chrono::milliseconds(250));
       continue;
     }
+    // Wait (without dequeuing) until the guest base and device exist. The
+    // workers start only once g_r.device is set and every enqueue path
+    // publishes the guest base first, so this is a startup guard only; it
+    // used to pop the entry and re-queue it via g_prewarm_retry without
+    // decrementing retries, which would spin entries forever (KI-86).
+    uint8_t* base = g_guest_base.load(std::memory_order_relaxed);
+    if (base == nullptr || g_r.device == nullptr) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      continue;
+    }
     PrewarmEntry e{};
     DynDecodeJob dyn;
     bool have_dyn = false;
@@ -5320,7 +5330,7 @@ void PrewarmWorkerLoop() {
         // Dynamic cloth first: these are per-frame payloads whose result
         // should land at the very next commit.
         dyn = std::move(g_dyn_jobs.front());
-        g_dyn_jobs.erase(g_dyn_jobs.begin());
+        g_dyn_jobs.pop_front();
         have_dyn = true;
       } else if (!g_miss_queue.empty()) {
         // Draw-path misses next: this content is visible RIGHT NOW (white /
@@ -5328,22 +5338,13 @@ void PrewarmWorkerLoop() {
         // registration burst kept cutting the line ahead of the visible
         // miss; medium-distance pop-in lasted the whole backlog.
         e = g_miss_queue.front();
-        g_miss_queue.erase(g_miss_queue.begin());
+        g_miss_queue.pop_front();
       } else if (!g_prewarm_queue.empty()) {
         e = g_prewarm_queue.back();
         g_prewarm_queue.pop_back();
       } else {
         continue;
       }
-    }
-    uint8_t* base = g_guest_base.load(std::memory_order_relaxed);
-    if (base == nullptr || g_r.device == nullptr) {
-      if (!have_dyn) {
-        std::lock_guard<std::mutex> lock(g_prewarm_out_mutex);
-        g_prewarm_retry.push_back(e);
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
-      continue;
     }
     // Decode workers only ever read guest memory on the renderer's behalf:
     // keep them permanently armed for raw-load read-fault recovery (POSIX;

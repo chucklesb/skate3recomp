@@ -700,24 +700,6 @@ repro steps; the entry says where the problem is and how it would show.
   a second decode of X. That wastes worker time but has no visual effect.
 - **Fix:** erase only when `e.miss` is set.
 
-### KI-86: The prewarm miss queue pops from the front of a vector
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, streaming performance
-- **Tracking:** none yet. Found while fixing KI-65 (#47).
-- **Where:** `PrewarmWorkerLoop` in `src/skate3_native_scene_gpu.cpp`, and
-  `skate3_native_scene_state.h`.
-- **Problem:** `g_miss_queue.erase(g_miss_queue.begin())` costs time in
-  proportion to the queue length (capped at 65536) while `g_prewarm_mutex` is
-  held, so a large streaming burst could stall the workers. `g_dyn_jobs` has
-  the same pattern.
-- **Also:** the null base/device re-queue in `PrewarmWorkerLoop` is close to
-  dead code (the workers start only once `g_r.device` is set, and nothing
-  resets it). It never decrements retries, so if it ever ran for long it
-  would spin entries every 100 ms per worker without end.
-- **Next step:** switch both queues to `std::deque` if a profile shows lock
-  contention. Turn the null re-queue into a plain wait.
-
 ### KI-88: Remaining raw guest loads elsewhere in capture (low risk)
 
 - **Status:** open · **Severity:** low
@@ -2458,6 +2440,27 @@ repro steps; the entry says where the problem is and how it would show.
   (`Discard skipped, state ... is not FrontEndState_Options`). The staged
   choices are still dropped, as the player asked.
 - **In-game test (2026-11-02):** Played on the big rig as part of one build, batch5 (main fb33910 + #58 #62 #63 #64 #69 #70), D3D12, about 23 minutes with 8 loading screens. This PR was not tested on its own. In Options the user changed a restart-required option, backed out and chose Discard Changes: the log shows 'restart prompt shown (popup 2)' then 'restart prompt answered (button 1)' with no 'Discard skipped', and the option kept its old value. Restart Now also still worked ('restart prompt answered (button 0)', 'restart-required settings applied; restarting', and the new process came up with MSAA x4).
+
+### KI-86: The prewarm miss queue pops from the front of a vector
+
+- **Status:** fixed in rubensteezy/skate3recomp#70, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, streaming performance
+- **Tracking:** #70. Found while fixing KI-65 (#47).
+- **Where:** `PrewarmWorkerLoop` in `src/skate3_native_scene_gpu.cpp`, and
+  `skate3_native_scene_state.h`.
+- **Problem:** `g_miss_queue.erase(g_miss_queue.begin())` costs time in
+  proportion to the queue length (capped at 65536) while `g_prewarm_mutex` is
+  held, so a large streaming burst could stall the workers. `g_dyn_jobs` has
+  the same pattern.
+- **Also:** the null base/device re-queue in `PrewarmWorkerLoop` is close to
+  dead code (the workers start only once `g_r.device` is set, and nothing
+  resets it). It never decrements retries, so if it ever ran for long it
+  would spin entries every 100 ms per worker without end.
+- **Fix:** both queues are `std::deque` now, popped with `pop_front()` (same
+  FIFO order, caps and priority). The null base/device check runs before
+  dequeuing and just waits 100 ms, so nothing is popped, re-queued or
+  dropped.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch5 (main fb33910 + #58 #62 #63 #64 #69 #70), D3D12, about 23 minutes with 8 loading screens. This PR was not tested on its own. The user played with fast traversal and a cloth-wearing character and saw no missing meshes or stuck cloth. Prewarm went 0 -> 2,575 -> 9,299 -> 27,007 meshes decoded with 0 dropped, 0 bad layout, 0 map failures; the last summary still showed 663 queued and no later summary was logged. ropa[rigid=611711 stale=26 rescued=1]; the mesh store LRU ran 15 times with no failures; 0 'DecodeMesh rejected'.
 
 ### Reviewed and ruled out (code review)
 
