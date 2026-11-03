@@ -1059,22 +1059,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** `create_directories` before opening, as `WriteSnapshotLocked`
   does.
 
-### KI-115: Signed-in demo path never reaches gameplay on a fresh profile
-
-- **Status:** open · **Severity:** low (test tooling)
-- **Area:** demo path, unattended testing
-- **Tracking:** none yet. Found while fixing KI-92 (#68).
-- **Where:** `src/skate3_demo_path.cpp`, signed-in mode
-  (`--skate3_demo_path_signed_in=true`).
-- **Problem:** with a `--user_data_root` that has no save yet, the boot loops
-  on "gameplay context 0; enabling dialog A auto-tap" every 8 s and never
-  reaches gameplay (it saves only an ALIAS_SKATER file). Unattended agents
-  can't test signed-in paths, such as the player's garments with the sim
-  active. Signed-out demo runs also never reach the sim-active rigid garment
-  path (`ropa[rigid=0]`) with tap inputs.
-- **Next step:** find which new-profile dialog the auto-tap doesn't clear, or
-  keep a seeded test profile with a finished save for agents to copy in.
-
 ### KI-116: The saved photo can look slightly darker than the editor preview
 
 - **Status:** open (seen once, not reproduced) · **Severity:** low–medium
@@ -2481,6 +2465,18 @@ repro steps; the entry says where the problem is and how it would show.
   dequeuing and just waits 100 ms, so nothing is popped, re-queued or
   dropped.
 - **In-game test (2026-11-02):** Played on the big rig as part of one build, batch5 (main fb33910 + #58 #62 #63 #64 #69 #70), D3D12, about 23 minutes with 8 loading screens. This PR was not tested on its own. The user played with fast traversal and a cloth-wearing character and saw no missing meshes or stuck cloth. Prewarm went 0 -> 2,575 -> 9,299 -> 27,007 meshes decoded with 0 dropped, 0 bad layout, 0 map failures; the last summary still showed 663 queued and no later summary was logged. ropa[rigid=611711 stale=26 rescued=1]; the mesh store LRU ran 15 times with no failures; 0 'DecodeMesh rejected'.
+
+### KI-115: Signed-in demo path never reached gameplay on a fresh profile
+
+- **Status:** fixed in rubensteezy/skate3recomp#71, tested in-game on 2026-11-02 · **Severity:** low (test tooling)
+- **Area:** demo path, unattended testing
+- **Tracking:** rubensteezy/skate3recomp#71, with SDK branch `ki115-demo-keyboard-accept` in rubensteezy/rexglue-skate3. Found while fixing KI-92 (#68).
+- **Where:** `src/skate3_demo_path.cpp` (`StartBootAssistIfNeeded`), `XamShowKeyboardUI_entry` in `third_party/rexglue-sdk/src/kernel/xam/xam_ui.cpp`.
+- **Cause:** a profile with no save goes through screens the dialog A auto-tap can't finish (FE screen ids from the FE push-state stack): 9, 24 (FMV), 10, then 46 = the "welcome new team" name prompt, 63, 67, then 46 again (skater name) and 15 = the create-a-skater editor. Screen 46 is `XamShowKeyboardUI`, which opened an ImGui dialog nobody clicked, so the boot waited on it forever. The SDK's headless branch, which the demo path could have used, also returned the default text byte-reversed (`value()` is the guest's unswapped big-endian UTF-16 and was swapped again), so the game rejected the name and asked again in a loop. The editor, screen 15, ignores A and Start.
+- **Fix:** the SDK keyboard dialog now takes the headless branch when `skate3_demo_path` is on (log: "auto-accepting keyboard dialog with its default text"), and the default text is copied in the right byte order (an empty default becomes "Skate3"). The demo path's new boot-assist worker polls the FE stack before gameplay and, on screen 15, turns the A auto-tap off and taps B then A in pairs ("boot screen 15 has its own inputs"). The first version tapped once a second and failed on the big rig; here a 1500 ms spacing reproduced it (the confirm tap must follow the opening tap closely, and how soon varies), so the gap inside each pair now cycles 700/400/1000/250/1300/550 ms, the hold escalates 8/24/60 polls, and Start/Y/Back fallbacks follow after 4 passes. Logs: "boot screen 15 tap ...", a status line every 15 s, and "boot screen 15 left after N taps (last tap ...)", which leaves the editor. `--skate3_demo_path_boot_screen_inputs=<id>:<token>|<token>,...` adds or overrides rules for other screens. The probe also logs "FE stack [...]" changes and each FE screen push with its caller.
+- **Tests:** 3 fresh `--user_data_root` signed-in boots each logged "gameplay reached" (about 25 s after the keyboard prompt); 2 signed-out boots still reach gameplay and never touch the boot assist rules.
+- **Not covered:** signed-out demo runs still skip the sim-active rigid garment path with tap inputs; the player's garments with the sim active are now reachable through the signed-in path.
+- **In-game test (2026-11-02):** Played on the big rig as its own build (pr71b, PR #71 at f5057c2), D3D12, three runs. Run 1, signed-in demo path from an empty user-data folder: the first version of this PR got stuck on the create-a-skater screen there; the retimed version reached 'gameplay reached; boot automation complete' about 45 s after start, with the A tap (24-poll hold, second pass) leaving screen 15 and no Start/Y/Back fallback needed. Run 2, signed-out demo path, empty folder: reached gameplay in about 17 s. Run 3, a normal launch with the user's real profile and no flags: looked normal, no demo-path or keyboard-dialog lines, profiles.toml unchanged. Not exercised: the normal ImGui keyboard dialog with its default text (no name prompt came up), and an existing signed-in profile through the demo path. The tap timing fix rests on one big-rig run.
 
 ### Reviewed and ruled out (code review)
 
