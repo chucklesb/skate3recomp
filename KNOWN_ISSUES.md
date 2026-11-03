@@ -1021,9 +1021,9 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-110: Decode/prewarm workers fault on wild guest pointers during streaming
 
-- **Status:** open · logging fix in review in rubensteezy/skate3recomp#62,
-  untested (fault not reproduced) · **Severity:** low (log noise; no unguarded
-  load found)
+- **Status:** open · logging fix in rubensteezy/skate3recomp#62, played in
+  batch4 without the fault appearing (not reproduced) · **Severity:** low
+  (log noise; no unguarded load found)
 - **Area:** native renderer, streaming, guest memory safety
 - **Tracking:** rubensteezy/skate3recomp#62. Found while testing KI-87 (#60).
 - **Symptom:** one of 16 unattended D3D12 boots logged 271
@@ -1048,6 +1048,9 @@ repro steps; the entry says where the problem is and how it would show.
   to one line per 10 s), so the "Unhandled" lines can be matched to it.
 - **Next step:** if the noise matters, have the SDK skip the error log for
   faults inside `GuestTryCopy`. That change belongs in the rexglue-skate3 fork.
+- **In-game test:** played on the big rig in batch4 (D3D12, about 17 minutes
+  over two runs): 0 "Unhandled guest access violation" lines, so the new
+  probe note was never seen firing and the fault is still not reproduced.
 
 ### KI-111: `WarmItemResources` ignores the mesh decode backoff during settle
 
