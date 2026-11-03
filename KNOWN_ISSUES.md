@@ -1131,24 +1131,6 @@ repro steps; the entry says where the problem is and how it would show.
 
 ## Resolved
 
-### KI-70: Restart prompt's Discard doesn't check it's acting on the Options state
-
-- **Status:** fix in review in rubensteezy/skate3recomp#69, tested unattended (build only) /
-  awaiting in-game test · **Severity:** low
-- **Area:** Options menu
-- **Tracking:** #69. Found while fixing KI-28 (#40). Code reading only.
-- **Where:** the Discard branch of the `sub_8260EA48` hook in
-  `src/skate3_options_menu.cpp`.
-- **Problem:** it uses `OptionsState()` (`owner+180`) without checking that the
-  object is a FrontEndState_Options. If the Options state is gone when Discard
-  fires, `PageOf` reads +68 of whatever object is there and could call
-  `sub_8260D078` on it. Unlikely, because the popup is modal over Options.
-- **Fix:** `IsOptionsState` does a guarded read (`GuestTryCopy`) of the state's
-  vtable and compares it with 0x823034B0 before `PageOf` / `sub_8260D078`. On a
-  mismatch the Back is skipped and one warning is logged
-  (`Discard skipped, state ... is not FrontEndState_Options`). The staged
-  choices are still dropped, as the player asked.
-
 ### KI-72: The Defender trojan trigger shipped on main
 
 - **Status:** fixed in rubensteezy/skate3recomp#18, tested in-game on 2026-10-31 · **Severity:** medium (blocked the next release)
@@ -2458,6 +2440,24 @@ repro steps; the entry says where the problem is and how it would show.
   slots exhausted`) and the pass's draw is skipped (`pfx_draw`). A
   `static_assert` keeps `kPfxCbSlots >= 9`. No change while slots fit.
 - **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 at MSAA x8, the user's normal signed-in profile, in a photo editor session of about 4.5 minutes. The photo FX chain ran: 'photo postfx pipeline ready (9 passes, msaa=8)' and 'photo editor postfx chain LIVE (native; accum mode 0, vignette resolved, grain resolved)', with 0 'photo FX constant slots exhausted' lines and nothing wrong seen in the editor effects. Not confirmed: whether the DoF and focus sliders were moved. The bound is not reachable today, so this shows only that the photo chain still works with the check in place. This PR was not tested on its own.
+
+### KI-70: Restart prompt's Discard doesn't check it's acting on the Options state
+
+- **Status:** fixed in rubensteezy/skate3recomp#69, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** Options menu
+- **Tracking:** #69. Found while fixing KI-28 (#40). Code reading only.
+- **Where:** the Discard branch of the `sub_8260EA48` hook in
+  `src/skate3_options_menu.cpp`.
+- **Problem:** it uses `OptionsState()` (`owner+180`) without checking that the
+  object is a FrontEndState_Options. If the Options state is gone when Discard
+  fires, `PageOf` reads +68 of whatever object is there and could call
+  `sub_8260D078` on it. Unlikely, because the popup is modal over Options.
+- **Fix:** `IsOptionsState` does a guarded read (`GuestTryCopy`) of the state's
+  vtable and compares it with 0x823034B0 before `PageOf` / `sub_8260D078`. On a
+  mismatch the Back is skipped and one warning is logged
+  (`Discard skipped, state ... is not FrontEndState_Options`). The staged
+  choices are still dropped, as the player asked.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch5 (main fb33910 + #58 #62 #63 #64 #69 #70), D3D12, about 23 minutes with 8 loading screens. This PR was not tested on its own. In Options the user changed a restart-required option, backed out and chose Discard Changes: the log shows 'restart prompt shown (popup 2)' then 'restart prompt answered (button 1)' with no 'Discard skipped', and the option kept its old value. Restart Now also still worked ('restart prompt answered (button 0)', 'restart-required settings applied; restarting', and the new process came up with MSAA x4).
 
 ### Reviewed and ruled out (code review)
 
