@@ -1494,7 +1494,7 @@ bool ApplyVolumetricPass(const NativeGuestOutputRenderContext& context,
   const bool inv_ok = Invert4x4(scene.view_proj, inv_vp);
 
   const uint32_t cb_offset =
-      uint32_t(frame_number % RendererState::kShadowCbRegions) *
+      g_r.shadow_cb_regions.Region(context.device, frame_number) *
       RendererState::kShadowCbSlice;
   cmd->SetBindingLayout(g_r.hdr_layout);
   cmd->SetPrimitiveTopology(nrhi::PrimitiveTopology::kTriangleList);
@@ -1850,7 +1850,7 @@ void ApplyHdrPost(const NativeGuestOutputRenderContext& context,
   // shaders never read it, but the descriptor must hold a valid buffer.
   if (g_r.shadow_cb != nullptr) {
     const uint32_t cb_offset =
-        uint32_t(frame_number % RendererState::kShadowCbRegions) *
+        g_r.shadow_cb_regions.Region(context.device, frame_number) *
         RendererState::kShadowCbSlice;
     cmd->SetConstantBuffer(6, g_r.shadow_cb, cb_offset);
   }

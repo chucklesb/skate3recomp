@@ -47,6 +47,8 @@ REXCVAR_DECLARE(bool, skate3_native_render_scene_tex_confirm);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_mesh_revalidate);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_tex_mips);
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_debug);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_upload_ring_gate);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_upload_ring_log);
 // Image quality (hot; skate3_native_scene.cpp).
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_msaa);
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_shadow_tile);
@@ -894,6 +896,17 @@ void DrawDiagnosticsSection() {
       REXCVAR_SET(skate3_native_render_scene_hdr_debug, dbg);
     }
   }
+
+  ImGui::SeparatorText("Upload rings (KI-16)");
+  CvarCheckbox("Gate ring regions on GPU completion",
+               REXCVAR_GET(skate3_native_render_scene_upload_ring_gate),
+               "On: each bone/UI/constant ring region is handed out only after "
+               "the GPU finished with it (#28). Off: the old frame_number % N "
+               "pick. Toggle to A/B the frame rate.");
+  CvarCheckbox("Log upload ring counters",
+               REXCVAR_GET(skate3_native_render_scene_upload_ring_log),
+               "One 'upload rings:' log line per perf interval: picks per ring, "
+               "fallbacks, frame rate and GPU lag.");
 
   ImGui::SeparatorText("Reflective glass isolation (env fam 5/6/13)");
   {

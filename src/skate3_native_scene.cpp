@@ -1194,6 +1194,19 @@ REXCVAR_DEFINE_INT32(skate3_native_render_scene_perf_interval, 600, "Skate 3",
     .range(60, 6000)
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
+// KI-16 upload rings (UploadRingRegions). gate=false restores the pre-#28
+// `frame_number % N` region pick at runtime, for an A/B frame-rate check;
+// log=true writes one "upload rings:" counter line per perf interval.
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_upload_ring_gate, true, "Skate 3",
+                    "DEBUG: give each upload/constant ring region only after the "
+                    "GPU finished with it (KI-16). Off = the old frame_number % N "
+                    "pick, for A/B checks")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_upload_ring_log, false, "Skate 3",
+                    "DEBUG: log upload-ring pick counters, frame rate and GPU lag "
+                    "once per skate3_native_render_scene_perf_interval frames")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_occlusion_cull, true, "Skate 3",
                     "Skip drawing static world items whose bounds are "
                     "provably hidden behind already-rendered geometry (depth-"
@@ -1238,8 +1251,10 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_perf_items, false, "Skate 3",
 
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_ring, false, "Skate 3",
                     "Record a rolling per-frame scene-composition ring (2400 "
-                    "frames); F7 dumps it to logs/scene_ring_<ts>.csv for "
-                    "diffing 1-2 frame artifacts no capture can catch")
+                    "frames). With --skate3_native_render_capture_hotkeys=true "
+                    "F7 (or pad RB+A) dumps it to <exe dir>/logs/"
+                    "scene_ring_<YYYYMMDD_HHMMSS_mmm>.csv for diffing 1-2 "
+                    "frame artifacts no capture can catch")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_dyn_gap_fill, true, "Skate 3",
@@ -1420,6 +1435,33 @@ uint32_t BankPaletteBase(uint8_t* base, uint32_t bank) {
   return 0;
 }
 
+// Hor+ ultrawide scale for the palette-scoring x bands (RefinePaletteBase,
+// ScoreRigidAffine). The banks hold the game's own 16:9 matrices, but on a
+// wide output the game culls to the wide view (skate3_ultrawide_guest.h), so
+// it submits and skins meshes out to |x|/w = 1/scale (2.0 at 32:9). The
+// sun-shadow (ortho) pass shows the same in measurement: at 32:9 the
+// side-band characters cast into it at |x|/w up to ~2.0, never past 1.5 at
+// 16:9. The strict 1.5 band refused their correct palettes (KI-61: about
+// 2% of all scorings at 32:9, all characters, all on the caller's own
+// guessed base), so dividing the x band by
+// this scale keeps the band's slack over the visible area the same as at
+// 16:9. Hor+ keeps the vertical FOV, so the y band stays put. Returns 1.0
+// when the output is not wide, which leaves 16:9 scoring unchanged. Same
+// derivation as WideOutputHorScale, with the game's fixed 16:9 base aspect
+// (the one the guest frustum widening assumes): a combined viewproj has no
+// separable projection to read the aspect from.
+float PaletteScoreHorScale() {
+  const double wide_aspect = rex::graphics::GetNativeGuestOutputWideAspect();
+  if (wide_aspect <= 0.0 || !rex::graphics::IsNativeGuestOutputActive()) {
+    return 1.0f;
+  }
+  constexpr double kGuestAspect = 16.0 / 9.0;
+  if (wide_aspect <= kGuestAspect + 0.01) {
+    return 1.0f;
+  }
+  return float(kGuestAspect / wide_aspect);
+}
+
 // The cloth/morph skinned VS variant (skating-NPC torsos) keeps ONE extra
 // parameter row between the viewproj and the bone palette: observed live,
 // c4 = (1,0,0,0) with the palette at c5 (pre-pass) / c8 (main-pass). A
@@ -1479,6 +1521,9 @@ uint32_t RefinePaletteBase(uint8_t* base, uint32_t bank, uint32_t palette_base,
     // the caller's guess, as the old per-candidate decode did.
     return palette_base;
   }
+  // Strict band: 1.5x the bank's clip volume, widened in x on ultrawide
+  // outputs (see PaletteScoreHorScale).
+  const float x_band = 1.5f / PaletteScoreHorScale();
   // score: fraction (0..16) of samples that skin in front of and inside the
   // bank's own clip volume; *out_spread = the skinned samples' bbox diagonal
   // (world units) for the bind-size sanity test below. *out_front_all (when
@@ -1511,7 +1556,7 @@ uint32_t RefinePaletteBase(uint8_t* base, uint32_t bank, uint32_t palette_base,
       // In FRONT of the projection (w > 0) and inside a generous guard band.
       // Without the w check a foreign palette that skins the mesh BEHIND the
       // camera can still land |x|,|y| within the band and score well.
-      if (clip[3] > 0.0f && std::abs(clip[0]) <= 1.5f * aw &&
+      if (clip[3] > 0.0f && std::abs(clip[0]) <= x_band * aw &&
           std::abs(clip[1]) <= 1.5f * aw) {
         ++ok;
       }
@@ -1868,6 +1913,34 @@ bool GuestTryLoadU64(uint8_t* base, uint32_t addr, uint64_t* out) {
   return true;
 }
 
+// Hot-path guarded reads that failed (KI-64): the capture walk, the item
+// cache-hit check and the render hooks skip the item or hook action instead
+// of faulting the guest render thread (GuestReadRecoveryScope is a no-op on
+// Windows). Logged at most once per 10 s with the running total.
+namespace {
+std::atomic<uint64_t> g_guest_read_skips{0};
+std::atomic<int64_t> g_guest_read_skip_log_ns{-1};
+}  // namespace
+
+void NoteGuestReadSkip(const char* site, uint32_t addr) {
+  const uint64_t total = g_guest_read_skips.fetch_add(1, std::memory_order_relaxed) + 1;
+  const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                             std::chrono::steady_clock::now().time_since_epoch())
+                             .count();
+  int64_t last = g_guest_read_skip_log_ns.load(std::memory_order_relaxed);
+  if (last >= 0 && now_ns - last < 10'000'000'000) {
+    return;
+  }
+  if (!g_guest_read_skip_log_ns.compare_exchange_strong(last, now_ns,
+                                                        std::memory_order_relaxed)) {
+    return;  // another thread logged this window
+  }
+  REXLOG_WARN(
+      "native-scene: guarded guest read failed at {} (addr {:#010x}); skipped "
+      "(total={})",
+      site, addr, total);
+}
+
 // Per-instance world straight from the guest MeshContext: the owning model
 // object at ctx+0x30 keeps the instance's row-major 4x4 (translation in row
 // 3) at +0xA0. Verified 426/426 against placed captures in a park-editor
@@ -2003,9 +2076,21 @@ bool ComputeItemFingerprint(uint8_t* base, DrawItem& item) {
 // channels, payload fingerprint) into the item. The draw list and world
 // transform are the caller's responsibility (world starts as identity).
 bool BuildItemFromMesh(uint8_t* base, uint32_t mesh, DrawItem& item) {
-  const uint32_t vdesc = REX_LOAD_U32(mesh + kMeshVertexDescriptor);
-  const uint32_t ib = REX_LOAD_U32(mesh + kMeshIndexBuffer);
-  const uint32_t vb = REX_LOAD_U32(mesh + kMeshVertexBuffer);
+  // Every mesh-record field the walk reads (bbox +0x00..0x1F, material
+  // +0x24, descriptor +0x28, IB +0x30, VB +0x34) comes from ONE guarded
+  // snapshot: the registration prewarm runs this on its decode workers
+  // against addresses registered earlier, and a raw load of a stale or
+  // unmapped record there faults the process instead of skipping the mesh
+  // (KI-26). Capture-path callers get the same clean failure.
+  uint32_t hdr[kMeshVertexBuffer / 4 + 1];
+  if (mesh < 0x10000 || !GuestTryCopy(hdr, REX_RAW_ADDR(mesh), sizeof(hdr))) {
+    g_rej_chain.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
+  const auto hdr_u32 = [&hdr](uint32_t off) { return BSwap32(hdr[off / 4]); };
+  const uint32_t vdesc = hdr_u32(kMeshVertexDescriptor);
+  const uint32_t ib = hdr_u32(kMeshIndexBuffer);
+  const uint32_t vb = hdr_u32(kMeshVertexBuffer);
   if (!GuestReadableApprox(base, vdesc) || !GuestReadableApprox(base, ib) ||
       !GuestReadableApprox(base, vb)) {
     g_rej_chain.fetch_add(1, std::memory_order_relaxed);
@@ -2115,8 +2200,8 @@ bool BuildItemFromMesh(uint8_t* base, uint32_t mesh, DrawItem& item) {
 
   // Mesh BBox = two Vector4s at +0x00/+0x10. Reject NaN/absurd bounds.
   for (int axis = 0; axis < 3; ++axis) {
-    const float lo = LoadGuestF32(base, mesh + axis * 4);
-    const float hi = LoadGuestF32(base, mesh + 0x10 + axis * 4);
+    const float lo = std::bit_cast<float>(hdr_u32(axis * 4));
+    const float hi = std::bit_cast<float>(hdr_u32(0x10 + axis * 4));
     if (!(hi - lo < 50000.0f)) {
       g_rej_bbox.fetch_add(1, std::memory_order_relaxed);
       return false;
@@ -2190,7 +2275,7 @@ bool BuildItemFromMesh(uint8_t* base, uint32_t mesh, DrawItem& item) {
   // loading, where raw reads fault the thread. (The capture path gets the
   // same copies; one memcpy per material beats ~8 volatile loads per
   // channel anyway.)
-  const uint32_t material = REX_LOAD_U32(mesh + kMeshMaterial);
+  const uint32_t material = hdr_u32(kMeshMaterial);
   uint32_t mat_head[3] = {};
   if (GuestReadableApprox(base, material) &&
       GuestTryCopy(mat_head, REX_RAW_ADDR(material), sizeof(mat_head))) {
@@ -2439,10 +2524,25 @@ bool BuildItemFromMesh(uint8_t* base, uint32_t mesh, DrawItem& item) {
           // fetch-constant type bits before trusting the pointer.
           // Guarded: the prewarm walks materials whose stream records /
           // texture objects may not be loaded yet.
+          // KI-110: some texture channels carry a +0x1C word that is not a
+          // pointer at all (seen: 0x3F800000 = 1.0f, 0x69676874 = "ight"),
+          // so this probe faults once per such channel during streaming
+          // bursts. The guard catches it and the guid lookup below takes
+          // over, but the SDK's vectored handler runs BEFORE the SEH guard
+          // and logs every caught fault as "Unhandled guest access
+          // violation". Name the site here so those lines can be told apart
+          // from a real unguarded load.
           const uint32_t stream = chan_u32(i, 0x1C);
           uint32_t tex = 0, tex_w0 = 0;
-          if (GuestTryLoadU32(base, stream, &tex) &&
-              GuestTryLoadU32(base, tex + 7 * 4, &tex_w0) && (tex_w0 & 3u) == 2u) {
+          if (!GuestTryLoadU32(base, stream, &tex)) {
+            if (stream >= 0x10000) {
+              NoteGuestReadSkip("material channel stream probe", stream);
+            }
+          } else if (!GuestTryLoadU32(base, tex + 7 * 4, &tex_w0)) {
+            if (tex >= 0x10000) {
+              NoteGuestReadSkip("material channel texture probe", tex + 7 * 4);
+            }
+          } else if ((tex_w0 & 3u) == 2u) {
             *slot = tex;
           }
           if (*slot == 0) {
@@ -2617,10 +2717,19 @@ bool BuildItemFromMeshCached(uint8_t* base, uint32_t mesh, DrawItem& item) {
     if (it != g_item_cache.end() && frame < it->second.rebuild_frame) {
       CachedItemCore& core = it->second;
       // Structural validation: the mesh's pointer fields must still match
-      // the cached walk.
-      const bool intact =
-          REX_LOAD_U32(mesh + kMeshVertexBuffer) == core.item.vb_obj &&
-          REX_LOAD_U32(mesh + kMeshIndexBuffer) == core.item.ib_obj;
+      // the cached walk. IB +0x30 and VB +0x34 come from one guarded copy:
+      // streaming can unmap the record between capture and this check, and
+      // a raw load would fault the guest render thread (KI-64).
+      static_assert(kMeshVertexBuffer == kMeshIndexBuffer + 4);
+      uint32_t buf_ptrs[2];
+      if (!GuestTryCopy(buf_ptrs, REX_RAW_ADDR(mesh + kMeshIndexBuffer), sizeof(buf_ptrs))) {
+        g_item_cache.erase(it);
+        g_rej_chain.fetch_add(1, std::memory_order_relaxed);
+        NoteGuestReadSkip("BuildItemFromMeshCached mesh", mesh);
+        return false;
+      }
+      const bool intact = BSwap32(buf_ptrs[1]) == core.item.vb_obj &&
+                          BSwap32(buf_ptrs[0]) == core.item.ib_obj;
       // Buffer payload address/size can move under the same objects
       // (streaming re-init), cheap guarded re-read every frame.
       uint32_t vb_words[3] = {}, ib_words[3] = {};
@@ -2685,13 +2794,41 @@ bool BuildItemFromMeshCached(uint8_t* base, uint32_t mesh, DrawItem& item) {
   return true;
 }
 
-bool BuildItemGeometry(uint8_t* base, uint32_t ctx, DrawItem& item) {
-  const uint32_t record = REX_LOAD_U32(ctx);
+// MeshContext head (+0x00..+0x4B): record +0x00, effect list +0x04, draw
+// count +0x38, draw list +0x48. Copied once, guarded (KI-64/KI-87), and
+// shared by everything that reads the context.
+static_assert(kCtxDrawCountU16 % 4 == 0 && kCtxDrawList > kCtxDrawCountU16 &&
+              kCtxEffectList % 4 == 0 && kCtxEffectList < kCtxDrawList);
+constexpr size_t kCtxHeadWords = kCtxDrawList / 4 + 1;
+using CtxHead = uint32_t[kCtxHeadWords];
+
+bool CopyCtxHead(uint8_t* base, uint32_t ctx, CtxHead& ctx_head, const char* site) {
+  if (ctx < 0x10000 || !GuestTryCopy(ctx_head, REX_RAW_ADDR(ctx), sizeof(CtxHead))) {
+    g_rej_chain.fetch_add(1, std::memory_order_relaxed);
+    NoteGuestReadSkip(site, ctx);
+    return false;
+  }
+  return true;
+}
+
+// ctx_head: the context's head, already copied by CopyCtxHead.
+bool BuildItemGeometry(uint8_t* base, uint32_t ctx, const CtxHead& ctx_head,
+                       DrawItem& item) {
+  // Every MeshContext field this function reads comes from the one guarded
+  // head copy, and the record and draw list are guarded too: the contexts
+  // were recorded earlier in the frame, streaming can unmap them before the
+  // build, and a raw load faults the guest render thread (KI-64).
+  const uint32_t record = BSwap32(ctx_head[0]);
   if (!GuestReadableApprox(base, record)) {
     g_rej_chain.fetch_add(1, std::memory_order_relaxed);
     return false;
   }
-  const uint32_t mesh = REX_LOAD_U32(record);
+  uint32_t mesh = 0;
+  if (!GuestTryLoadU32(base, record, &mesh)) {
+    g_rej_chain.fetch_add(1, std::memory_order_relaxed);
+    NoteGuestReadSkip("BuildItemGeometry record", record);
+    return false;
+  }
   if (!GuestReadableApprox(base, mesh)) {
     g_rej_chain.fetch_add(1, std::memory_order_relaxed);
     return false;
@@ -2718,17 +2855,22 @@ bool BuildItemGeometry(uint8_t* base, uint32_t ctx, DrawItem& item) {
   item.ctx = ctx;
 
   // Culled island draw list from the context.
-  const uint32_t draw_count = REX_LOAD_U16(ctx + kCtxDrawCountU16);
-  const uint32_t draw_list = REX_LOAD_U32(ctx + kCtxDrawList);
+  const uint32_t draw_count = BSwap32(ctx_head[kCtxDrawCountU16 / 4]) >> 16;
+  const uint32_t draw_list = BSwap32(ctx_head[kCtxDrawList / 4]);
   if (draw_count == 0 || draw_count > 512 || !GuestReadableApprox(base, draw_list)) {
     g_rej_draws.fetch_add(1, std::memory_order_relaxed);
     return false;
   }
+  uint32_t draw_words[512 * 4];
+  if (!GuestTryCopy(draw_words, REX_RAW_ADDR(draw_list), size_t(draw_count) * 16)) {
+    g_rej_draws.fetch_add(1, std::memory_order_relaxed);
+    NoteGuestReadSkip("BuildItemGeometry draw list", draw_list);
+    return false;
+  }
   item.draws.reserve(draw_count);
   for (uint32_t i = 0; i < draw_count; ++i) {
-    const uint32_t d = draw_list + i * 16;
-    DrawEntry entry{REX_LOAD_U32(d), REX_LOAD_U32(d + 4), REX_LOAD_U32(d + 8),
-                    REX_LOAD_U32(d + 12)};
+    const uint32_t* d = draw_words + i * 4;
+    DrawEntry entry{BSwap32(d[0]), BSwap32(d[1]), BSwap32(d[2]), BSwap32(d[3])};
     if (entry.index_count == 0 || entry.index_count > item.ib_count) continue;
     item.draws.push_back(entry);
   }
@@ -2737,6 +2879,14 @@ bool BuildItemGeometry(uint8_t* base, uint32_t ctx, DrawItem& item) {
     return false;
   }
   return true;
+}
+
+bool BuildItemGeometry(uint8_t* base, uint32_t ctx, DrawItem& item) {
+  CtxHead ctx_head;
+  if (!CopyCtxHead(base, ctx, ctx_head, "BuildItemGeometry ctx")) {
+    return false;
+  }
+  return BuildItemGeometry(base, ctx, ctx_head, item);
 }
 
 }  // namespace
@@ -4209,8 +4359,8 @@ float CharFadeAlpha(const DrawItem& item) {
 // clip at the player's position; the skinned interpretation scores 0/31.
 // Transform up to 6 sample vertices of the item by the affine at register m
 // (3 column-vector [R | t] rows) and project them with the bank's own
-// viewproj (c0..c3). Returns the count of samples inside the clip volume,
-// -1 when unscorable. A stale bank (the submit-exit capture can run after
+// viewproj (c0..c3). Returns the fraction (0..16) of samples in front of the
+// projection and inside the strict clip band, -1 when unscorable. A stale bank (the submit-exit capture can run after
 // ANOTHER mesh's draw when this mesh's own draws are deferred) holds some
 // other object's matrix at c188/c191; geometry projected with it lands
 // far off-clip, while the true matrix scores full (validated offline:
@@ -4239,6 +4389,8 @@ int ScoreRigidAffine(uint8_t* base, uint32_t bank, uint32_t m, const DrawItem& i
   if (!ReadSkinSamplesGuest(base, item, kSamples, sverts)) {
     return -1;
   }
+  // Same strict band as RefinePaletteBase, x widened on ultrawide outputs.
+  const float x_band = 1.5f / PaletteScoreHorScale();
   int ok = 0;
   int loose = 0;
   int n = 0;
@@ -4256,7 +4408,12 @@ int ScoreRigidAffine(uint8_t* base, uint32_t bank, uint32_t m, const DrawItem& i
     }
     const float aw = std::abs(clip[3]) < 1.0f ? 1.0f : std::abs(clip[3]);
     ++n;
-    if (std::abs(clip[0]) <= 1.5f * aw && std::abs(clip[1]) <= 1.5f * aw) {
+    // In FRONT of the projection (w > 0) and inside the strict band, as in
+    // RefinePaletteBase: without the w check a stale/foreign matrix that
+    // places the garment BEHIND the camera can still land |x|,|y| within
+    // the band and pass the >= 8 acceptance gate (KI-92).
+    if (clip[3] > 0.0f && std::abs(clip[0]) <= x_band * aw &&
+        std::abs(clip[1]) <= 1.5f * aw) {
       ++ok;
     }
     if (clip[3] > 0.0f && std::abs(clip[0]) <= 6.0f * aw &&
@@ -4598,6 +4755,13 @@ uint32_t CaptureDynamicState(uint8_t* base, uint32_t ctx, bool world_path,
               .count());
     }
   } perf_fold{perf_t0};
+  // One guarded copy of the MeshContext head serves the pre-check, the
+  // geometry build and the effect-list read below (KI-87): a stale context
+  // skips the capture instead of faulting the guest render thread.
+  CtxHead ctx_head;
+  if (!CopyCtxHead(base, ctx, ctx_head, "CaptureDynamicState ctx")) {
+    return 0;
+  }
   if (world_path) {
     // Cheap pre-check so the world path (~800 calls/frame) only pays the
     // full capture for the meshes that need per-draw transforms: skinned
@@ -4606,28 +4770,50 @@ uint32_t CaptureDynamicState(uint8_t* base, uint32_t ctx, bool world_path,
     // through the sort lists, rendered as absolute world geometry they
     // collapse at the origin. Absolute meshes (fmt 57) stay on the identity
     // world path.
-    const uint32_t record = REX_LOAD_U32(ctx);
+    // Every read is guarded (KI-87): record and mesh pointers as single
+    // loads, the vertex descriptor's count and element table as one copy
+    // each (the table layout BuildItemFromMesh reads).
+    const uint32_t record = BSwap32(ctx_head[0]);
     if (!GuestReadableApprox(base, record)) return 0;
-    const uint32_t mesh = REX_LOAD_U32(record);
+    uint32_t mesh = 0;
+    if (!GuestTryLoadU32(base, record, &mesh)) {
+      NoteGuestReadSkip("CaptureDynamicState record", record);
+      return 0;
+    }
     if (!GuestReadableApprox(base, mesh)) return 0;
-    const uint32_t vdesc = REX_LOAD_U32(mesh + kMeshVertexDescriptor);
+    uint32_t vdesc = 0;
+    if (!GuestTryLoadU32(base, mesh + kMeshVertexDescriptor, &vdesc)) {
+      NoteGuestReadSkip("CaptureDynamicState mesh", mesh);
+      return 0;
+    }
     if (!GuestReadableApprox(base, vdesc)) return 0;
-    const uint32_t num_elements = REX_LOAD_U16(vdesc + 8);
+    uint32_t desc_head[3];
+    if (!GuestTryCopy(desc_head, REX_RAW_ADDR(vdesc), sizeof(desc_head))) {
+      NoteGuestReadSkip("CaptureDynamicState vdesc", vdesc);
+      return 0;
+    }
+    const uint32_t num_elements = BSwap32(desc_head[2]) >> 16;  // u16 at +8
     if (num_elements == 0 || num_elements > 32) return 0;
+    uint8_t desc_tab[32 * 16];
+    if (!GuestTryCopy(desc_tab, REX_RAW_ADDR(vdesc + 0x10), num_elements * 16)) {
+      NoteGuestReadSkip("CaptureDynamicState vdesc elements", vdesc + 0x10);
+      return 0;
+    }
     bool have_bw = false;
     bool have_bi = false;
     uint32_t pos_fmt = 0;
     bool have_pos = false;
     for (uint32_t i = 0; i < num_elements; ++i) {
-      const uint32_t e = vdesc + 0x10 + i * 16;
-      if (REX_LOAD_U16(e) != 0) continue;
-      const uint32_t usage = REX_LOAD_U8(e + 9);
+      const uint8_t* e = desc_tab + i * 16;
+      if (e[0] != 0 || e[1] != 0) continue;  // stream (u16 at +0)
+      const uint32_t usage = e[9];
+      const uint32_t fmt = e[7] & 0x3F;  // low bits of the BE u32 at +4
       if (usage == 0 && !have_pos) {
-        pos_fmt = REX_LOAD_U32(e + 4) & 0x3F;
+        pos_fmt = fmt;
         have_pos = true;
       }
-      if (usage == 1 && (REX_LOAD_U32(e + 4) & 0x3F) == 6) have_bw = true;
-      if (usage == 2 && (REX_LOAD_U32(e + 4) & 0x3F) == 6) have_bi = true;
+      if (usage == 1 && fmt == 6) have_bw = true;
+      if (usage == 2 && fmt == 6) have_bi = true;
     }
     const bool skinned = have_bw && have_bi;
     const bool model_space = pos_fmt == 32 || pos_fmt == 26;
@@ -4636,7 +4822,7 @@ uint32_t CaptureDynamicState(uint8_t* base, uint32_t ctx, bool world_path,
     }
   }
   DrawItem item;
-  if (!BuildItemGeometry(base, ctx, item)) {
+  if (!BuildItemGeometry(base, ctx, ctx_head, item)) {
     return 0;
   }
   item.ctx = ctx;  // identity key for the palette serve / entity store
@@ -4726,10 +4912,14 @@ uint32_t CaptureDynamicState(uint8_t* base, uint32_t ctx, bool world_path,
     // inside the call AND used the pre-pass layout. Multi-pass (deferred)
     // meshes draw later, and main-pass-layout banks have the camera at c4;
     // in both cases leave the palette pending for the post-draw fixup.
-    const uint32_t effect_list = REX_LOAD_U32(ctx + kCtxEffectList);
+    // Effect list from the guarded ctx head; a failed pass-count load keeps
+    // passes = 1 (KI-87).
+    const uint32_t effect_list = BSwap32(ctx_head[kCtxEffectList / 4]);
     uint32_t passes = 1;
-    if (GuestReadableApprox(base, effect_list)) {
-      passes = REX_LOAD_U32(effect_list + kEffectListPassCount);
+    if (GuestReadableApprox(base, effect_list) &&
+        !GuestTryLoadU32(base, effect_list + kEffectListPassCount, &passes)) {
+      NoteGuestReadSkip("CaptureDynamicState effect list", effect_list);
+      passes = 1;
     }
     const uint32_t palette_base = BankPaletteBase(base, bank);
     // World-path captures come from the sort-list hook BEFORE any of the
@@ -6361,13 +6551,25 @@ struct DynRetained {
 };
 std::vector<DynRetained> g_dyn_retained;
 
+// Retention frustum margins, shared by the static and vehicle passes.
+// Guest-cull test: the tested frustum shrinks slightly so bounds poking just
+// inside an edge still count as view-culled. Draw test: it widens slightly
+// so only clearly-outside items skip.
+constexpr float kRetainGuestCullMargin = 0.97f;
+constexpr float kRetainDrawMargin = 1.05f;
+
 // True when all 8 world-space corners fall outside one clip plane of `vp`
 // (row-vector view*proj). `margin` scales the tested frustum: < 1 shrinks
 // it (bounds poking just inside an edge still count as outside; the
 // game's own cull volumes are tighter than a mesh bbox), > 1 widens it
-// (only clearly-outside counts).
+// (only clearly-outside counts). `hor_scale` is the frame's Hor+ ultrawide
+// scale (WideOutputHorScale, 1.0 when not wide): the left/right planes
+// widen by 1/hor_scale so a narrow guest `vp` tests the frame's real wide
+// view. Top/bottom stay put; Hor+ keeps the vertical FOV, and the game's
+// widened cull (skate3_ultrawide_guest.h) only moves its side planes.
 bool CornersOutsideFrustum(const float (&corners)[8][3], const float vp[16],
-                           float margin) {
+                           float margin, float hor_scale) {
+  const float x_margin = hor_scale > 0.0f ? margin / hor_scale : margin;
   int outside[6] = {};
   for (int c = 0; c < 8; ++c) {
     const float* p = corners[c];
@@ -6379,11 +6581,12 @@ bool CornersOutsideFrustum(const float (&corners)[8][3], const float vp[16],
     // D3D clip volume: -w <= x <= w, -w <= y <= w, 0 <= z <= w. The game's
     // negative projection x-scale only swaps left/right; the tests are
     // symmetric. Corners behind the camera land in z < 0.
-    const float m = margin * clip[3];
-    if (clip[0] < -m) ++outside[0];
-    if (clip[0] > m) ++outside[1];
-    if (clip[1] < -m) ++outside[2];
-    if (clip[1] > m) ++outside[3];
+    const float mx = x_margin * clip[3];
+    const float my = margin * clip[3];
+    if (clip[0] < -mx) ++outside[0];
+    if (clip[0] > mx) ++outside[1];
+    if (clip[1] < -my) ++outside[2];
+    if (clip[1] > my) ++outside[3];
     if (clip[2] < 0.0f) ++outside[4];
     if (clip[2] > clip[3]) ++outside[5];
   }
@@ -6398,7 +6601,8 @@ bool CornersOutsideFrustum(const float (&corners)[8][3], const float vp[16],
 // The item's world-space bbox against the frustum (statics: bbox is
 // mesh-local, world transforms it; fmt-57 absolute geometry carries an
 // identity world with world-space bounds).
-bool ItemOutsideFrustum(const DrawItem& it, const float vp[16], float margin) {
+bool ItemOutsideFrustum(const DrawItem& it, const float vp[16], float margin,
+                        float hor_scale) {
   float corners[8][3];
   for (int c = 0; c < 8; ++c) {
     const float l[3] = {c & 1 ? it.bbox_max[0] : it.bbox_min[0],
@@ -6410,21 +6614,21 @@ bool ItemOutsideFrustum(const DrawItem& it, const float vp[16], float margin) {
                       l[2] * w[2 * 4 + k] + w[3 * 4 + k];
     }
   }
-  return CornersOutsideFrustum(corners, vp, margin);
+  return CornersOutsideFrustum(corners, vp, margin, hor_scale);
 }
 
 // Axis-aligned cube of half-extent `half` around `center` against the
 // frustum, the skinned-item variant (a palette's world position lives in
 // its bone translations, not the identity item world).
 bool BoxOutsideFrustum(const float center[3], float half, const float vp[16],
-                       float margin) {
+                       float margin, float hor_scale) {
   float corners[8][3];
   for (int c = 0; c < 8; ++c) {
     corners[c][0] = center[0] + (c & 1 ? half : -half);
     corners[c][1] = center[1] + (c & 2 ? half : -half);
     corners[c][2] = center[2] + (c & 4 ? half : -half);
   }
-  return CornersOutsideFrustum(corners, vp, margin);
+  return CornersOutsideFrustum(corners, vp, margin, hor_scale);
 }
 
 // SynPanAngleDeg / SynPanView: native/skate3_native_diagnostics.cpp.
@@ -9841,6 +10045,13 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
   // correct D3D NDC orientation; use the view*proj matrix as captured.
   // (Negating column 0 here mirrors the image left-right.)
 
+  // Hor+ ultrawide scale for this frame's camera (1.0 when the output is not
+  // wide). The matrices are widened after the camera overrides below; the
+  // retention frustum tests (vehicle and static) pass it so their left/right
+  // planes already match the frame's real (wider) view. Nothing below
+  // rewrites scene.proj before WidenPublishedCamera.
+  const float wide_hor_scale = WideOutputHorScale(scene.proj);
+
   // Vehicle retention (see g_dyn_retained): re-publish the last live
   // capture of a view-culled vehicle for a short window. Runs BEFORE the
   // smoothing block on purpose; the re-published copy re-claims its pose
@@ -9957,8 +10168,10 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
       }
       if (publish) {
         // Unsubmitted + visible to the guest camera = really gone
-        // (despawn); only view-culled vehicles re-publish.
-        if (!BoxOutsideFrustum(r.pos, r.half, guest_vp, 0.97f)) {
+        // (despawn); only view-culled vehicles re-publish. Same test as the
+        // static pass: the guest culls to the widened ultrawide view.
+        if (!BoxOutsideFrustum(r.pos, r.half, guest_vp, kRetainGuestCullMargin,
+                               wide_hor_scale)) {
           keep = false;
         }
       }
@@ -10345,12 +10558,6 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
     }
   }
 
-  // Hor+ ultrawide scale for this frame's camera (1.0 when the output is not
-  // wide). The matrices are widened after the camera overrides below; the
-  // retention frustum guards divide by it here so their tests already match
-  // the frame's real (wider) view.
-  const float wide_hor_scale = WideOutputHorScale(scene.proj);
-
   // Off-screen retention (see g_retained_items): re-append statics the game
   // view-culled this frame while the trailing rendered pose can still see
   // them. Runs AFTER the smoothing block so retained copies never enter the
@@ -10410,14 +10617,16 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
       // it. The 0.97 margin shrinks the tested frustum so bounds poking
       // just inside an edge still count as view-culled.
       if (now - r.last_seen > kRetainTtlFrames ||
-          !ItemOutsideFrustum(r.item, guest_vp, 0.97f / wide_hor_scale)) {
+          !ItemOutsideFrustum(r.item, guest_vp, kRetainGuestCullMargin,
+                              wide_hor_scale)) {
         rit = g_retained_items.erase(rit);
         continue;
       }
       // Draw it only if the RENDERED pose can actually see it (widened
       // frustum: only clearly-outside skips); after a fast 180 the trail
       // behind the camera stays retained but costs nothing.
-      if (!ItemOutsideFrustum(r.item, scene.view_proj, 1.05f / wide_hor_scale)) {
+      if (!ItemOutsideFrustum(r.item, scene.view_proj, kRetainDrawMargin,
+                              wide_hor_scale)) {
         scene.items.push_back(r.item);
         ++retain_appended;
       }

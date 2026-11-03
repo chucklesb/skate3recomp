@@ -1,6 +1,7 @@
 #include "skate3_options_menu.h"
 
 #include "generated/skate3_init.h"
+#include "native/skate3_native_guest_read.h"
 
 #include <algorithm>
 #include <atomic>
@@ -87,6 +88,10 @@ constexpr int32_t kAudioOptionId = 3;      // layout sanity check
 constexpr int32_t kOptionTypeId = 23;      // its type pointer: "option"
 constexpr int32_t kSelectorOptionId = 11;  // camera angle: "selector"
 constexpr uint32_t kFirstPageScreen = kScreenCount;
+
+// FrontEndState_Options vtable (+64 OnMenuSelect = sub_8260D290, +68
+// highlight = sub_8260D710, +72 item-enabled = sub_8260D648).
+constexpr uint32_t kOptionsStateVtable = 0x823034B0;
 
 constexpr uint32_t kStateScreenOffset = 68;
 constexpr uint32_t kStateRowOffset = 72;
@@ -649,6 +654,21 @@ uint32_t OptionsState(PPCContext& ctx, uint8_t* base) {
   return owner >= 0x10000 ? REX_LOAD_U32(owner + 180) : 0;
 }
 
+// True when `state` is a live FrontEndState_Options (guarded vtable read).
+// Writes the vtable seen (0 when unreadable) to *vtable_out.
+bool IsOptionsState(uint8_t* base, uint32_t state, uint32_t* vtable_out) {
+  *vtable_out = 0;
+  if (state < 0x10000) {
+    return false;
+  }
+  uint32_t raw = 0;
+  if (!skate3::native_scene::GuestTryCopy(&raw, base + state, sizeof(raw))) {
+    return false;
+  }
+  *vtable_out = __builtin_bswap32(raw);
+  return *vtable_out == kOptionsStateVtable;
+}
+
 int32_t AptArgInt(PPCContext& ctx, uint8_t* base, uint32_t index) {
   ctx.r3.u64 = index;
   sub_82E62E00(ctx, base);
@@ -1031,7 +1051,18 @@ extern "C" REX_FUNC(sub_8260EA48) {
       // prompt interrupted (the root Options screen).
       DiscardPending();
       const uint32_t state = OptionsState(ctx, base);
-      if (PageOf(base, state)) {
+      uint32_t vtable = 0;
+      if (!IsOptionsState(base, state, &vtable)) {
+        // The popup is modal over Options, so this should not happen; if the
+        // state is gone, leave whatever object sits there alone.
+        static std::atomic<bool> logged{false};
+        if (!logged.exchange(true, std::memory_order_relaxed)) {
+          REXLOG_WARN(
+              "Options menu: Discard skipped, state {:08X} is not FrontEndState_Options "
+              "(vtable {:08X})",
+              state, vtable);
+        }
+      } else if (PageOf(base, state)) {
         PlaySound(ctx, base, kBackSound);
         ctx.r3.u64 = state;
         sub_8260D078(ctx, base);
