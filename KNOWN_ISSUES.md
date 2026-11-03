@@ -1079,9 +1079,9 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-114: Scene ring dump doesn't create `logs/` before writing
 
-- **Status:** open (code reading only) · **Severity:** low
+- **Status:** fix in review in rubensteezy/skate3recomp#64 (same change as KI-75), tested unattended · **Severity:** low
 - **Area:** native renderer, diagnostics
-- **Tracking:** none yet. Found while fixing KI-75 (#64).
+- **Tracking:** rubensteezy/skate3recomp#64. Found while fixing KI-75.
 - **Where:** `MaybeDumpSceneRing` in `src/skate3_native_scene_state.h`.
 - **Problem:** it opens `logs/scene_ring_*.csv` relative to the working
   directory with `std::ofstream` and never creates `logs/`. If the folder is
@@ -1148,6 +1148,17 @@ repro steps; the entry says where the problem is and how it would show.
   (`snapshot_YYYYMMDD_HHMMSS_mmm`), so no two diagnostic files get the same
   stamp. The `skate3_screenshot.h` comment is reworded. Covered by
   `tests/file_stamp_test.cpp`.
+- **In-game test (big rig, batch5):** pressing F7 produced no file and no log
+  line. F7 and RB+A are only polled with
+  `--skate3_native_render_capture_hotkeys=true` (default off), and the test
+  used only `--skate3_native_render_scene_ring=true`. Not a regression.
+- **Follow-up fix (also KI-114):** the dump is now written to
+  `<exe dir>/logs/scene_ring_<stamp>.csv`, the same folder as the game log
+  (it used the working directory before), and the folder is created if
+  missing. Success logs `native-scene ring: wrote N frames -> <full path>`;
+  failure logs an error (`DUMP FAILED`). An empty ring warns. With the ring on
+  and the hotkeys off, the game warns once at startup that F7 / RB+A are off.
+  The `skate3_native_render_scene_ring` help text now names the hotkeys flag.
 
 ### KI-72: The Defender trojan trigger shipped on main
 
