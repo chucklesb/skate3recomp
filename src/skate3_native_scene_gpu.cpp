@@ -723,6 +723,36 @@ std::vector<PrewarmEntry> g_prewarm_retry;  // under g_prewarm_out_mutex
 // (KI-65): visible content whose first build failed.
 std::atomic<uint64_t> g_prewarm_miss_retries{0};
 
+// Failed worker mesh decodes (KI-67), render thread only: PrewarmCommit
+// records each failure, the draw path holds its next EnqueueMeshMiss until
+// retry_after_frame. Without it a mesh that never decodes cost a full
+// worker decode every frame it stayed visible (textures had RetryBackoff,
+// meshes had nothing). Same ladder as the textures (8/16/32/64 frames,
+// capped at 120), so a payload that is still streaming in is retried
+// within ~2 s at worst; a changed payload fingerprint (the data moved or
+// finished streaming) retries at once.
+struct MeshMissFail {
+  uint64_t fingerprint = 0;  // DrawItem::fingerprint of the failed decode
+  uint64_t retry_after_frame = 0;
+  uint8_t fail_count = 0;
+};
+std::unordered_map<uint32_t, MeshMissFail> g_mesh_miss_fail;
+constexpr size_t kMeshMissFailCap = 4096;
+
+// Draw path: true while a recent failed decode of this exact payload is
+// still backing off (skip the miss enqueue this frame).
+bool MeshMissBackingOff(const DrawItem& item, uint64_t frame_number) {
+  const auto it = g_mesh_miss_fail.find(item.mesh);
+  if (it == g_mesh_miss_fail.end()) {
+    return false;
+  }
+  if (it->second.fingerprint != item.fingerprint) {
+    g_mesh_miss_fail.erase(it);  // payload changed: worth a decode now
+    return false;
+  }
+  return frame_number < it->second.retry_after_frame;
+}
+
 // Shader sources live in src/native/shaders/*.hlsl; the build embeds them
 // into this generated header (cmake/EmbedShaders.cmake) so the exe stays
 // self-contained. Same kFooSource char arrays as before. (The offline
@@ -5481,6 +5511,20 @@ void PrewarmCommit(const NativeGuestOutputRenderContext& context,
         r.buffers.last_used_frame = frame_number;
         g_r.meshes.emplace(r.item.mesh, r.buffers);
       }
+      g_mesh_miss_fail.erase(r.item.mesh);
+    } else if (r.item.mesh != 0) {
+      // Failed mesh decode (KI-67): back off this payload's next draw-path
+      // miss instead of re-decoding it every visible frame.
+      if (g_mesh_miss_fail.size() >= kMeshMissFailCap) {
+        g_mesh_miss_fail.clear();  // map-change growth backstop
+      }
+      MeshMissFail& f = g_mesh_miss_fail[r.item.mesh];
+      if (f.fingerprint != r.item.fingerprint) {
+        f.fail_count = 0;  // a different payload starts a fresh ladder
+      }
+      f.fingerprint = r.item.fingerprint;
+      f.fail_count = BumpFail(f.fail_count);
+      f.retry_after_frame = frame_number + RetryBackoff(f.fail_count);
     }
     for (StagedTexResult& t : r.textures) {
       // Payload-stability verify: a decode read while its payload was still
@@ -6803,6 +6847,7 @@ void ReleaseRetiredAndFlushCaches(const NativeGuestOutputRenderContext& context)
       if (m.ib) g_r.device->DestroyDeferred(m.ib);
     }
     g_r.meshes.clear();
+    g_mesh_miss_fail.clear();
     {
       std::lock_guard<std::mutex> lock(g_mesh_pool_mutex);
       for (const PooledMeshBuffer& p : g_mesh_pool) {
@@ -9238,7 +9283,10 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       } else if (!dynamic_payload) {
         // Streaming heal: keep drawing the old decode this frame; the
         // workers decode the new payload and the commit swaps it in.
-        EnqueueMeshMiss(item.mesh);
+        // A payload whose decode keeps failing backs off (KI-67).
+        if (!MeshMissBackingOff(item, frame_number)) {
+          EnqueueMeshMiss(item.mesh);
+        }
       }
     }
     if (it == g_r.meshes.end()) {
@@ -9247,7 +9295,10 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         // skinned entities (a streamed-in NPC appears 1-2 frames late
         // instead of hitching the frame; the dyn decode jobs usually land
         // the same content even sooner from the guest-thread snapshot).
-        EnqueueMeshMiss(item.mesh);
+        // A payload whose decode keeps failing backs off (KI-67).
+        if (!MeshMissBackingOff(item, frame_number)) {
+          EnqueueMeshMiss(item.mesh);
+        }
         g_rr_mesh_deferred.fetch_add(1, std::memory_order_relaxed);
         return;
       }

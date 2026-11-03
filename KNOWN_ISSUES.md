@@ -488,21 +488,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** confirm by reading the code, then send misses back to
   `g_miss_queue` with their kind kept.
 
-### KI-67: Mesh decodes that always fail are retried every frame
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, streaming
-- **Tracking:** none yet. Found while fixing KI-27 (#39).
-- **Where:** `ProcessPrewarmEntry` → `PrewarmCommit` → the draw path in
-  `src/skate3_native_scene_gpu.cpp`.
-- **Problem:** a failed mesh decode is committed with `mesh_valid=false` and
-  its in-flight key is released. The next draw-path miss calls
-  `EnqueueMeshMiss` again, with no negative cache or backoff (textures have
-  `RetryBackoff`, meshes don't). So a mesh that can never decode costs a
-  pointless worker decode every frame it's visible. #39's new rejections are
-  cheap and run before any copy, but other failures still do the full work.
-- **Fix:** a per-mesh fail count with backoff, like `GuestTexture::fail_count`.
-
 ### KI-68: Prewarm log counts are misleading
 
 - **Status:** open · **Severity:** low
@@ -2387,6 +2372,32 @@ repro steps; the entry says where the problem is and how it would show.
   resolve a difference: capture time moved with the unchanged frame build
   from run to run. Item and draw counts matched main.
 - **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. 0 'guarded guest read failed' lines in either run and no visible problems. The guard only matters on a bad pointer, which did not occur.
+
+### KI-67: Mesh decodes that always fail are retried every frame
+
+- **Status:** fixed in rubensteezy/skate3recomp#61, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, streaming
+- **Tracking:** rubensteezy/skate3recomp#61. Found while fixing KI-27 (#39).
+- **Where:** `ProcessPrewarmEntry` → `PrewarmCommit` → the draw path in
+  `src/skate3_native_scene_gpu.cpp`.
+- **Problem:** a failed mesh decode is committed with `mesh_valid=false` and
+  its in-flight key is released. The next draw-path miss calls
+  `EnqueueMeshMiss` again, with no negative cache or backoff (textures have
+  `RetryBackoff`, meshes don't). So a mesh that can never decode costs a
+  pointless worker decode every frame it's visible.
+- **Fix:** `PrewarmCommit` records each failed mesh decode in
+  `g_mesh_miss_fail` (fail count, payload fingerprint, retry frame) on the
+  texture ladder (`RetryBackoff`: 8/16/32/64 frames, capped at 120). Both
+  draw-path `EnqueueMeshMiss` sites skip the enqueue while
+  `MeshMissBackingOff` says the same payload is still backing off. A changed
+  payload fingerprint retries at once, the cap keeps retrying an unchanged
+  one, and a successful commit clears the entry.
+- **Measured** (unattended demo path, temporary counters plus a forced failure
+  of every 32nd mesh for 120 s): failing worker decodes went from ~320/s to
+  ~3/s. Once the forced failures stopped, the visible meshes decoded within
+  the next 10 s window in both runs. The plain demo path had no failing mesh
+  decodes at all.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. Prewarm summaries show 145,832 meshes decoded, 0 dropped, 0 still queued at the last summary, 0 'DecodeMesh rejected' lines, and the player saw no missing meshes. The backoff under real decode failures was only exercised in the PR's unattended forced-failure test.
 
 ### Reviewed and ruled out (code review)
 
