@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <shared_mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -67,6 +68,20 @@ class Skate3BaseApp : public rex::ReXApp {
   std::filesystem::path config_path_;
   std::filesystem::path user_settings_path_;
   std::filesystem::path profiles_path_;
+  // Gate for the callbacks OnPostSetup hands to other threads (input active /
+  // menu chord, intro-skip pad provider, Options screen rows). Their setters
+  // are plain std::function stores read unlocked by the guest/input threads,
+  // so swapping them at shutdown would itself race; instead every callback
+  // takes `mutex` shared and returns early once OnShutdown has closed the gate
+  // (exclusive, so it also waits out a callback already running). Held by
+  // shared_ptr so a callback that outlives the app still finds it. `mutex`
+  // also guards writes of simple_settings_dialog_, which the active callback
+  // reads on the input path.
+  struct CallbackGate {
+    std::shared_mutex mutex;
+    std::atomic<bool> open{true};
+  };
+  std::shared_ptr<CallbackGate> callback_gate_ = std::make_shared<CallbackGate>();
   std::unique_ptr<rex::ui::SimpleSettingsDialog> simple_settings_dialog_;
   std::unique_ptr<skate3::NativeDebugDialog> native_debug_dialog_;
   std::unique_ptr<skate3::RenderModeIndicator> render_mode_indicator_;
