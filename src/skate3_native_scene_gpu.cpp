@@ -723,6 +723,36 @@ std::vector<PrewarmEntry> g_prewarm_retry;  // under g_prewarm_out_mutex
 // (KI-65): visible content whose first build failed.
 std::atomic<uint64_t> g_prewarm_miss_retries{0};
 
+// Failed worker mesh decodes (KI-67), render thread only: PrewarmCommit
+// records each failure, the draw path holds its next EnqueueMeshMiss until
+// retry_after_frame. Without it a mesh that never decodes cost a full
+// worker decode every frame it stayed visible (textures had RetryBackoff,
+// meshes had nothing). Same ladder as the textures (8/16/32/64 frames,
+// capped at 120), so a payload that is still streaming in is retried
+// within ~2 s at worst; a changed payload fingerprint (the data moved or
+// finished streaming) retries at once.
+struct MeshMissFail {
+  uint64_t fingerprint = 0;  // DrawItem::fingerprint of the failed decode
+  uint64_t retry_after_frame = 0;
+  uint8_t fail_count = 0;
+};
+std::unordered_map<uint32_t, MeshMissFail> g_mesh_miss_fail;
+constexpr size_t kMeshMissFailCap = 4096;
+
+// Draw path: true while a recent failed decode of this exact payload is
+// still backing off (skip the miss enqueue this frame).
+bool MeshMissBackingOff(const DrawItem& item, uint64_t frame_number) {
+  const auto it = g_mesh_miss_fail.find(item.mesh);
+  if (it == g_mesh_miss_fail.end()) {
+    return false;
+  }
+  if (it->second.fingerprint != item.fingerprint) {
+    g_mesh_miss_fail.erase(it);  // payload changed: worth a decode now
+    return false;
+  }
+  return frame_number < it->second.retry_after_frame;
+}
+
 // Shader sources live in src/native/shaders/*.hlsl; the build embeds them
 // into this generated header (cmake/EmbedShaders.cmake) so the exe stays
 // self-contained. Same kFooSource char arrays as before. (The offline
@@ -5277,6 +5307,16 @@ void PrewarmWorkerLoop() {
       std::this_thread::sleep_for(std::chrono::milliseconds(250));
       continue;
     }
+    // Wait (without dequeuing) until the guest base and device exist. The
+    // workers start only once g_r.device is set and every enqueue path
+    // publishes the guest base first, so this is a startup guard only; it
+    // used to pop the entry and re-queue it via g_prewarm_retry without
+    // decrementing retries, which would spin entries forever (KI-86).
+    uint8_t* base = g_guest_base.load(std::memory_order_relaxed);
+    if (base == nullptr || g_r.device == nullptr) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      continue;
+    }
     PrewarmEntry e{};
     DynDecodeJob dyn;
     bool have_dyn = false;
@@ -5290,7 +5330,7 @@ void PrewarmWorkerLoop() {
         // Dynamic cloth first: these are per-frame payloads whose result
         // should land at the very next commit.
         dyn = std::move(g_dyn_jobs.front());
-        g_dyn_jobs.erase(g_dyn_jobs.begin());
+        g_dyn_jobs.pop_front();
         have_dyn = true;
       } else if (!g_miss_queue.empty()) {
         // Draw-path misses next: this content is visible RIGHT NOW (white /
@@ -5298,22 +5338,13 @@ void PrewarmWorkerLoop() {
         // registration burst kept cutting the line ahead of the visible
         // miss; medium-distance pop-in lasted the whole backlog.
         e = g_miss_queue.front();
-        g_miss_queue.erase(g_miss_queue.begin());
+        g_miss_queue.pop_front();
       } else if (!g_prewarm_queue.empty()) {
         e = g_prewarm_queue.back();
         g_prewarm_queue.pop_back();
       } else {
         continue;
       }
-    }
-    uint8_t* base = g_guest_base.load(std::memory_order_relaxed);
-    if (base == nullptr || g_r.device == nullptr) {
-      if (!have_dyn) {
-        std::lock_guard<std::mutex> lock(g_prewarm_out_mutex);
-        g_prewarm_retry.push_back(e);
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
-      continue;
     }
     // Decode workers only ever read guest memory on the renderer's behalf:
     // keep them permanently armed for raw-load read-fault recovery (POSIX;
@@ -5481,6 +5512,20 @@ void PrewarmCommit(const NativeGuestOutputRenderContext& context,
         r.buffers.last_used_frame = frame_number;
         g_r.meshes.emplace(r.item.mesh, r.buffers);
       }
+      g_mesh_miss_fail.erase(r.item.mesh);
+    } else if (r.item.mesh != 0) {
+      // Failed mesh decode (KI-67): back off this payload's next draw-path
+      // miss instead of re-decoding it every visible frame.
+      if (g_mesh_miss_fail.size() >= kMeshMissFailCap) {
+        g_mesh_miss_fail.clear();  // map-change growth backstop
+      }
+      MeshMissFail& f = g_mesh_miss_fail[r.item.mesh];
+      if (f.fingerprint != r.item.fingerprint) {
+        f.fail_count = 0;  // a different payload starts a fresh ladder
+      }
+      f.fingerprint = r.item.fingerprint;
+      f.fail_count = BumpFail(f.fail_count);
+      f.retry_after_frame = frame_number + RetryBackoff(f.fail_count);
     }
     for (StagedTexResult& t : r.textures) {
       // Payload-stability verify: a decode read while its payload was still
@@ -6803,6 +6848,7 @@ void ReleaseRetiredAndFlushCaches(const NativeGuestOutputRenderContext& context)
       if (m.ib) g_r.device->DestroyDeferred(m.ib);
     }
     g_r.meshes.clear();
+    g_mesh_miss_fail.clear();
     {
       std::lock_guard<std::mutex> lock(g_mesh_pool_mutex);
       for (const PooledMeshBuffer& p : g_mesh_pool) {
@@ -7339,9 +7385,17 @@ bool RenderShadowAtlas(const NativeGuestOutputRenderContext& context,
       // garment every frame, ~2.9 ms, the 160 fps cap during real play).
       // The dyn decode jobs / worker miss queue keep the cache fresh, one
       // frame behind the sim; a first-sight caster shadows 1-2 frames late.
-      if (!g_r.meshes.contains(item.mesh)) {
+      const auto mit = g_r.meshes.find(item.mesh);
+      if (mit == g_r.meshes.end()) {
         continue;
       }
+      // Stamp the mesh as used (KI-95), like RenderStaticSunMap does: a
+      // caster the main pass does not draw this frame (occlusion-culled, or
+      // outside the view) still casts here, and an unstamped entry looks
+      // idle to EvictMeshStore. Evicted under mesh-store pressure, the
+      // caster would silently drop out of the shadow until the main pass
+      // draws the item again.
+      mit->second.last_used_frame = frame_number;
       Caster c{&item, 0, false, false, nullptr};
       if (item.dynobj == 2) {
         c.clip = true;
@@ -7946,7 +8000,7 @@ void LogFrameStats(const FrameScene& scene, uint64_t frames, uint32_t drawn,
     REXLOG_INFO(
         "native-scene: frame {} items={} draws={} draws_2d={} drawn_2d={} "
         "splines[{}/{}] "
-        "2d[other={} dropped={} askip={} astale={} textures={}] cached_meshes={} mesh_mb={} textures={} tex_mb={} "
+        "2d[other={} dropped={} askip={} astale={}] cached_meshes={} mesh_mb={} textures={} tex_mb={} "
         "vs_uploads={} palettes={} palette_base_plus1={} ropa[rigid={} stale={} rescued={} relax={} caster={} incoh={} stretch={} blend={} blendmiss={}] dyn_gap={} skinned={} skinned_skipped={} foreign_bank={} "
         "rigid[pending={} dropped={} worldprops={}] "
         "rej[dyn={} range={} chain={} geom={} draws={} bbox={}] "
@@ -7961,7 +8015,7 @@ void LogFrameStats(const FrameScene& scene, uint64_t frames, uint32_t drawn,
         frames, scene.items.size(), drawn, g_draws_2d.load(), drawn_2d,
         drawn_spline, g_draws_spline.load(),
         g_draws_2d_other.load(), g_draws_2d_dropped.load(),
-        g_2d_async_skip.load(), g_2d_async_stale.load(), g_r.tex_store.size(),
+        g_2d_async_skip.load(), g_2d_async_stale.load(),
         g_r.meshes.size(), g_mesh_store_bytes >> 20, g_r.tex_store.size(),
         g_tex_store_bytes >> 20,
         g_vs_uploads.load(), g_palette_snapshots.load(), g_palette_base_plus1.load(),
@@ -9230,7 +9284,10 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       } else if (!dynamic_payload) {
         // Streaming heal: keep drawing the old decode this frame; the
         // workers decode the new payload and the commit swaps it in.
-        EnqueueMeshMiss(item.mesh);
+        // A payload whose decode keeps failing backs off (KI-67).
+        if (!MeshMissBackingOff(item, frame_number)) {
+          EnqueueMeshMiss(item.mesh);
+        }
       }
     }
     if (it == g_r.meshes.end()) {
@@ -9239,7 +9296,10 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         // skinned entities (a streamed-in NPC appears 1-2 frames late
         // instead of hitching the frame; the dyn decode jobs usually land
         // the same content even sooner from the guest-thread snapshot).
-        EnqueueMeshMiss(item.mesh);
+        // A payload whose decode keeps failing backs off (KI-67).
+        if (!MeshMissBackingOff(item, frame_number)) {
+          EnqueueMeshMiss(item.mesh);
+        }
         g_rr_mesh_deferred.fetch_add(1, std::memory_order_relaxed);
         return;
       }
@@ -11859,8 +11919,28 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       uint32_t cb_slot_next = 0;
       const int32_t pfx_debug =
           REXCVAR_GET(skate3_native_render_scene_photo_native_debug);
+      // Worst case per frame: depth pack, one accum pass (mode 1 or 2), the
+      // 6 chain passes and the debug view = 9 slots (KI-40).
+      static_assert(RendererState::kPfxCbSlots >= 9,
+                    "photo FX chain needs up to 9 constant slots per frame");
+      // Set by fill_cb: false when this frame's region is out of slots, in
+      // which case nothing was written and pfx_draw() skips the draw.
+      bool cb_slot_ok = true;
       // Returns the byte OFFSET into g_r.pfx_cb for SetConstantBuffer(0, ...).
       const auto fill_cb = [&](int pass) -> uint64_t {
+        cb_slot_ok = cb_slot_next < RendererState::kPfxCbSlots;
+        if (!cb_slot_ok) {
+          static std::atomic<bool> s_pfx_cb_overflow_logged{false};
+          if (!s_pfx_cb_overflow_logged.exchange(true,
+                                                 std::memory_order_relaxed)) {
+            REXLOG_WARN(
+                "native-scene: photo FX constant slots exhausted ({} per "
+                "frame); skipping pass {} (logged once)",
+                RendererState::kPfxCbSlots, pass);
+          }
+          // In-range offset (this frame's first slot), left untouched.
+          return uint64_t(cb_slot_base) * 4096;
+        }
         const uint32_t slot = cb_slot_base + (cb_slot_next++);
         uint8_t* dst = g_r.pfx_cb_ptr + size_t(slot) * 4096;
         std::memset(dst, 0, 4096);
@@ -11905,6 +11985,13 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
                                     nrhi::TextureView* t7, nrhi::TextureView* t5) {
         nrhi::TextureView* views[8] = {t0, t1, t2, t3, t4, t5, t6, t7};
         cmd->SetTextures(1, views, 8);
+      };
+      // Fullscreen-triangle draw for the pass whose constants fill_cb just
+      // filled; skipped when fill_cb ran out of slots.
+      const auto pfx_draw = [&]() {
+        if (cb_slot_ok) {
+          cmd->Draw(3, 0);
+        }
       };
       nrhi::TextureView* const W = g_r.white.srv;
       const nrhi::Viewport half_vp{0.0f, 0.0f, float(RendererState::kPfxHalfW),
@@ -11960,7 +12047,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       cmd->SetPipeline(g_r.pfx_pso[0]);
       cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(-1));
       pfx_bind_all(W, W, W, W, g_r.pfx_srv[6], W, W, g_r.pfx_srv[7]);
-      cmd->Draw(3, 0);
+      pfx_draw();
       cmd->Barrier(g_r.depth, nrhi::ResourceState::kPixelShaderResource,
                    nrhi::ResourceState::kDepthWrite);
       pfx_to_srv(g_r.pfx_depth);
@@ -11981,7 +12068,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         cmd->SetPipeline(g_r.pfx_pso[7]);
         cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(-1));
         pfx_bind_all(g_r.output_srv_slot, W, W, W, g_r.pfx_srv[6], W, W, W);
-        cmd->Draw(3, 0);
+        pfx_draw();
       }
       pfx_to_srv(g_r.pfx_quarter);
       pfx_flush();
@@ -11994,7 +12081,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(kPfxVisualFx));
       pfx_bind_all(g_r.output_srv_slot, g_r.pfx_srv[5], W, g_r.pfx_srv[4],
                    g_r.pfx_srv[6], W, W, W);
-      cmd->Draw(3, 0);
+      pfx_draw();
       pfx_to_srv(g_r.pfx_full[0]);
       pfx_flush();
 
@@ -12005,7 +12092,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       cmd->SetPipeline(g_r.pfx_pso[2]);
       cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(kPfxDofDown));
       pfx_bind_all(g_r.pfx_srv[0], W, W, W, g_r.pfx_srv[6], W, W, W);
-      cmd->Draw(3, 0);
+      pfx_draw();
       pfx_to_srv(g_r.pfx_half[0]);
       pfx_flush();
 
@@ -12014,7 +12101,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       cmd->SetPipeline(g_r.pfx_pso[3]);
       cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(kPfxDofMB));
       pfx_bind_all(g_r.pfx_srv[2], g_r.pfx_srv[5], W, W, g_r.pfx_srv[6], W, W, W);
-      cmd->Draw(3, 0);
+      pfx_draw();
       pfx_to_srv(g_r.pfx_half[1]);
       pfx_to_rt(g_r.pfx_half[0]);
       pfx_flush();
@@ -12024,7 +12111,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       cmd->SetPipeline(g_r.pfx_pso[4]);
       cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(kPfxDof));
       pfx_bind_all(g_r.pfx_srv[3], W, W, W, g_r.pfx_srv[6], W, W, W);
-      cmd->Draw(3, 0);
+      pfx_draw();
       pfx_to_srv(g_r.pfx_half[0]);
       pfx_flush();
 
@@ -12037,7 +12124,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(kPfxUber));
       pfx_bind_all(g_r.pfx_srv[0], g_r.pfx_srv[5], W, W, g_r.pfx_srv[6],
                    grain_slot, g_r.pfx_srv[2], W);
-      cmd->Draw(3, 0);
+      pfx_draw();
       pfx_to_srv(g_r.pfx_full[1]);
       // The finished chain replaces the output: back to RT for fisheye.
       cmd->Barrier(context.guest_output,
@@ -12050,7 +12137,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       cmd->SetPipeline(g_r.pfx_pso[6]);
       cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(kPfxFisheye));
       pfx_bind_all(g_r.pfx_srv[1], W, vig_slot, W, g_r.pfx_srv[6], W, W, W);
-      cmd->Draw(3, 0);
+      pfx_draw();
       photo_fx_applied = true;
 
       // 8b) Debug view (photo_native_debug): overwrite the output with the
@@ -12062,7 +12149,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(-1));
         pfx_bind_all(g_r.pfx_srv[0], g_r.pfx_srv[5], W, W, g_r.pfx_srv[6], W,
                      W, W);
-        cmd->Draw(3, 0);
+        pfx_draw();
       }
 
       // 9) Accumulation mode 2: next frame's visualfx t3 = the finished
@@ -12076,7 +12163,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         cmd->SetPipeline(g_r.pfx_pso[7]);
         cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(-1));
         pfx_bind_all(g_r.pfx_srv[1], W, W, W, g_r.pfx_srv[6], W, W, W);
-        cmd->Draw(3, 0);
+        pfx_draw();
       }
 
       // Restore steady states (all pfx color targets idle as RENDER_TARGET)

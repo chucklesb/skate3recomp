@@ -3,6 +3,7 @@
 // skate3_native_scene.cpp; no rendering logic lives here.
 
 #include "native/skate3_native_diag.h"
+#include "native/skate3_file_stamp.h"
 
 #include <algorithm>
 #include <bit>
@@ -495,14 +496,8 @@ std::filesystem::path SnapshotDir() {
   return dir;
 }
 
-std::string SnapshotStem() {
-  const auto now = std::chrono::system_clock::now();
-  const auto seconds =
-      std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-  char stem[64];
-  std::snprintf(stem, sizeof(stem), "snapshot_%" PRId64, static_cast<int64_t>(seconds));
-  return stem;
-}
+// snapshot_YYYYMMDD_HHMMSS_mmm: unique per process (KI-75), like screenshots.
+std::string SnapshotStem() { return "snapshot_" + skate3::file_stamp::NextFileStamp(); }
 
 // Guest memory snapshot format (.gsnap):
 //   char magic[8] = "SK3GSNP1"
@@ -634,6 +629,18 @@ void OnCaptureFrameEnd(uint8_t* base, uint64_t frame_index,
   // moment it is on screen), or create <snapshot_dir>\trigger. All of them
   // (and their key/pad polling) sit behind skate3_native_render_capture_hotkeys.
   const bool capture_hotkeys = REXCVAR_GET(skate3_native_render_capture_hotkeys);
+  {
+    // F7 / RB+A only work with the hotkeys on; say so once instead of leaving
+    // a tester pressing a key that is never polled (KI-75 in-game test).
+    static bool s_ring_hint_logged = false;
+    if (!s_ring_hint_logged && REXCVAR_GET(skate3_native_render_scene_ring) &&
+        !capture_hotkeys) {
+      s_ring_hint_logged = true;
+      REXLOG_WARN(
+          "native-scene ring: recording, but F7 / RB+A dumps are off; add "
+          "--skate3_native_render_capture_hotkeys=true");
+    }
+  }
 #if defined(_WIN32)
   if (capture_hotkeys && !g_collecting) {
     static bool f9_was_down = false;
@@ -667,7 +674,10 @@ void OnCaptureFrameEnd(uint8_t* base, uint64_t frame_index,
     const bool f7_down = (GetAsyncKeyState(VK_F7) & 0x8000) != 0;
     if (f7_down && !f7_was_down) {
       RequestSceneRingDump();
-      REXLOG_INFO("native-render: F7, scene ring dump requested");
+      REXLOG_INFO("native-render: F7, scene ring dump requested{}",
+                  REXCVAR_GET(skate3_native_render_scene_ring)
+                      ? ""
+                      : " (but skate3_native_render_scene_ring is off, ring is empty)");
     }
     f7_was_down = f7_down;
     static bool f10_was_down = false;

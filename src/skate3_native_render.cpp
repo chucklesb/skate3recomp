@@ -833,12 +833,30 @@ extern "C" REX_FUNC(sub_827F0D00) {
   }
   REX_STORE_U32(self + 3240, max_bits);
   REX_STORE_U32(self + 3392, max_bits);
+  // Published outputs (KI-89). Same stores as always, but only when the target
+  // word is readable: a stale instance pointer skips the store (and logs via
+  // the KI-64 skip counter) instead of faulting or writing into a reused
+  // page. Deliberately NOT gated on the instance's u16 at +2 the way the game
+  // gates its own write (it targets a static scratch when that is <= 2): a
+  // photo-editor play-test showed a darker saved photo with that gate, so
+  // the store must happen whenever the memory is readable.
+  const auto output_ok = [&](uint32_t inst, uint32_t field, const char* site) {
+    if (inst < 0x10000) {
+      return false;  // null / tiny: skipped silently, as before
+    }
+    uint32_t cur = 0;
+    if (!skate3::native_scene::GuestTryLoadU32(base, inst + field, &cur)) {
+      skate3::native_scene::NoteGuestReadSkip(site, inst);
+      return false;
+    }
+    return true;
+  };
   const uint32_t own_a = own[1];  // +3397
   const uint32_t own_b = own[0];  // +3396
-  if (own_a == 0 && inst_a >= 0x10000) {
+  if (own_a == 0 && output_ok(inst_a, 48, "auto-exposure pin output a")) {
     REX_STORE_U32(inst_a + 48, max_bits);
   }
-  if (own_b == 0 && inst_b >= 0x10000) {
+  if (own_b == 0 && output_ok(inst_b, 56, "auto-exposure pin output b")) {
     REX_STORE_U32(inst_b + 56, max_bits);
   }
 }
