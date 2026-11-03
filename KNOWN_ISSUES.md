@@ -1021,19 +1021,36 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-110: Decode/prewarm workers fault on wild guest pointers during streaming
 
-- **Status:** open (unconfirmed) · **Severity:** low–medium
+- **Status:** open · logging fix in rubensteezy/skate3recomp#62, played in
+  batch4 without the fault appearing (not reproduced) · **Severity:** low
+  (log noise; no unguarded load found)
 - **Area:** native renderer, streaming, guest memory safety
-- **Tracking:** none yet. Found while testing KI-87 (#60).
+- **Tracking:** rubensteezy/skate3recomp#62. Found while testing KI-87 (#60).
 - **Symptom:** one of 16 unattended D3D12 boots logged 271
   `Unhandled guest access violation: read of guest 0x3F800000 / 0x69676874 ...`
   lines during a streaming burst (frames ~1800–2400), from the threads that
   also log `mesh ... decoded N verts outside bbox`, plus a one-off
   `rej[chain=743]`. The process survived.
-- **Cause so far:** the bad addresses are a float (1.0f) and ASCII text read as
-  pointers, so some decode/prewarm path reads stale guest data. Not caused by
-  #60: those threads don't run `CaptureDynamicState`. Call site not found yet.
-- **Next step:** per-site logging (or a debugger) in the mesh decode/prewarm
-  path to find the faulting load, then guard it the way KI-64 did.
+- **Cause:** these are faults that a guard already caught. The SDK's vectored
+  handler (`Memory::AccessViolationCallback`, `xmemory.cpp`) runs before the
+  `GuestTryCopy` SEH guard and logs every guest-range fault as "Unhandled",
+  even ones the guard then handles. A real unguarded load on a decode worker
+  would have ended the process on Windows. The log shows the same four
+  addresses (0x3F800000, 0x36E7213A, 0x33F15B4C, 0x69676874), one line each,
+  once per mesh, on all 8 decode workers. That pattern fits the material
+  channel loop in `BuildItemFromMesh`: `GuestTryLoadU32(stream)` on the
+  channel's +0x1C word, which for some materials is not a pointer. The guid
+  lookup then takes over, so the output is unchanged. Every guest read on
+  the worker paths (`ProcessPrewarmEntry`, `BuildItemFromMesh`, `DecodeMesh`,
+  the texture staging) is already guarded.
+- **Fix:** #62 names the site. A caught probe fault now also logs
+  `guarded guest read failed at material channel stream probe` (throttled
+  to one line per 10 s), so the "Unhandled" lines can be matched to it.
+- **Next step:** if the noise matters, have the SDK skip the error log for
+  faults inside `GuestTryCopy`. That change belongs in the rexglue-skate3 fork.
+- **In-game test:** played on the big rig in batch4 (D3D12, about 17 minutes
+  over two runs): 0 "Unhandled guest access violation" lines, so the new
+  probe note was never seen firing and the fault is still not reproduced.
 
 ### KI-111: `WarmItemResources` ignores the mesh decode backoff during settle
 
