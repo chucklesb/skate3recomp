@@ -914,27 +914,6 @@ repro steps; the entry says where the problem is and how it would show.
   That limited the testing of KI-25 (#37) and KI-61 (#50).
 - **Fix:** add stick tokens, for example `rs_left:ms` and `ls_up:ms`.
 
-### KI-95: Shadow-atlas casters don't stamp their mesh entries
-
-- **Status:** open · **Severity:** low–medium
-- **Area:** native renderer, shadows, mesh cache
-- **Tracking:** none yet. Found while fixing KI-41 (#51). The same kind of bug
-  as KI-41, for meshes.
-- **Where:** the caster loop of `RenderShadowAtlas` in
-  `src/skate3_native_scene_gpu.cpp`. It checks `g_r.meshes.contains(item.mesh)`
-  and later does `g_r.meshes.find(...)`, but never sets the mesh's
-  `last_used_frame`. `RenderStaticSunMap` does
-  (`mit->second.last_used_frame = frame_number`).
-- **Problem:** under mesh-store pressure
-  (`skate3_native_render_scene_mesh_store_mb`), the mesh of a caster the main
-  pass doesn't draw can be evicted. The caster then silently drops out of the
-  shadow, because the pass `continue`s on a missing mesh.
-- **Evidence:** a temporary counter found 5,995 to 25,377 caster-frames per
-  150 s run whose mesh hadn't been stamped for more than 5 s. No mesh was
-  actually skipped, because the 1024 MB mesh budget was never under pressure.
-- **Fix:** stamp `mit->second.last_used_frame` in the atlas loop, then test with
-  a small mesh budget.
-
 ### KI-96: The texture store budget can't go below 256 MB for testing
 
 - **Status:** open · **Severity:** low
@@ -2371,6 +2350,30 @@ repro steps; the entry says where the problem is and how it would show.
   shutdown path (and its log line) only runs on macOS, or when there is no
   window. Not tested there.
 - **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. Changed MSAA to x8 in Options and pressed Restart Now: the log shows 'Options menu: restart-required settings applied; restarting', a clean shutdown, and the new process started normally with MSAA x8 pipelines. The shutdown-callback gate matters mainly on macOS; nothing showed it running on Windows.
+
+### KI-95: Shadow-atlas casters didn't stamp their mesh entries
+
+- **Status:** fixed in rubensteezy/skate3recomp#59, tested in-game on 2026-11-02 · **Severity:** low–medium
+- **Area:** native renderer, shadows, mesh cache
+- **Where:** the caster loop of `RenderShadowAtlas` in
+  `src/skate3_native_scene_gpu.cpp`.
+- **Problem:** the loop checked `g_r.meshes.contains(item.mesh)` but never set
+  the mesh's `last_used_frame` (`RenderStaticSunMap` does). Under mesh-store
+  pressure (`skate3_native_render_scene_mesh_store_mb`), `EvictMeshStore`
+  evicts entries idle for more than 5 s (at least 240 frames), so the mesh of a
+  caster the main pass doesn't draw could be evicted while it was still
+  casting. The caster then silently dropped out of the shadow.
+- **Evidence:** temporary counters (not committed) on unattended
+  `--skate3_demo_path=true` boots (D3D12, about 29 fps on this PC), with the
+  mesh budget forced to 16 MB (the cvar floor is 256 MB; the working set here
+  is about 40 MB, so 256 MB never starts the LRU). Over 240 s, caster lookups
+  that missed a mesh the atlas had drawn within the last 240 frames: 262 of
+  325,561 without the stamp, 0 of 359,429 with it. Misses of meshes idle for
+  longer (normal LRU behaviour, re-decoded by the workers) remained in both
+  (341 and 52). The store stayed at about 550 entries either way.
+- **Fix:** the gather loop does `find` instead of `contains` and sets
+  `mit->second.last_used_frame = frame_number` for every caster it keeps.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. The atlas mesh stamp was exercised: 'mesh store LRU start/done' ran 8 times in the first run (it triggers on the 24,576 mesh-count cap, not the MB cap), each evicting about 3,100-3,700 meshes, with 0 guarded read failures after any of them and no shadow problems seen by the player.
 
 ### Reviewed and ruled out (code review)
 
