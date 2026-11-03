@@ -186,20 +186,6 @@ repro steps; the entry says where the problem is and how it would show.
   either backend, even when GPU-bound. With #28's 8 regions, the fallback
   that would need this wait can't trigger in normal operation.
 
-### KI-42: Perf log line repeats the texture count
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, diagnostics
-- **Tracking:** none yet. Found while fixing KI-17 (#29).
-- **Where:** `LogFrameStats` in `src/skate3_native_scene_gpu.cpp`, the
-  `native-scene: frame N ...` line.
-- **Problem:** `g_r.tex_store.size()` is logged three times: as
-  `2d[... textures=]`, as `textures=` and as `store[n=]`. The 2D
-  `textures=` field looks like a leftover from a separate 2D cache that no
-  longer exists, so it misleads.
-- **Fix:** drop the 2D `textures=` field, or make it count something
-  2D-specific.
-
 ### KI-43: A script/debug getter reads the scaled cull threshold
 
 - **Status:** open (unconfirmed) · **Severity:** low
@@ -375,22 +361,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** release the buffers once a session's dumps are written, and
   add a counter to the file name.
 
-### KI-55: App callbacks that capture `this` are never cleared on shutdown
-
-- **Status:** open · **Severity:** low
-- **Area:** app lifetime
-- **Tracking:** none yet. Found while fixing KI-23 (#35).
-- **Where:** `OnPostSetup` / `OnShutdown` in `src/skate3_app_common.cpp`.
-- **Problem:** six callbacks capture `this` and are never cleared:
-  `input_system->SetActiveCallback`, `SetMenuChordCallback`,
-  `demo_path::SetUiInputProvider` and the three `options_menu::Set*Callback`.
-  The active callback also reads `simple_settings_dialog_` on the input path
-  while `OnShutdown` resets it on the UI thread. That's a data race or
-  use-after-free on any path where `OnShutdown` runs while the guest is
-  still alive. Today that is mainly Close Game on macOS (`QuitFromUIThread`,
-  which ends the guest after `OnShutdown`).
-- **Fix:** clear these callbacks (null or no-op) at the top of `OnShutdown`.
-
 ### KI-56: SDK key binds: duplicate registration and callbacks under the lock
 
 - **Status:** open · **Severity:** low
@@ -488,21 +458,6 @@ repro steps; the entry says where the problem is and how it would show.
   decoded as a mesh and that miss is lost. Startup only, low impact.
 - **Next step:** confirm by reading the code, then send misses back to
   `g_miss_queue` with their kind kept.
-
-### KI-67: Mesh decodes that always fail are retried every frame
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, streaming
-- **Tracking:** none yet. Found while fixing KI-27 (#39).
-- **Where:** `ProcessPrewarmEntry` → `PrewarmCommit` → the draw path in
-  `src/skate3_native_scene_gpu.cpp`.
-- **Problem:** a failed mesh decode is committed with `mesh_valid=false` and
-  its in-flight key is released. The next draw-path miss calls
-  `EnqueueMeshMiss` again, with no negative cache or backoff (textures have
-  `RetryBackoff`, meshes don't). So a mesh that can never decode costs a
-  pointless worker decode every frame it's visible. #39's new rejections are
-  cheap and run before any copy, but other failures still do the full work.
-- **Fix:** a per-mesh fail count with backoff, like `GuestTexture::fail_count`.
 
 ### KI-68: Prewarm log counts are misleading
 
@@ -618,20 +573,6 @@ repro steps; the entry says where the problem is and how it would show.
   while `skate3_native_render_scene_ring` is on, and a dump would be a few
   hundred MB of CSV. It's off by default and debug-only.
 - **Next step:** measure it, and put the real size in the cvar help text.
-
-### KI-77: Photo grab assumes 4-byte output pixels
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, photo grab
-- **Tracking:** none yet. Found while fixing KI-32 (#44).
-- **Where:** `RendererState::kGrabRowPitch = kBlurWidth * 4`; the grab reads
-  `blur_tex[0]`, which uses the output format.
-- **Problem:** that's correct for today's fixed R10G10B10A2 output. If the output
-  format ever changed (the case #44 now guards for the blur targets), the
-  pitch and the CPU tiling would be wrong. The output format is a compile-time
-  constant in the SDK (`kGuestOutputFormat`), so nothing at runtime changes it
-  today.
-- **Fix:** add a static check or a comment next to #44's format key.
 
 ### KI-78: SDK settings.toml handling has the same reset and flush gaps as KI-59
 
@@ -790,23 +731,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** switch both queues to `std::deque` if a profile shows lock
   contention. Turn the null re-queue into a plain wait.
 
-### KI-87: Raw guest loads in the `CaptureDynamicState` pre-check
-
-- **Status:** open · **Severity:** low–medium
-- **Area:** native renderer, guest memory safety
-- **Tracking:** none yet. Found while fixing KI-64 (#48). The biggest remaining
-  risk of the KI-64 kind.
-- **Where:** the world-path pre-check of `CaptureDynamicState` in
-  `src/skate3_native_scene.cpp`, called about 800 times a frame from
-  `OnSceneDrawList`. It reads `ctx → record → mesh → vdesc` and the vertex
-  elements raw (`REX_LOAD_U32(ctx)`, `REX_LOAD_U32(record)`,
-  `REX_LOAD_U16(vdesc + 8)` and others). Further down, `ctx + kCtxEffectList`
-  and `effect_list + kEffectListPassCount` are raw too.
-- **Problem:** a stale pointer there crashes the guest render thread, the same
-  way as KI-64.
-- **Fix:** reuse one ctx-head guarded copy, as #48's `BuildItemGeometry` does,
-  and measure the cost the same way #48 did.
-
 ### KI-88: Remaining raw guest loads elsewhere in capture (low risk)
 
 - **Status:** open · **Severity:** low
@@ -875,20 +799,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** decide whether release defaults should turn on vsync or a
   frame cap. Settings > Display already has Framerate Cap and V-Sync rows.
 
-### KI-92: `ScoreRigidAffine` has no in-front-of-camera check
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, player garments
-- **Tracking:** none yet. Found while fixing KI-61 (#50).
-- **Where:** `ScoreRigidAffine` in `src/skate3_native_scene.cpp`.
-- **Problem:** its strict count accepts a sample when `|x|` and `|y|` are within
-  1.5·|w|, without requiring `clip[3] > 0`. So a matrix that places the
-  garment behind the camera can still score well. `RefinePaletteBase` has
-  that check, and its comment explains it exists for exactly this case. The
-  structural tail-row check on the matrix block reduces the risk.
-- **Fix:** add `clip[3] > 0.0f` to the strict count, then re-test the player's
-  tee (Ropa, sim active) up close.
-
 ### KI-93: Character shadows may be cut off at the edges on 32:9 ultrawide
 
 - **Status:** open (unverified) · **Severity:** low–medium
@@ -914,27 +824,6 @@ repro steps; the entry says where the problem is and how it would show.
   can't pan the camera or put characters at the screen edges on purpose.
   That limited the testing of KI-25 (#37) and KI-61 (#50).
 - **Fix:** add stick tokens, for example `rs_left:ms` and `ls_up:ms`.
-
-### KI-95: Shadow-atlas casters don't stamp their mesh entries
-
-- **Status:** open · **Severity:** low–medium
-- **Area:** native renderer, shadows, mesh cache
-- **Tracking:** none yet. Found while fixing KI-41 (#51). The same kind of bug
-  as KI-41, for meshes.
-- **Where:** the caster loop of `RenderShadowAtlas` in
-  `src/skate3_native_scene_gpu.cpp`. It checks `g_r.meshes.contains(item.mesh)`
-  and later does `g_r.meshes.find(...)`, but never sets the mesh's
-  `last_used_frame`. `RenderStaticSunMap` does
-  (`mit->second.last_used_frame = frame_number`).
-- **Problem:** under mesh-store pressure
-  (`skate3_native_render_scene_mesh_store_mb`), the mesh of a caster the main
-  pass doesn't draw can be evicted. The caster then silently drops out of the
-  shadow, because the pass `continue`s on a missing mesh.
-- **Evidence:** a temporary counter found 5,995 to 25,377 caster-frames per
-  150 s run whose mesh hadn't been stamped for more than 5 s. No mesh was
-  actually skipped, because the 1024 MB mesh budget was never under pressure.
-- **Fix:** stamp `mit->second.last_used_frame` in the atlas loop, then test with
-  a small mesh budget.
 
 ### KI-96: The texture store budget can't go below 256 MB for testing
 
@@ -1188,25 +1077,36 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** in the rexglue-skate3 fork, skip or demote the log for faults
   inside `GuestTryCopy`.
 
+### KI-114: Scene ring dump doesn't create `logs/` before writing
+
+- **Status:** open (code reading only) · **Severity:** low
+- **Area:** native renderer, diagnostics
+- **Tracking:** none yet. Found while fixing KI-75 (#64).
+- **Where:** `MaybeDumpSceneRing` in `src/skate3_native_scene_state.h`.
+- **Problem:** it opens `logs/scene_ring_*.csv` relative to the working
+  directory with `std::ofstream` and never creates `logs/`. If the folder is
+  missing the dump fails with only a "native-scene ring: cannot open"
+  warning. Probably harmless, since the logger likely creates `logs/` first.
+- **Next step:** `create_directories` before opening, as `WriteSnapshotLocked`
+  does.
+
+### KI-115: Signed-in demo path never reaches gameplay on a fresh profile
+
+- **Status:** open · **Severity:** low (test tooling)
+- **Area:** demo path, unattended testing
+- **Tracking:** none yet. Found while fixing KI-92 (#68).
+- **Where:** `src/skate3_demo_path.cpp`, signed-in mode
+  (`--skate3_demo_path_signed_in=true`).
+- **Problem:** with a `--user_data_root` that has no save yet, the boot loops
+  on "gameplay context 0; enabling dialog A auto-tap" every 8 s and never
+  reaches gameplay (it saves only an ALIAS_SKATER file). Unattended agents
+  can't test signed-in paths, such as the player's garments with the sim
+  active. Signed-out demo runs also never reach the sim-active rigid garment
+  path (`ropa[rigid=0]`) with tap inputs.
+- **Next step:** find which new-profile dialog the auto-tap doesn't clear, or
+  keep a seeded test profile with a finished save for agents to copy in.
+
 ## Resolved
-
-### KI-40: Photo FX constant slots have no bounds check
-
-- **Status:** fix in review in rubensteezy/skate3recomp#65, untested (build only;
-  the bound is not reachable today) · **Severity:** low
-- **Area:** native renderer, photo FX
-- **Tracking:** rubensteezy/skate3recomp#65. Found while fixing KI-16 (#28).
-- **Where:** `src/skate3_native_scene_gpu.cpp`, `RenderScene`, the photo FX
-  `fill_cb` lambda.
-- **Problem:** `cb_slot_next++` is never checked against
-  `RendererState::kPfxCbSlots` (10). Today at most 9 slots are used per frame
-  (depth pack, one accum pass for mode 1 or 2, 6 chain passes, the debug
-  view). One more pass would silently write into the next frame's region, or
-  past the end of the buffer for the last region.
-- **Fix:** `fill_cb` now checks `cb_slot_next` against `kPfxCbSlots`. When
-  the region is full it writes nothing, logs one warning (`photo FX constant
-  slots exhausted`) and the pass's draw is skipped (`pfx_draw`). A
-  `static_assert` keeps `kPfxCbSlots >= 9`. No change while slots fit.
 
 ### KI-72: The Defender trojan trigger shipped on main
 
@@ -2321,6 +2221,202 @@ repro steps; the entry says where the problem is and how it would show.
   already writes a temp file and renames it, but doesn't flush it to disk and
   rewrites a malformed file without a backup.
 - **In-game test (2026-10-31):** Played on the big rig as one build stacking #36+#45 on main 097e823, with the user's real profiles.toml (backed up first). Changed the gamertag Tom -> Tom- on the Esc overlay profile page and saved: the file was rewritten as valid TOML with the xuid unchanged (B13E07DFF9AB6772), no .tmp or backup left in the folder. After a restart the game showed Tom- and did not rewrite the file. No "Profiles:" log lines, clean exits. Not exercised in-game: a gamertag with a quote or backslash (escaping) and an unparseable file (backup path); those are covered only by the unattended tests in the PR. This PR was not tested on its own.
+
+### KI-55: App callbacks that capture `this` are never cleared on shutdown
+
+- **Status:** fixed in rubensteezy/skate3recomp#57, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** app lifetime
+- **Tracking:** Found while fixing KI-23 (#35).
+- **Where:** `OnPostSetup` / `OnShutdown` / `ToggleSimpleSettings` in
+  `src/skate3_app_common.cpp`.
+- **Problem:** seven callbacks capture `this` and were never cleared:
+  `input_system->SetActiveCallback`, `SetMenuChordCallback`,
+  `demo_path::SetUiInputProvider` and the four `options_menu::Set*Callback`
+  (open, save, restart, quit). The active callback also reads
+  `simple_settings_dialog_` on the input path while `OnShutdown` resets it
+  (and `ToggleSimpleSettings` first creates it) on the UI thread. That's a
+  data race or use-after-free on any path where `OnShutdown` runs while the
+  guest is still alive. Today that is mainly Close Game on macOS
+  (`QuitFromUIThread`, which ends the guest after `OnShutdown`).
+- **Why not just clear them:** every setter is a plain, unlocked
+  `std::function` store (`InputSystem::SetActiveCallback` also copies into
+  each driver) that the guest/input threads read and call without a lock.
+  Replacing one from the UI thread while another thread calls it is itself a
+  race that destroys the callable mid-call.
+- **Fix:** a `CallbackGate` (shared mutex + open flag, held by `shared_ptr`
+  so it outlives the app) is captured by all seven callbacks. Each takes the
+  lock shared and returns early (active = false, provider = null, the rest
+  no-op) once the gate is closed. `OnShutdown` closes it first, exclusively,
+  so a callback already running finishes before the dialogs are reset; it
+  logs `Skate 3 shutdown: app callbacks disabled`. The UI-thread lambdas the
+  callbacks post (menu chord, open settings) re-check the flag so a late post
+  can't recreate the settings dialog after shutdown. Writes of
+  `simple_settings_dialog_` (create and reset) take the lock exclusive.
+- **Tested:** relwithdebinfo build, unattended demo-path boot (100 s, into
+  gameplay; the gated active callback and intro-skip provider run on every
+  input poll) then a normal window close: the process exited with code 0
+  within a second, log ends with `Title terminated; hard-exiting process.`
+  On Windows, window close and Restart Now both go through
+  `ReXApp::OnClosing`, which hard-exits before `OnShutdown`, so the new
+  shutdown path (and its log line) only runs on macOS, or when there is no
+  window. Not tested there.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. Changed MSAA to x8 in Options and pressed Restart Now: the log shows 'Options menu: restart-required settings applied; restarting', a clean shutdown, and the new process started normally with MSAA x8 pipelines. The shutdown-callback gate matters mainly on macOS; nothing showed it running on Windows.
+
+### KI-95: Shadow-atlas casters didn't stamp their mesh entries
+
+- **Status:** fixed in rubensteezy/skate3recomp#59, tested in-game on 2026-11-02 · **Severity:** low–medium
+- **Area:** native renderer, shadows, mesh cache
+- **Where:** the caster loop of `RenderShadowAtlas` in
+  `src/skate3_native_scene_gpu.cpp`.
+- **Problem:** the loop checked `g_r.meshes.contains(item.mesh)` but never set
+  the mesh's `last_used_frame` (`RenderStaticSunMap` does). Under mesh-store
+  pressure (`skate3_native_render_scene_mesh_store_mb`), `EvictMeshStore`
+  evicts entries idle for more than 5 s (at least 240 frames), so the mesh of a
+  caster the main pass doesn't draw could be evicted while it was still
+  casting. The caster then silently dropped out of the shadow.
+- **Evidence:** temporary counters (not committed) on unattended
+  `--skate3_demo_path=true` boots (D3D12, about 29 fps on this PC), with the
+  mesh budget forced to 16 MB (the cvar floor is 256 MB; the working set here
+  is about 40 MB, so 256 MB never starts the LRU). Over 240 s, caster lookups
+  that missed a mesh the atlas had drawn within the last 240 frames: 262 of
+  325,561 without the stamp, 0 of 359,429 with it. Misses of meshes idle for
+  longer (normal LRU behaviour, re-decoded by the workers) remained in both
+  (341 and 52). The store stayed at about 550 entries either way.
+- **Fix:** the gather loop does `find` instead of `contains` and sets
+  `mit->second.last_used_frame = frame_number` for every caster it keeps.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. The atlas mesh stamp was exercised: 'mesh store LRU start/done' ran 8 times in the first run (it triggers on the 24,576 mesh-count cap, not the MB cap), each evicting about 3,100-3,700 meshes, with 0 guarded read failures after any of them and no shadow problems seen by the player.
+
+### KI-87: Raw guest loads in the `CaptureDynamicState` pre-check
+
+- **Status:** fixed in rubensteezy/skate3recomp#60, tested in-game on 2026-11-02 · **Severity:** low–medium
+- **Area:** native renderer, guest memory safety
+- **Tracking:** rubensteezy/skate3recomp#60. Found while fixing KI-64 (#48).
+- **Where:** the world-path pre-check of `CaptureDynamicState` in
+  `src/skate3_native_scene.cpp`, called about 800 times a frame from
+  `OnSceneDrawList`. It read `ctx → record → mesh → vdesc` and the vertex
+  elements raw (`REX_LOAD_U32(ctx)`, `REX_LOAD_U32(record)`,
+  `REX_LOAD_U16(vdesc + 8)` and others). Further down, `ctx + kCtxEffectList`
+  and `effect_list + kEffectListPassCount` were raw too.
+- **Problem:** a stale pointer there crashes the guest render thread, the same
+  way as KI-64.
+- **Fix:** `CaptureDynamicState` makes one guarded copy of the MeshContext
+  head (`CopyCtxHead`, +0x00..+0x4B) up front. The pre-check, the effect-list
+  read and `BuildItemGeometry` (new overload taking the copied head) all use
+  it, so the capture path copies the head once instead of twice. The record
+  and mesh pointers are guarded single loads, and the vertex descriptor's
+  count and element table are one guarded copy each (the layout
+  `BuildItemFromMesh` reads). A failed read skips that capture (a failed
+  pass-count read keeps `passes = 1`) and is logged by `NoteGuestReadSkip`
+  as `guarded guest read failed at CaptureDynamicState ...`.
+- **Cost:** a clang-cl `/O2` microbenchmark of the old and new pre-check
+  (800 contexts, calls serialized as in the hook) measured +8 to +9 ns per
+  call, about 7 µs per frame, roughly 2% of capture time. In-game A/B boots
+  on a shared, loaded PC (guest fps about 29 on both builds) could not
+  resolve a difference: capture time moved with the unchanged frame build
+  from run to run. Item and draw counts matched main.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. 0 'guarded guest read failed' lines in either run and no visible problems. The guard only matters on a bad pointer, which did not occur.
+
+### KI-67: Mesh decodes that always fail are retried every frame
+
+- **Status:** fixed in rubensteezy/skate3recomp#61, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, streaming
+- **Tracking:** rubensteezy/skate3recomp#61. Found while fixing KI-27 (#39).
+- **Where:** `ProcessPrewarmEntry` → `PrewarmCommit` → the draw path in
+  `src/skate3_native_scene_gpu.cpp`.
+- **Problem:** a failed mesh decode is committed with `mesh_valid=false` and
+  its in-flight key is released. The next draw-path miss calls
+  `EnqueueMeshMiss` again, with no negative cache or backoff (textures have
+  `RetryBackoff`, meshes don't). So a mesh that can never decode costs a
+  pointless worker decode every frame it's visible.
+- **Fix:** `PrewarmCommit` records each failed mesh decode in
+  `g_mesh_miss_fail` (fail count, payload fingerprint, retry frame) on the
+  texture ladder (`RetryBackoff`: 8/16/32/64 frames, capped at 120). Both
+  draw-path `EnqueueMeshMiss` sites skip the enqueue while
+  `MeshMissBackingOff` says the same payload is still backing off. A changed
+  payload fingerprint retries at once, the cap keeps retrying an unchanged
+  one, and a successful commit clears the entry.
+- **Measured** (unattended demo path, temporary counters plus a forced failure
+  of every 32nd mesh for 120 s): failing worker decodes went from ~320/s to
+  ~3/s. Once the forced failures stopped, the visible meshes decoded within
+  the next 10 s window in both runs. The plain demo path had no failing mesh
+  decodes at all.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. Prewarm summaries show 145,832 meshes decoded, 0 dropped, 0 still queued at the last summary, 0 'DecodeMesh rejected' lines, and the player saw no missing meshes. The backoff under real decode failures was only exercised in the PR's unattended forced-failure test.
+
+### KI-42: Perf log line repeats the texture count
+
+- **Status:** fixed in rubensteezy/skate3recomp#66, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, diagnostics
+- **Tracking:** #66. Found while fixing KI-17 (#29).
+- **Where:** `LogFrameStats` in `src/skate3_native_scene_gpu.cpp`, the
+  `native-scene: frame N ...` line.
+- **Problem:** `g_r.tex_store.size()` is logged three times: as
+  `2d[... textures=]`, as `textures=` and as `store[n=]`. The 2D
+  `textures=` field looks like a leftover from a separate 2D cache that no
+  longer exists, so it misleads.
+- **Fix:** dropped the 2D `textures=` field. The line now reads
+  `2d[other= dropped= askip= astale=]`; all other fields keep their order.
+  No script in the repo parses the field.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. The 'native-scene: frame N' lines show 2d[other= dropped= askip= astale=] with no textures= inside the brackets, and textures= still follows mesh_mb=.
+
+### KI-77: Photo grab assumes 4-byte output pixels
+
+- **Status:** fixed in rubensteezy/skate3recomp#67, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, photo grab
+- **Tracking:** #67. Found while fixing KI-32 (#44).
+- **Where:** `RendererState::kGrabRowPitch = kBlurWidth * 4`; the grab reads
+  `blur_tex[0]`, which uses the output format.
+- **Problem:** that's correct for today's fixed R10G10B10A2 output. If the output
+  format ever changed (the case #44 now guards for the blur targets), the
+  pitch and the CPU tiling would be wrong. The output format is a compile-time
+  constant in the SDK (`kGuestOutputFormat`), so nothing at runtime changes it
+  today.
+- **Fix:** `RendererState::kGrabFormat` restates the output format
+  (`nrhi::Format::kR10G10B10A2_UNORM`), the pitch is derived from it through
+  `ColorFormatBytesPerPixel`, and a `static_assert` requires 4 bytes per pixel
+  because `WriteGrabToGuest` tiles 32-bit pixels. Comments next to
+  `blur_format` and `kGrabFormat` say to change it with the SDK. It can't
+  compare against the SDK's `kGuestOutputFormat` directly: the presenter
+  headers pull in `renderdoc_app.h`, which the app can't include. No runtime
+  change.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. Compile-time check only: batch4 built with it and ran, and there is nothing to observe in play.
+
+### KI-92: `ScoreRigidAffine` has no in-front-of-camera check
+
+- **Status:** fixed in rubensteezy/skate3recomp#68, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, player garments
+- **Tracking:** #68. Found while fixing KI-61 (#50).
+- **Where:** `ScoreRigidAffine` in `src/skate3_native_scene.cpp`.
+- **Problem:** its strict count accepted a sample when `|x|` and `|y|` were
+  within 1.5·|w|, without requiring `clip[3] > 0`. So a matrix that places the
+  garment behind the camera could still score well. `RefinePaletteBase` has
+  that check, and its comment explains it exists for exactly this case. The
+  structural tail-row check on the matrix block reduced the risk.
+- **Fix:** the strict count now also requires `clip[3] > 0.0f`. The only gate
+  on the score is `rigid_score >= 8 || front_all`, and `front_all` already
+  required w > 0, so samples in front of the camera score as before.
+- **Test:** unattended signed-out demo boots with a temporary old-vs-new score
+  comparison: no differences, every `ropa mesh ... score=16`. The garments
+  stayed sim-inactive there (`ropa[rigid=0 ...]`), so the rigid branch still
+  needs the in-game check: the player's tee (Ropa, sim active) up close.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. The player confirmed the tee looked fine. ropa[rigid=N] rose to 342,431 in the first run (stale=17326, rescued=14602) and ended at 81,532 with stale=0 in the second; there was no run on main to compare stale= against.
+
+### KI-40: Photo FX constant slots have no bounds check
+
+- **Status:** fixed in rubensteezy/skate3recomp#65, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, photo FX
+- **Tracking:** rubensteezy/skate3recomp#65. Found while fixing KI-16 (#28).
+- **Where:** `src/skate3_native_scene_gpu.cpp`, `RenderScene`, the photo FX
+  `fill_cb` lambda.
+- **Problem:** `cb_slot_next++` is never checked against
+  `RendererState::kPfxCbSlots` (10). Today at most 9 slots are used per frame
+  (depth pack, one accum pass for mode 1 or 2, 6 chain passes, the debug
+  view). One more pass would silently write into the next frame's region, or
+  past the end of the buffer for the last region.
+- **Fix:** `fill_cb` now checks `cb_slot_next` against `kPfxCbSlots`. When
+  the region is full it writes nothing, logs one warning (`photo FX constant
+  slots exhausted`) and the pass's draw is skipped (`pfx_draw`). A
+  `static_assert` keeps `kPfxCbSlots >= 9`. No change while slots fit.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 at MSAA x8, the user's normal signed-in profile, in a photo editor session of about 4.5 minutes. The photo FX chain ran: 'photo postfx pipeline ready (9 passes, msaa=8)' and 'photo editor postfx chain LIVE (native; accum mode 0, vignette resolved, grain resolved)', with 0 'photo FX constant slots exhausted' lines and nothing wrong seen in the editor effects. Not confirmed: whether the DoF and focus sliders were moved. The bound is not reachable today, so this shows only that the photo chain still works with the check in place. This PR was not tested on its own.
 
 ### Reviewed and ruled out (code review)
 
