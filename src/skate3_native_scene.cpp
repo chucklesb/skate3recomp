@@ -4342,8 +4342,8 @@ float CharFadeAlpha(const DrawItem& item) {
 // clip at the player's position; the skinned interpretation scores 0/31.
 // Transform up to 6 sample vertices of the item by the affine at register m
 // (3 column-vector [R | t] rows) and project them with the bank's own
-// viewproj (c0..c3). Returns the count of samples inside the clip volume,
-// -1 when unscorable. A stale bank (the submit-exit capture can run after
+// viewproj (c0..c3). Returns the fraction (0..16) of samples in front of the
+// projection and inside the strict clip band, -1 when unscorable. A stale bank (the submit-exit capture can run after
 // ANOTHER mesh's draw when this mesh's own draws are deferred) holds some
 // other object's matrix at c188/c191; geometry projected with it lands
 // far off-clip, while the true matrix scores full (validated offline:
@@ -4391,7 +4391,12 @@ int ScoreRigidAffine(uint8_t* base, uint32_t bank, uint32_t m, const DrawItem& i
     }
     const float aw = std::abs(clip[3]) < 1.0f ? 1.0f : std::abs(clip[3]);
     ++n;
-    if (std::abs(clip[0]) <= x_band * aw && std::abs(clip[1]) <= 1.5f * aw) {
+    // In FRONT of the projection (w > 0) and inside the strict band, as in
+    // RefinePaletteBase: without the w check a stale/foreign matrix that
+    // places the garment BEHIND the camera can still land |x|,|y| within
+    // the band and pass the >= 8 acceptance gate (KI-92).
+    if (clip[3] > 0.0f && std::abs(clip[0]) <= x_band * aw &&
+        std::abs(clip[1]) <= 1.5f * aw) {
       ++ok;
     }
     if (clip[3] > 0.0f && std::abs(clip[0]) <= 6.0f * aw &&
