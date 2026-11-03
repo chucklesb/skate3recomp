@@ -1071,31 +1071,6 @@ repro steps; the entry says where the problem is and how it would show.
 
 ## Resolved
 
-### KI-89: Raw writes through just-read pointers in the auto-exposure hook
-
-- **Status:** fix in review in rubensteezy/skate3recomp#63, tested unattended / awaiting in-game test · **Severity:** low
-- **Area:** native renderer, guest memory safety
-- **Tracking:** rubensteezy/skate3recomp#63. Found while fixing KI-64 (#48).
-- **Where:** `sub_827F0D00` in `src/skate3_native_render.cpp`:
-  `REX_STORE_U32(inst_a + 48 / inst_b + 56)`.
-- **Problem:** these write through pointers read a moment earlier. A stale
-  instance pointer would be a write fault, or would corrupt guest memory if
-  the page has been reused.
-- **Fix:** before each store, the hook does a guarded read of the target word
-  (a failure skips the store and is logged through the KI-64 skip counter as
-  "auto-exposure pin output a/b"). Otherwise the stores are exactly the old
-  ones.
-- **Tried and dropped:** a first version also required the big-endian u16 at
-  `inst+2` to be greater than 2, mirroring the game's own check (it writes to
-  a static scratch at 0x820D0850 otherwise). A photo-editor play-test on that
-  build showed a slightly darker saved photo, so the gate was removed. Why the
-  stores matter when that value is 2 or less is not established; the consumers
-  of those fields were not traced.
-- **Unattended test (2026-11-02):** D3D12 demo path, about 5000+ calls. Every
-  store ran (inst_a count 7, inst_b count 4, both would have passed the old
-  gate too), with no skip warnings, and "auto-exposure re-pinned" logs as
-  before. The photo editor and shutter burst were not exercised.
-
 ### KI-72: The Defender trojan trigger shipped on main
 
 - **Status:** fixed in rubensteezy/skate3recomp#18, tested in-game on 2026-10-31 · **Severity:** medium (blocked the next release)
@@ -2490,6 +2465,32 @@ repro steps; the entry says where the problem is and how it would show.
   and the hotkeys off, the game warns once at startup that F7 / RB+A are off.
   The `skate3_native_render_scene_ring` help text now names the hotkeys flag.
 - **In-game test (2026-11-02):** Played on the big rig as its own build (pr64b, PR #64 at baecf95), D3D12, MSAA x4, with --skate3_native_render_scene_ring=true --skate3_native_render_capture_hotkeys=true. The first big-rig attempt (batch5) wrote nothing because the hotkeys flag was missing; that was a wrong test step, not a regression, and this PR now logs it. Four dumps worked: RB+A twice and F7 twice, each logging 'scene ring dump requested' then 'native-scene ring: wrote 2400 frames -> <path>', all in the build's logs folder with different millisecond suffixes (scene_ring_20261102_214825_966, _214831_029, _214833_600, _214835_767); the user noticed a minor hitch of about 0.2-1.0 s per dump. Not exercised on the big rig: two presses within the same second (the F7 presses were about 2 s apart); that case was covered by the PR's unattended run, which wrote two dumps in one second with different names.
+
+### KI-89: Raw writes through just-read pointers in the auto-exposure hook
+
+- **Status:** fixed in rubensteezy/skate3recomp#63, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, guest memory safety
+- **Tracking:** rubensteezy/skate3recomp#63. Found while fixing KI-64 (#48).
+- **Where:** `sub_827F0D00` in `src/skate3_native_render.cpp`:
+  `REX_STORE_U32(inst_a + 48 / inst_b + 56)`.
+- **Problem:** these write through pointers read a moment earlier. A stale
+  instance pointer would be a write fault, or would corrupt guest memory if
+  the page has been reused.
+- **Fix:** before each store, the hook does a guarded read of the target word
+  (a failure skips the store and is logged through the KI-64 skip counter as
+  "auto-exposure pin output a/b"). Otherwise the stores are exactly the old
+  ones.
+- **Tried and dropped:** a first version also required the big-endian u16 at
+  `inst+2` to be greater than 2, mirroring the game's own check (it writes to
+  a static scratch at 0x820D0850 otherwise). A photo-editor play-test on that
+  build showed a slightly darker saved photo, so the gate was removed. Why the
+  stores matter when that value is 2 or less is not established; the consumers
+  of those fields were not traced.
+- **Unattended test (2026-11-02):** D3D12 demo path, about 5000+ calls. Every
+  store ran (inst_a count 7, inst_b count 4, both would have passed the old
+  gate too), with no skip warnings, and "auto-exposure re-pinned" logs as
+  before. The photo editor and shutter burst were not exercised.
+- **In-game test (2026-11-02):** Played on the big rig in three builds. In batch4 (with this PR's first version, which skipped the store when a game value at inst+2 was 2 or less) the user saw the world stay bright in the photo editor but the saved photo look slightly darker than the preview; in batch5 (same first version) the saved photo looked fine, and on main2 (without this PR) it looked fine. The gate was then dropped, so the stores now match main apart from a guarded read of the target word. The revised build (pr63b, 26992be) was photo-tested at MSAA x4 only, not x8: the user said the saved photo was not darker. 0 'auto-exposure pin output' log lines in every run; the only auto-exposure line was the normal startup 're-pinned at zone max 2.500'. In an unattended demo-path boot both stores ran on every logged call. The darkening was seen once and has not been reproduced (KI-116).
 
 ### Reviewed and ruled out (code review)
 
