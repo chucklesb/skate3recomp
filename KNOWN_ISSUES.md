@@ -789,23 +789,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** switch both queues to `std::deque` if a profile shows lock
   contention. Turn the null re-queue into a plain wait.
 
-### KI-87: Raw guest loads in the `CaptureDynamicState` pre-check
-
-- **Status:** open · **Severity:** low–medium
-- **Area:** native renderer, guest memory safety
-- **Tracking:** none yet. Found while fixing KI-64 (#48). The biggest remaining
-  risk of the KI-64 kind.
-- **Where:** the world-path pre-check of `CaptureDynamicState` in
-  `src/skate3_native_scene.cpp`, called about 800 times a frame from
-  `OnSceneDrawList`. It reads `ctx → record → mesh → vdesc` and the vertex
-  elements raw (`REX_LOAD_U32(ctx)`, `REX_LOAD_U32(record)`,
-  `REX_LOAD_U16(vdesc + 8)` and others). Further down, `ctx + kCtxEffectList`
-  and `effect_list + kEffectListPassCount` are raw too.
-- **Problem:** a stale pointer there crashes the guest render thread, the same
-  way as KI-64.
-- **Fix:** reuse one ctx-head guarded copy, as #48's `BuildItemGeometry` does,
-  and measure the cost the same way #48 did.
-
 ### KI-88: Remaining raw guest loads elsewhere in capture (low risk)
 
 - **Status:** open · **Severity:** low
@@ -2374,6 +2357,36 @@ repro steps; the entry says where the problem is and how it would show.
 - **Fix:** the gather loop does `find` instead of `contains` and sets
   `mit->second.last_used_frame = frame_number` for every caster it keeps.
 - **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. The atlas mesh stamp was exercised: 'mesh store LRU start/done' ran 8 times in the first run (it triggers on the 24,576 mesh-count cap, not the MB cap), each evicting about 3,100-3,700 meshes, with 0 guarded read failures after any of them and no shadow problems seen by the player.
+
+### KI-87: Raw guest loads in the `CaptureDynamicState` pre-check
+
+- **Status:** fixed in rubensteezy/skate3recomp#60, tested in-game on 2026-11-02 · **Severity:** low–medium
+- **Area:** native renderer, guest memory safety
+- **Tracking:** rubensteezy/skate3recomp#60. Found while fixing KI-64 (#48).
+- **Where:** the world-path pre-check of `CaptureDynamicState` in
+  `src/skate3_native_scene.cpp`, called about 800 times a frame from
+  `OnSceneDrawList`. It read `ctx → record → mesh → vdesc` and the vertex
+  elements raw (`REX_LOAD_U32(ctx)`, `REX_LOAD_U32(record)`,
+  `REX_LOAD_U16(vdesc + 8)` and others). Further down, `ctx + kCtxEffectList`
+  and `effect_list + kEffectListPassCount` were raw too.
+- **Problem:** a stale pointer there crashes the guest render thread, the same
+  way as KI-64.
+- **Fix:** `CaptureDynamicState` makes one guarded copy of the MeshContext
+  head (`CopyCtxHead`, +0x00..+0x4B) up front. The pre-check, the effect-list
+  read and `BuildItemGeometry` (new overload taking the copied head) all use
+  it, so the capture path copies the head once instead of twice. The record
+  and mesh pointers are guarded single loads, and the vertex descriptor's
+  count and element table are one guarded copy each (the layout
+  `BuildItemFromMesh` reads). A failed read skips that capture (a failed
+  pass-count read keeps `passes = 1`) and is logged by `NoteGuestReadSkip`
+  as `guarded guest read failed at CaptureDynamicState ...`.
+- **Cost:** a clang-cl `/O2` microbenchmark of the old and new pre-check
+  (800 contexts, calls serialized as in the hook) measured +8 to +9 ns per
+  call, about 7 µs per frame, roughly 2% of capture time. In-game A/B boots
+  on a shared, loaded PC (guest fps about 29 on both builds) could not
+  resolve a difference: capture time moved with the unchanged frame build
+  from run to run. Item and draw counts matched main.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. 0 'guarded guest read failed' lines in either run and no visible problems. The guard only matters on a bad pointer, which did not occur.
 
 ### Reviewed and ruled out (code review)
 
