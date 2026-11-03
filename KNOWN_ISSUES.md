@@ -390,22 +390,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** release the buffers once a session's dumps are written, and
   add a counter to the file name.
 
-### KI-55: App callbacks that capture `this` are never cleared on shutdown
-
-- **Status:** open · **Severity:** low
-- **Area:** app lifetime
-- **Tracking:** none yet. Found while fixing KI-23 (#35).
-- **Where:** `OnPostSetup` / `OnShutdown` in `src/skate3_app_common.cpp`.
-- **Problem:** six callbacks capture `this` and are never cleared:
-  `input_system->SetActiveCallback`, `SetMenuChordCallback`,
-  `demo_path::SetUiInputProvider` and the three `options_menu::Set*Callback`.
-  The active callback also reads `simple_settings_dialog_` on the input path
-  while `OnShutdown` resets it on the UI thread. That's a data race or
-  use-after-free on any path where `OnShutdown` runs while the guest is
-  still alive. Today that is mainly Close Game on macOS (`QuitFromUIThread`,
-  which ends the guest after `OnShutdown`).
-- **Fix:** clear these callbacks (null or no-op) at the top of `OnShutdown`.
-
 ### KI-56: SDK key binds: duplicate registration and callbacks under the lock
 
 - **Status:** open · **Severity:** low
@@ -2347,6 +2331,46 @@ repro steps; the entry says where the problem is and how it would show.
   already writes a temp file and renames it, but doesn't flush it to disk and
   rewrites a malformed file without a backup.
 - **In-game test (2026-10-31):** Played on the big rig as one build stacking #36+#45 on main 097e823, with the user's real profiles.toml (backed up first). Changed the gamertag Tom -> Tom- on the Esc overlay profile page and saved: the file was rewritten as valid TOML with the xuid unchanged (B13E07DFF9AB6772), no .tmp or backup left in the folder. After a restart the game showed Tom- and did not rewrite the file. No "Profiles:" log lines, clean exits. Not exercised in-game: a gamertag with a quote or backslash (escaping) and an unparseable file (backup path); those are covered only by the unattended tests in the PR. This PR was not tested on its own.
+
+### KI-55: App callbacks that capture `this` are never cleared on shutdown
+
+- **Status:** fixed in rubensteezy/skate3recomp#57, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** app lifetime
+- **Tracking:** Found while fixing KI-23 (#35).
+- **Where:** `OnPostSetup` / `OnShutdown` / `ToggleSimpleSettings` in
+  `src/skate3_app_common.cpp`.
+- **Problem:** seven callbacks capture `this` and were never cleared:
+  `input_system->SetActiveCallback`, `SetMenuChordCallback`,
+  `demo_path::SetUiInputProvider` and the four `options_menu::Set*Callback`
+  (open, save, restart, quit). The active callback also reads
+  `simple_settings_dialog_` on the input path while `OnShutdown` resets it
+  (and `ToggleSimpleSettings` first creates it) on the UI thread. That's a
+  data race or use-after-free on any path where `OnShutdown` runs while the
+  guest is still alive. Today that is mainly Close Game on macOS
+  (`QuitFromUIThread`, which ends the guest after `OnShutdown`).
+- **Why not just clear them:** every setter is a plain, unlocked
+  `std::function` store (`InputSystem::SetActiveCallback` also copies into
+  each driver) that the guest/input threads read and call without a lock.
+  Replacing one from the UI thread while another thread calls it is itself a
+  race that destroys the callable mid-call.
+- **Fix:** a `CallbackGate` (shared mutex + open flag, held by `shared_ptr`
+  so it outlives the app) is captured by all seven callbacks. Each takes the
+  lock shared and returns early (active = false, provider = null, the rest
+  no-op) once the gate is closed. `OnShutdown` closes it first, exclusively,
+  so a callback already running finishes before the dialogs are reset; it
+  logs `Skate 3 shutdown: app callbacks disabled`. The UI-thread lambdas the
+  callbacks post (menu chord, open settings) re-check the flag so a late post
+  can't recreate the settings dialog after shutdown. Writes of
+  `simple_settings_dialog_` (create and reset) take the lock exclusive.
+- **Tested:** relwithdebinfo build, unattended demo-path boot (100 s, into
+  gameplay; the gated active callback and intro-skip provider run on every
+  input poll) then a normal window close: the process exited with code 0
+  within a second, log ends with `Title terminated; hard-exiting process.`
+  On Windows, window close and Restart Now both go through
+  `ReXApp::OnClosing`, which hard-exits before `OnShutdown`, so the new
+  shutdown path (and its log line) only runs on macOS, or when there is no
+  window. Not tested there.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. Changed MSAA to x8 in Options and pressed Restart Now: the log shows 'Options menu: restart-required settings applied; restarting', a clean shutdown, and the new process started normally with MSAA x8 pipelines. The shutdown-callback gate matters mainly on macOS; nothing showed it running on Windows.
 
 ### Reviewed and ruled out (code review)
 
