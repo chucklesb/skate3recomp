@@ -1137,9 +1137,9 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-115: Signed-in demo path never reached gameplay on a fresh profile
 
-- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested unattended · **Severity:** low (test tooling)
+- **Status:** fix in review in rubensteezy/skate3recomp#71, tested unattended · **Severity:** low (test tooling)
 - **Area:** demo path, unattended testing
-- **Tracking:** rubensteezy/skate3recomp#PRNUM, with SDK branch `ki115-demo-keyboard-accept` in rubensteezy/rexglue-skate3. Found while fixing KI-92 (#68).
+- **Tracking:** rubensteezy/skate3recomp#71, with SDK branch `ki115-demo-keyboard-accept` in rubensteezy/rexglue-skate3. Found while fixing KI-92 (#68).
 - **Where:** `src/skate3_demo_path.cpp` (`StartBootAssistIfNeeded`), `XamShowKeyboardUI_entry` in `third_party/rexglue-sdk/src/kernel/xam/xam_ui.cpp`.
 - **Cause:** a profile with no save goes through screens the dialog A auto-tap can't finish (FE screen ids from the FE push-state stack): 9, 24 (FMV), 10, then 46 = the "welcome new team" name prompt, 63, 67, then 46 again (skater name) and 15 = the create-a-skater editor. Screen 46 is `XamShowKeyboardUI`, which opened an ImGui dialog nobody clicked, so the boot waited on it forever. The SDK's headless branch, which the demo path could have used, also returned the default text byte-reversed (`value()` is the guest's unswapped big-endian UTF-16 and was swapped again), so the game rejected the name and asked again in a loop. The editor, screen 15, ignores A and Start.
 - **Fix:** the SDK keyboard dialog now takes the headless branch when `skate3_demo_path` is on (log: "auto-accepting keyboard dialog with its default text"), and the default text is copied in the right byte order (an empty default becomes "Skate3"). The demo path's new boot-assist worker polls the FE stack before gameplay and, on screen 15, turns the A auto-tap off and taps B then A once a second ("boot screen 15 has its own inputs"), which leaves the editor. `--skate3_demo_path_boot_screen_inputs=<id>:<token>|<token>,...` adds or overrides rules for other screens. The probe also logs "FE stack [...]" changes and each FE screen push with its caller.
