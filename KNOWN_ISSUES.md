@@ -1151,22 +1151,6 @@ repro steps; the entry says where the problem is and how it would show.
 
 ## Resolved
 
-### KI-42: Perf log line repeats the texture count
-
-- **Status:** fix in review in rubensteezy/skate3recomp#66, tested
-  unattended / awaiting in-game test · **Severity:** low
-- **Area:** native renderer, diagnostics
-- **Tracking:** #66. Found while fixing KI-17 (#29).
-- **Where:** `LogFrameStats` in `src/skate3_native_scene_gpu.cpp`, the
-  `native-scene: frame N ...` line.
-- **Problem:** `g_r.tex_store.size()` is logged three times: as
-  `2d[... textures=]`, as `textures=` and as `store[n=]`. The 2D
-  `textures=` field looks like a leftover from a separate 2D cache that no
-  longer exists, so it misleads.
-- **Fix:** dropped the 2D `textures=` field. The line now reads
-  `2d[other= dropped= askip= astale=]`; all other fields keep their order.
-  No script in the repo parses the field.
-
 ### KI-72: The Defender trojan trigger shipped on main
 
 - **Status:** fixed in rubensteezy/skate3recomp#18, tested in-game on 2026-10-31 · **Severity:** medium (blocked the next release)
@@ -2400,6 +2384,22 @@ repro steps; the entry says where the problem is and how it would show.
   the next 10 s window in both runs. The plain demo path had no failing mesh
   decodes at all.
 - **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. Prewarm summaries show 145,832 meshes decoded, 0 dropped, 0 still queued at the last summary, 0 'DecodeMesh rejected' lines, and the player saw no missing meshes. The backoff under real decode failures was only exercised in the PR's unattended forced-failure test.
+
+### KI-42: Perf log line repeats the texture count
+
+- **Status:** fixed in rubensteezy/skate3recomp#66, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, diagnostics
+- **Tracking:** #66. Found while fixing KI-17 (#29).
+- **Where:** `LogFrameStats` in `src/skate3_native_scene_gpu.cpp`, the
+  `native-scene: frame N ...` line.
+- **Problem:** `g_r.tex_store.size()` is logged three times: as
+  `2d[... textures=]`, as `textures=` and as `store[n=]`. The 2D
+  `textures=` field looks like a leftover from a separate 2D cache that no
+  longer exists, so it misleads.
+- **Fix:** dropped the 2D `textures=` field. The line now reads
+  `2d[other= dropped= askip= astale=]`; all other fields keep their order.
+  No script in the repo parses the field.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. The 'native-scene: frame N' lines show 2d[other= dropped= askip= astale=] with no textures= inside the brackets, and textures= still follows mesh_mb=.
 
 ### Reviewed and ruled out (code review)
 
