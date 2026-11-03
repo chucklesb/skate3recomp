@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <ctime>
 #include <deque>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <mutex>
@@ -23,6 +24,7 @@
 #include <vector>
 
 #include <rex/cvar.h>
+#include <rex/filesystem.h>
 #include <rex/logging.h>
 
 #include "native/skate3_file_stamp.h"
@@ -728,14 +730,24 @@ inline void MaybeDumpSceneRing() {
   if (!g_scene_ring_dump.exchange(false, std::memory_order_acq_rel)) {
     return;
   }
-  // logs/scene_ring_YYYYMMDD_HHMMSS_mmm.csv: the stamp is unique per process
-  // (KI-75), so an F7 dump and an RB+A dump in the same second both survive.
-  char path[128];
-  std::snprintf(path, sizeof(path), "logs/scene_ring_%s.csv",
-                skate3::file_stamp::NextFileStamp().c_str());
+  // <exe dir>/logs/scene_ring_YYYYMMDD_HHMMSS_mmm.csv, the same logs folder
+  // the game log uses (not the working directory, KI-114). The stamp is
+  // unique per process (KI-75), so an F7 dump and an RB+A dump in the same
+  // second both survive.
+  if (g_scene_ring.empty()) {
+    REXLOG_WARN(
+        "native-scene ring: dump requested but the ring is empty; start with "
+        "--skate3_native_render_scene_ring=true and the native renderer on");
+  }
+  const std::filesystem::path logs_dir = rex::filesystem::GetAppRootFolder() / "logs";
+  std::error_code ec;
+  std::filesystem::create_directories(logs_dir, ec);
+  const std::filesystem::path path =
+      logs_dir / ("scene_ring_" + skate3::file_stamp::NextFileStamp() + ".csv");
   std::ofstream f(path);
   if (!f) {
-    REXLOG_WARN("native-scene ring: cannot open {}", path);
+    REXLOG_ERROR("native-scene ring: DUMP FAILED, cannot open {} ({})", path.string(),
+                 ec ? ec.message() : std::string("open failed"));
     return;
   }
   f << "kind,frame,ctx,mesh,diffuse,lightmap,vb,spec,macro,decal_art,"
@@ -779,8 +791,13 @@ inline void MaybeDumpSceneRing() {
       f << line;
     }
   }
+  f.close();
+  if (!f) {
+    REXLOG_ERROR("native-scene ring: DUMP FAILED while writing {}", path.string());
+    return;
+  }
   REXLOG_INFO("native-scene ring: wrote {} frames -> {}", g_scene_ring.size(),
-              path);
+              path.string());
 }
 // Character-lighting capture telemetry: attempts vs validated captures per
 // family (see CaptureCharLighting).
