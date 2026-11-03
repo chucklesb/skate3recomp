@@ -1094,7 +1094,7 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-116: The saved photo can look slightly darker than the editor preview
 
-- **Status:** open (unconfirmed, single report) · **Severity:** low–medium
+- **Status:** open (seen once, not reproduced) · **Severity:** low–medium
 - **Area:** native renderer, photo mode
 - **Tracking:** none yet. Reported while play-testing #63 (batch4, D3D12,
   MSAA x8).
@@ -1107,9 +1107,13 @@ repro steps; the entry says where the problem is and how it would show.
   change the exposure the shot is rendered with; (2) the shutter burst renders
   and tone-maps through a different path (suppression lifted, full
   readbacks) than the editor's live postfx chain, which would predate #63.
-- **Next step:** take the same photo on a build without #63 (`main2`) and on
-  one with it, and compare the saved photo with the editor preview. If both
-  are darker, compare the two render paths' tone mapping and exposure inputs.
+- **Evidence so far (visual impressions, photos not saved):** darker on
+  batch4 (with #63's `> 2` gate); fine on `main2` (no #63); fine on batch5
+  (the same #63 gate again). So one darker photo in three sessions, and the
+  log lines about auto-exposure were identical in all three.
+- **Next step:** if it shows up again, save the editor preview and the saved
+  photo (a screenshot of each) and note the build. #63 was changed to drop
+  the gate (`pr63b`); a photo session on that build is queued.
 
 ## Resolved
 
