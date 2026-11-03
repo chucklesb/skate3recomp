@@ -109,12 +109,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Problem:** the shadow-dump readback buffers keep their first size after a
   shadow tile change, so a later recording copies out of bounds on the GPU.
 
-### KI-29: Icon updater leaves `.icon-new` behind
-
-- **Status:** open · **Severity:** low · was BT-22
-- **Where:** `src/skate3_win_icon.cpp`
-- **Problem:** a failed swap leaves the `.icon-new` file in place.
-
 ### KI-37: Dead code for building without Title Update 3
 
 - **Status:** open · **Severity:** low
@@ -1044,6 +1038,24 @@ repro steps; the entry says where the problem is and how it would show.
   the gate (`pr63b`); a photo session on that build is queued.
 
 ## Resolved
+
+### KI-29: Icon updater leaves `.icon-new` behind
+
+- **Status:** fix in review in rubensteezy/skate3recomp#PRNUM, tested unattended / awaiting in-game test · **Severity:** low · was BT-22
+- **Tracking:** PRNUM supersedes #41 (the full hardening of the updater, which
+  conflicted with #18 and is moot now that #18 removed the self-patch).
+- **Where:** `src/skate3_win_icon.cpp`, `CleanupStaleIconTemp`.
+- **Problem:** builds before #18 patched the exe icon through a copy named
+  `skate3.exe.icon-new` and could leave it behind (about 100 MB) after a
+  failed swap or a killed run. #18 removed the patching, so nothing creates
+  the copy any more, but nothing removed one already on disk either.
+- **Fix:** at startup `CleanupStaleIconTemp` deletes `<exe>.icon-new` if it
+  exists (clearing the read-only bit first) and logs
+  `win-icon: removed stale skate3.exe.icon-new left by an earlier run`.
+  Delete-only: no icon patching, no other files touched.
+- **Tests:** compiled the file unchanged in a harness against a copy of the
+  exe: a read-only fake `.icon-new` was removed and logged; a run with none
+  logged nothing.
 
 ### KI-72: The Defender trojan trigger shipped on main
 

@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <thread>
@@ -44,6 +45,29 @@ std::vector<uint8_t> ExtractFirstPng(const std::filesystem::path& path) {
   return {};
 }
 
+// Older builds patched the exe's icon through a copy named "<exe>.icon-new"
+// and could leave that copy behind (about 100 MB) when the patch failed or the
+// run was killed (KI-29). Current builds never create it, so remove one left
+// by an earlier run. Delete-only: nothing else is touched. A read-only copy
+// (CopyFileW copies the exe's attributes) needs the bit cleared first.
+void CleanupStaleIconTemp(const std::filesystem::path& exe) {
+  const std::filesystem::path temp = exe.wstring() + L".icon-new";
+  const DWORD attrs = GetFileAttributesW(temp.c_str());
+  if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+    return;  // nothing left behind (the normal case)
+  }
+  if (attrs & FILE_ATTRIBUTE_READONLY) {
+    SetFileAttributesW(temp.c_str(), attrs & ~DWORD(FILE_ATTRIBUTE_READONLY));
+  }
+  if (DeleteFileW(temp.c_str())) {
+    REXLOG_INFO("win-icon: removed stale {} left by an earlier run",
+                temp.filename().string());
+  } else {
+    REXLOG_WARN("win-icon: could not remove stale {} (error {})",
+                temp.filename().string(), GetLastError());
+  }
+}
+
 }  // namespace
 
 void ApplyGameIconFromGameData(const std::filesystem::path& game_data_root,
@@ -58,6 +82,11 @@ void ApplyGameIconFromGameData(const std::filesystem::path& game_data_root,
     return;
   }
   std::thread([nxeart, hwnd] {
+    wchar_t exe_w[MAX_PATH];
+    const DWORD exe_len = GetModuleFileNameW(nullptr, exe_w, MAX_PATH);
+    if (exe_len != 0 && exe_len < MAX_PATH) {
+      CleanupStaleIconTemp(std::filesystem::path(exe_w));
+    }
     const std::vector<uint8_t> png = ExtractFirstPng(nxeart);
     if (png.empty()) {
       REXLOG_INFO("win-icon: no title icon found in {}", nxeart.string());
