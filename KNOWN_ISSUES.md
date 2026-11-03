@@ -589,20 +589,6 @@ repro steps; the entry says where the problem is and how it would show.
   hundred MB of CSV. It's off by default and debug-only.
 - **Next step:** measure it, and put the real size in the cvar help text.
 
-### KI-77: Photo grab assumes 4-byte output pixels
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, photo grab
-- **Tracking:** none yet. Found while fixing KI-32 (#44).
-- **Where:** `RendererState::kGrabRowPitch = kBlurWidth * 4`; the grab reads
-  `blur_tex[0]`, which uses the output format.
-- **Problem:** that's correct for today's fixed R10G10B10A2 output. If the output
-  format ever changed (the case #44 now guards for the blur targets), the
-  pitch and the CPU tiling would be wrong. The output format is a compile-time
-  constant in the SDK (`kGuestOutputFormat`), so nothing at runtime changes it
-  today.
-- **Fix:** add a static check or a comment next to #44's format key.
-
 ### KI-78: SDK settings.toml handling has the same reset and flush gaps as KI-59
 
 - **Status:** open (code reading only) · **Severity:** low–medium
@@ -2400,6 +2386,28 @@ repro steps; the entry says where the problem is and how it would show.
   `2d[other= dropped= askip= astale=]`; all other fields keep their order.
   No script in the repo parses the field.
 - **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. The 'native-scene: frame N' lines show 2d[other= dropped= askip= astale=] with no textures= inside the brackets, and textures= still follows mesh_mb=.
+
+### KI-77: Photo grab assumes 4-byte output pixels
+
+- **Status:** fixed in rubensteezy/skate3recomp#67, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, photo grab
+- **Tracking:** #67. Found while fixing KI-32 (#44).
+- **Where:** `RendererState::kGrabRowPitch = kBlurWidth * 4`; the grab reads
+  `blur_tex[0]`, which uses the output format.
+- **Problem:** that's correct for today's fixed R10G10B10A2 output. If the output
+  format ever changed (the case #44 now guards for the blur targets), the
+  pitch and the CPU tiling would be wrong. The output format is a compile-time
+  constant in the SDK (`kGuestOutputFormat`), so nothing at runtime changes it
+  today.
+- **Fix:** `RendererState::kGrabFormat` restates the output format
+  (`nrhi::Format::kR10G10B10A2_UNORM`), the pitch is derived from it through
+  `ColorFormatBytesPerPixel`, and a `static_assert` requires 4 bytes per pixel
+  because `WriteGrabToGuest` tiles 32-bit pixels. Comments next to
+  `blur_format` and `kGrabFormat` say to change it with the SDK. It can't
+  compare against the SDK's `kGuestOutputFormat` directly: the presenter
+  headers pull in `renderdoc_app.h`, which the app can't include. No runtime
+  change.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. Compile-time check only: batch4 built with it and ran, and there is nothing to observe in play.
 
 ### Reviewed and ruled out (code review)
 
