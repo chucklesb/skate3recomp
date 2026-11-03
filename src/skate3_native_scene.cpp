@@ -2524,10 +2524,25 @@ bool BuildItemFromMesh(uint8_t* base, uint32_t mesh, DrawItem& item) {
           // fetch-constant type bits before trusting the pointer.
           // Guarded: the prewarm walks materials whose stream records /
           // texture objects may not be loaded yet.
+          // KI-110: some texture channels carry a +0x1C word that is not a
+          // pointer at all (seen: 0x3F800000 = 1.0f, 0x69676874 = "ight"),
+          // so this probe faults once per such channel during streaming
+          // bursts. The guard catches it and the guid lookup below takes
+          // over, but the SDK's vectored handler runs BEFORE the SEH guard
+          // and logs every caught fault as "Unhandled guest access
+          // violation". Name the site here so those lines can be told apart
+          // from a real unguarded load.
           const uint32_t stream = chan_u32(i, 0x1C);
           uint32_t tex = 0, tex_w0 = 0;
-          if (GuestTryLoadU32(base, stream, &tex) &&
-              GuestTryLoadU32(base, tex + 7 * 4, &tex_w0) && (tex_w0 & 3u) == 2u) {
+          if (!GuestTryLoadU32(base, stream, &tex)) {
+            if (stream >= 0x10000) {
+              NoteGuestReadSkip("material channel stream probe", stream);
+            }
+          } else if (!GuestTryLoadU32(base, tex + 7 * 4, &tex_w0)) {
+            if (tex >= 0x10000) {
+              NoteGuestReadSkip("material channel texture probe", tex + 7 * 4);
+            }
+          } else if ((tex_w0 & 3u) == 2u) {
             *slot = tex;
           }
           if (*slot == 0) {
@@ -2779,19 +2794,30 @@ bool BuildItemFromMeshCached(uint8_t* base, uint32_t mesh, DrawItem& item) {
   return true;
 }
 
-bool BuildItemGeometry(uint8_t* base, uint32_t ctx, DrawItem& item) {
-  // Every MeshContext field this function reads (record +0x00, draw count
-  // +0x38, draw list +0x48) comes from one guarded copy, and the record
-  // and draw list are guarded too: the contexts were recorded earlier in
-  // the frame, streaming can unmap them before the build, and a raw load
-  // faults the guest render thread (KI-64).
-  static_assert(kCtxDrawCountU16 % 4 == 0 && kCtxDrawList > kCtxDrawCountU16);
-  uint32_t ctx_head[kCtxDrawList / 4 + 1];
-  if (ctx < 0x10000 || !GuestTryCopy(ctx_head, REX_RAW_ADDR(ctx), sizeof(ctx_head))) {
+// MeshContext head (+0x00..+0x4B): record +0x00, effect list +0x04, draw
+// count +0x38, draw list +0x48. Copied once, guarded (KI-64/KI-87), and
+// shared by everything that reads the context.
+static_assert(kCtxDrawCountU16 % 4 == 0 && kCtxDrawList > kCtxDrawCountU16 &&
+              kCtxEffectList % 4 == 0 && kCtxEffectList < kCtxDrawList);
+constexpr size_t kCtxHeadWords = kCtxDrawList / 4 + 1;
+using CtxHead = uint32_t[kCtxHeadWords];
+
+bool CopyCtxHead(uint8_t* base, uint32_t ctx, CtxHead& ctx_head, const char* site) {
+  if (ctx < 0x10000 || !GuestTryCopy(ctx_head, REX_RAW_ADDR(ctx), sizeof(CtxHead))) {
     g_rej_chain.fetch_add(1, std::memory_order_relaxed);
-    NoteGuestReadSkip("BuildItemGeometry ctx", ctx);
+    NoteGuestReadSkip(site, ctx);
     return false;
   }
+  return true;
+}
+
+// ctx_head: the context's head, already copied by CopyCtxHead.
+bool BuildItemGeometry(uint8_t* base, uint32_t ctx, const CtxHead& ctx_head,
+                       DrawItem& item) {
+  // Every MeshContext field this function reads comes from the one guarded
+  // head copy, and the record and draw list are guarded too: the contexts
+  // were recorded earlier in the frame, streaming can unmap them before the
+  // build, and a raw load faults the guest render thread (KI-64).
   const uint32_t record = BSwap32(ctx_head[0]);
   if (!GuestReadableApprox(base, record)) {
     g_rej_chain.fetch_add(1, std::memory_order_relaxed);
@@ -2853,6 +2879,14 @@ bool BuildItemGeometry(uint8_t* base, uint32_t ctx, DrawItem& item) {
     return false;
   }
   return true;
+}
+
+bool BuildItemGeometry(uint8_t* base, uint32_t ctx, DrawItem& item) {
+  CtxHead ctx_head;
+  if (!CopyCtxHead(base, ctx, ctx_head, "BuildItemGeometry ctx")) {
+    return false;
+  }
+  return BuildItemGeometry(base, ctx, ctx_head, item);
 }
 
 }  // namespace
@@ -4325,8 +4359,8 @@ float CharFadeAlpha(const DrawItem& item) {
 // clip at the player's position; the skinned interpretation scores 0/31.
 // Transform up to 6 sample vertices of the item by the affine at register m
 // (3 column-vector [R | t] rows) and project them with the bank's own
-// viewproj (c0..c3). Returns the count of samples inside the clip volume,
-// -1 when unscorable. A stale bank (the submit-exit capture can run after
+// viewproj (c0..c3). Returns the fraction (0..16) of samples in front of the
+// projection and inside the strict clip band, -1 when unscorable. A stale bank (the submit-exit capture can run after
 // ANOTHER mesh's draw when this mesh's own draws are deferred) holds some
 // other object's matrix at c188/c191; geometry projected with it lands
 // far off-clip, while the true matrix scores full (validated offline:
@@ -4374,7 +4408,12 @@ int ScoreRigidAffine(uint8_t* base, uint32_t bank, uint32_t m, const DrawItem& i
     }
     const float aw = std::abs(clip[3]) < 1.0f ? 1.0f : std::abs(clip[3]);
     ++n;
-    if (std::abs(clip[0]) <= x_band * aw && std::abs(clip[1]) <= 1.5f * aw) {
+    // In FRONT of the projection (w > 0) and inside the strict band, as in
+    // RefinePaletteBase: without the w check a stale/foreign matrix that
+    // places the garment BEHIND the camera can still land |x|,|y| within
+    // the band and pass the >= 8 acceptance gate (KI-92).
+    if (clip[3] > 0.0f && std::abs(clip[0]) <= x_band * aw &&
+        std::abs(clip[1]) <= 1.5f * aw) {
       ++ok;
     }
     if (clip[3] > 0.0f && std::abs(clip[0]) <= 6.0f * aw &&
@@ -4716,6 +4755,13 @@ uint32_t CaptureDynamicState(uint8_t* base, uint32_t ctx, bool world_path,
               .count());
     }
   } perf_fold{perf_t0};
+  // One guarded copy of the MeshContext head serves the pre-check, the
+  // geometry build and the effect-list read below (KI-87): a stale context
+  // skips the capture instead of faulting the guest render thread.
+  CtxHead ctx_head;
+  if (!CopyCtxHead(base, ctx, ctx_head, "CaptureDynamicState ctx")) {
+    return 0;
+  }
   if (world_path) {
     // Cheap pre-check so the world path (~800 calls/frame) only pays the
     // full capture for the meshes that need per-draw transforms: skinned
@@ -4724,28 +4770,50 @@ uint32_t CaptureDynamicState(uint8_t* base, uint32_t ctx, bool world_path,
     // through the sort lists, rendered as absolute world geometry they
     // collapse at the origin. Absolute meshes (fmt 57) stay on the identity
     // world path.
-    const uint32_t record = REX_LOAD_U32(ctx);
+    // Every read is guarded (KI-87): record and mesh pointers as single
+    // loads, the vertex descriptor's count and element table as one copy
+    // each (the table layout BuildItemFromMesh reads).
+    const uint32_t record = BSwap32(ctx_head[0]);
     if (!GuestReadableApprox(base, record)) return 0;
-    const uint32_t mesh = REX_LOAD_U32(record);
+    uint32_t mesh = 0;
+    if (!GuestTryLoadU32(base, record, &mesh)) {
+      NoteGuestReadSkip("CaptureDynamicState record", record);
+      return 0;
+    }
     if (!GuestReadableApprox(base, mesh)) return 0;
-    const uint32_t vdesc = REX_LOAD_U32(mesh + kMeshVertexDescriptor);
+    uint32_t vdesc = 0;
+    if (!GuestTryLoadU32(base, mesh + kMeshVertexDescriptor, &vdesc)) {
+      NoteGuestReadSkip("CaptureDynamicState mesh", mesh);
+      return 0;
+    }
     if (!GuestReadableApprox(base, vdesc)) return 0;
-    const uint32_t num_elements = REX_LOAD_U16(vdesc + 8);
+    uint32_t desc_head[3];
+    if (!GuestTryCopy(desc_head, REX_RAW_ADDR(vdesc), sizeof(desc_head))) {
+      NoteGuestReadSkip("CaptureDynamicState vdesc", vdesc);
+      return 0;
+    }
+    const uint32_t num_elements = BSwap32(desc_head[2]) >> 16;  // u16 at +8
     if (num_elements == 0 || num_elements > 32) return 0;
+    uint8_t desc_tab[32 * 16];
+    if (!GuestTryCopy(desc_tab, REX_RAW_ADDR(vdesc + 0x10), num_elements * 16)) {
+      NoteGuestReadSkip("CaptureDynamicState vdesc elements", vdesc + 0x10);
+      return 0;
+    }
     bool have_bw = false;
     bool have_bi = false;
     uint32_t pos_fmt = 0;
     bool have_pos = false;
     for (uint32_t i = 0; i < num_elements; ++i) {
-      const uint32_t e = vdesc + 0x10 + i * 16;
-      if (REX_LOAD_U16(e) != 0) continue;
-      const uint32_t usage = REX_LOAD_U8(e + 9);
+      const uint8_t* e = desc_tab + i * 16;
+      if (e[0] != 0 || e[1] != 0) continue;  // stream (u16 at +0)
+      const uint32_t usage = e[9];
+      const uint32_t fmt = e[7] & 0x3F;  // low bits of the BE u32 at +4
       if (usage == 0 && !have_pos) {
-        pos_fmt = REX_LOAD_U32(e + 4) & 0x3F;
+        pos_fmt = fmt;
         have_pos = true;
       }
-      if (usage == 1 && (REX_LOAD_U32(e + 4) & 0x3F) == 6) have_bw = true;
-      if (usage == 2 && (REX_LOAD_U32(e + 4) & 0x3F) == 6) have_bi = true;
+      if (usage == 1 && fmt == 6) have_bw = true;
+      if (usage == 2 && fmt == 6) have_bi = true;
     }
     const bool skinned = have_bw && have_bi;
     const bool model_space = pos_fmt == 32 || pos_fmt == 26;
@@ -4754,7 +4822,7 @@ uint32_t CaptureDynamicState(uint8_t* base, uint32_t ctx, bool world_path,
     }
   }
   DrawItem item;
-  if (!BuildItemGeometry(base, ctx, item)) {
+  if (!BuildItemGeometry(base, ctx, ctx_head, item)) {
     return 0;
   }
   item.ctx = ctx;  // identity key for the palette serve / entity store
@@ -4844,10 +4912,14 @@ uint32_t CaptureDynamicState(uint8_t* base, uint32_t ctx, bool world_path,
     // inside the call AND used the pre-pass layout. Multi-pass (deferred)
     // meshes draw later, and main-pass-layout banks have the camera at c4;
     // in both cases leave the palette pending for the post-draw fixup.
-    const uint32_t effect_list = REX_LOAD_U32(ctx + kCtxEffectList);
+    // Effect list from the guarded ctx head; a failed pass-count load keeps
+    // passes = 1 (KI-87).
+    const uint32_t effect_list = BSwap32(ctx_head[kCtxEffectList / 4]);
     uint32_t passes = 1;
-    if (GuestReadableApprox(base, effect_list)) {
-      passes = REX_LOAD_U32(effect_list + kEffectListPassCount);
+    if (GuestReadableApprox(base, effect_list) &&
+        !GuestTryLoadU32(base, effect_list + kEffectListPassCount, &passes)) {
+      NoteGuestReadSkip("CaptureDynamicState effect list", effect_list);
+      passes = 1;
     }
     const uint32_t palette_base = BankPaletteBase(base, bank);
     // World-path captures come from the sort-list hook BEFORE any of the
