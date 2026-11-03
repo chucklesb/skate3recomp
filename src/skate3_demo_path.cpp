@@ -438,7 +438,18 @@ constexpr size_t kFeStackMaxDepth = 16;
 struct BootScreenRule {
   uint32_t screen_id;
   std::vector<uint16_t> buttons;
+  // Tried after kPrimaryRounds passes through `buttons` found nothing.
+  std::vector<uint16_t> fallback;
 };
+
+const char* ButtonName(uint16_t buttons) {
+  for (const GameplayInputToken& token : kGameplayInputTokens) {
+    if (token.buttons == buttons && token.left_trigger == 0 && token.right_trigger == 0) {
+      return token.name;
+    }
+  }
+  return "?";
+}
 
 // Reads the FE push-state stack (bottom first). False if unreadable.
 bool ReadFrontEndStack(uint8_t* base, std::vector<uint32_t>* ids) {
@@ -527,17 +538,39 @@ void StartBootAssistIfNeeded() {
   // Built-in rule (after any user rules, which win): a fresh profile's
   // startup create-a-skater editor (FE screen 15) ignores the A auto-tap
   // and Start; B asks to leave it and A accepts, which ends the boot flow.
+  // That worked on one PC and not another (screen stayed put for 96 taps),
+  // so the taps escalate: each pass holds the button longer (8, 24, 60
+  // input polls), and after 4 passes other buttons are tried as well.
   // (The "welcome new team" and skater name prompts, screen 46, are keyboard
   // dialogs the SDK accepts by itself in demo-path mode.)
-  rules.push_back({15, {rex::input::X_INPUT_GAMEPAD_B, rex::input::X_INPUT_GAMEPAD_A}});
+  rules.push_back({15,
+                   {rex::input::X_INPUT_GAMEPAD_B, rex::input::X_INPUT_GAMEPAD_A},
+                   {rex::input::X_INPUT_GAMEPAD_START, rex::input::X_INPUT_GAMEPAD_A,
+                    rex::input::X_INPUT_GAMEPAD_Y, rex::input::X_INPUT_GAMEPAD_A,
+                    rex::input::X_INPUT_GAMEPAD_B, rex::input::X_INPUT_GAMEPAD_A,
+                    rex::input::X_INPUT_GAMEPAD_BACK, rex::input::X_INPUT_GAMEPAD_A}});
   g_boot_assist = std::thread([rules = std::move(rules)] {
     constexpr auto kPoll = std::chrono::milliseconds(50);
-    constexpr int64_t kTapIntervalMs = 1000;
+    // A confirm tap only lands if it follows the opening tap closely (1500 ms
+    // apart never worked, 1000 ms or less did), and how soon the dialog is
+    // up differs per machine, so the gap after the first tap of each pair
+    // cycles through several values; pairs are 2 s apart.
+    constexpr int64_t kPairGapsMs[] = {700, 400, 1000, 250, 1300, 550};
+    constexpr int64_t kTapIntervalMs = 2000;
+    constexpr uint32_t kHoldPolls[] = {8, 24, 60};
+    constexpr uint32_t kPrimaryRounds = 4;
+    constexpr int64_t kStatusIntervalMs = 15000;
     std::vector<uint32_t> ids;
     std::vector<uint32_t> last_ids;
     bool have_last = false;
     const BootScreenRule* active = nullptr;
     size_t next_button = 0;
+    uint32_t round = 0;
+    uint32_t taps = 0;
+    uint16_t last_button = 0;
+    uint32_t last_hold = 0;
+    auto entered = std::chrono::steady_clock::now();
+    auto next_status = entered;
     auto next_tap = std::chrono::steady_clock::now();
     while (!g_boot_assist_quit.load(std::memory_order_relaxed)) {
       if (rex::kernel::guest_presence::GameplayContextValue() == 1) {
@@ -561,9 +594,21 @@ void StartBootAssistIfNeeded() {
         }
         const auto now = std::chrono::steady_clock::now();
         if (rule != active) {
+          if (active) {
+            REXLOG_INFO(
+                "Skate 3 demo path: boot screen {} left after {} taps in {} ms (last tap {} held "
+                "{} polls, pass {}); FE stack now [{}]",
+                active->screen_id, taps,
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - entered).count(),
+                ButtonName(last_button), last_hold, round, FormatIds(ids));
+          }
           if (rule) {
             REXLOG_INFO("Skate 3 demo path: boot screen {} has its own inputs", rule->screen_id);
             next_button = 0;
+            round = 0;
+            taps = 0;
+            entered = now;
+            next_status = now + std::chrono::milliseconds(kStatusIntervalMs);
             next_tap = now + std::chrono::milliseconds(kTapIntervalMs);
           } else if (rex::kernel::guest_presence::GameplayContextValue() == 0) {
             rex::kernel::xam::SetSyntheticAutoTap(rex::input::X_INPUT_GAMEPAD_A, true);
@@ -574,12 +619,39 @@ void StartBootAssistIfNeeded() {
           // The XGI handler re-arms the A auto-tap on every presence update.
           rex::kernel::xam::SetSyntheticAutoTap(rex::input::X_INPUT_GAMEPAD_A, false);
           if (now >= next_tap) {
-            const uint16_t buttons = active->buttons[next_button];
-            next_button = (next_button + 1) % active->buttons.size();
-            rex::kernel::xam::QueueSyntheticInput(buttons, 8);
-            REXLOG_INFO("Skate 3 demo path: boot screen {} tap 0x{:04X}", active->screen_id,
-                        buttons);
-            next_tap = now + std::chrono::milliseconds(kTapIntervalMs);
+            const std::vector<uint16_t>& seq =
+                (round >= kPrimaryRounds && !active->fallback.empty()) ? active->fallback
+                                                                       : active->buttons;
+            if (next_button >= seq.size()) {
+              next_button = 0;
+            }
+            const uint16_t buttons = seq[next_button];
+            const uint32_t hold = kHoldPolls[round % std::size(kHoldPolls)];
+            const bool first_of_pair = (next_button % 2) == 0;
+            if (++next_button >= seq.size()) {
+              next_button = 0;
+              ++round;
+            }
+            rex::kernel::xam::QueueSyntheticInput(buttons, hold);
+            ++taps;
+            last_button = buttons;
+            last_hold = hold;
+            const int64_t gap_ms =
+                first_of_pair ? kPairGapsMs[taps / 2 % std::size(kPairGapsMs)] : kTapIntervalMs;
+            REXLOG_INFO(
+                "Skate 3 demo path: boot screen {} tap {} (0x{:04X}) hold {} polls, pass {}, next "
+                "in {} ms",
+                active->screen_id, ButtonName(buttons), buttons, hold, round, gap_ms);
+            next_tap = now + std::chrono::milliseconds(gap_ms);
+          }
+          if (now >= next_status) {
+            REXLOG_INFO(
+                "Skate 3 demo path: still on boot screen {} after {} taps ({} ms); presence "
+                "context 0x8001={}; FE stack [{}]",
+                active->screen_id, taps,
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - entered).count(),
+                rex::kernel::guest_presence::GameplayContextValue(), FormatIds(ids));
+            next_status = now + std::chrono::milliseconds(kStatusIntervalMs);
           }
         }
       }
