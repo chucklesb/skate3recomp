@@ -11918,8 +11918,28 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       uint32_t cb_slot_next = 0;
       const int32_t pfx_debug =
           REXCVAR_GET(skate3_native_render_scene_photo_native_debug);
+      // Worst case per frame: depth pack, one accum pass (mode 1 or 2), the
+      // 6 chain passes and the debug view = 9 slots (KI-40).
+      static_assert(RendererState::kPfxCbSlots >= 9,
+                    "photo FX chain needs up to 9 constant slots per frame");
+      // Set by fill_cb: false when this frame's region is out of slots, in
+      // which case nothing was written and pfx_draw() skips the draw.
+      bool cb_slot_ok = true;
       // Returns the byte OFFSET into g_r.pfx_cb for SetConstantBuffer(0, ...).
       const auto fill_cb = [&](int pass) -> uint64_t {
+        cb_slot_ok = cb_slot_next < RendererState::kPfxCbSlots;
+        if (!cb_slot_ok) {
+          static std::atomic<bool> s_pfx_cb_overflow_logged{false};
+          if (!s_pfx_cb_overflow_logged.exchange(true,
+                                                 std::memory_order_relaxed)) {
+            REXLOG_WARN(
+                "native-scene: photo FX constant slots exhausted ({} per "
+                "frame); skipping pass {} (logged once)",
+                RendererState::kPfxCbSlots, pass);
+          }
+          // In-range offset (this frame's first slot), left untouched.
+          return uint64_t(cb_slot_base) * 4096;
+        }
         const uint32_t slot = cb_slot_base + (cb_slot_next++);
         uint8_t* dst = g_r.pfx_cb_ptr + size_t(slot) * 4096;
         std::memset(dst, 0, 4096);
@@ -11964,6 +11984,13 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
                                     nrhi::TextureView* t7, nrhi::TextureView* t5) {
         nrhi::TextureView* views[8] = {t0, t1, t2, t3, t4, t5, t6, t7};
         cmd->SetTextures(1, views, 8);
+      };
+      // Fullscreen-triangle draw for the pass whose constants fill_cb just
+      // filled; skipped when fill_cb ran out of slots.
+      const auto pfx_draw = [&]() {
+        if (cb_slot_ok) {
+          cmd->Draw(3, 0);
+        }
       };
       nrhi::TextureView* const W = g_r.white.srv;
       const nrhi::Viewport half_vp{0.0f, 0.0f, float(RendererState::kPfxHalfW),
@@ -12019,7 +12046,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       cmd->SetPipeline(g_r.pfx_pso[0]);
       cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(-1));
       pfx_bind_all(W, W, W, W, g_r.pfx_srv[6], W, W, g_r.pfx_srv[7]);
-      cmd->Draw(3, 0);
+      pfx_draw();
       cmd->Barrier(g_r.depth, nrhi::ResourceState::kPixelShaderResource,
                    nrhi::ResourceState::kDepthWrite);
       pfx_to_srv(g_r.pfx_depth);
@@ -12040,7 +12067,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         cmd->SetPipeline(g_r.pfx_pso[7]);
         cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(-1));
         pfx_bind_all(g_r.output_srv_slot, W, W, W, g_r.pfx_srv[6], W, W, W);
-        cmd->Draw(3, 0);
+        pfx_draw();
       }
       pfx_to_srv(g_r.pfx_quarter);
       pfx_flush();
@@ -12053,7 +12080,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(kPfxVisualFx));
       pfx_bind_all(g_r.output_srv_slot, g_r.pfx_srv[5], W, g_r.pfx_srv[4],
                    g_r.pfx_srv[6], W, W, W);
-      cmd->Draw(3, 0);
+      pfx_draw();
       pfx_to_srv(g_r.pfx_full[0]);
       pfx_flush();
 
@@ -12064,7 +12091,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       cmd->SetPipeline(g_r.pfx_pso[2]);
       cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(kPfxDofDown));
       pfx_bind_all(g_r.pfx_srv[0], W, W, W, g_r.pfx_srv[6], W, W, W);
-      cmd->Draw(3, 0);
+      pfx_draw();
       pfx_to_srv(g_r.pfx_half[0]);
       pfx_flush();
 
@@ -12073,7 +12100,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       cmd->SetPipeline(g_r.pfx_pso[3]);
       cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(kPfxDofMB));
       pfx_bind_all(g_r.pfx_srv[2], g_r.pfx_srv[5], W, W, g_r.pfx_srv[6], W, W, W);
-      cmd->Draw(3, 0);
+      pfx_draw();
       pfx_to_srv(g_r.pfx_half[1]);
       pfx_to_rt(g_r.pfx_half[0]);
       pfx_flush();
@@ -12083,7 +12110,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       cmd->SetPipeline(g_r.pfx_pso[4]);
       cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(kPfxDof));
       pfx_bind_all(g_r.pfx_srv[3], W, W, W, g_r.pfx_srv[6], W, W, W);
-      cmd->Draw(3, 0);
+      pfx_draw();
       pfx_to_srv(g_r.pfx_half[0]);
       pfx_flush();
 
@@ -12096,7 +12123,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(kPfxUber));
       pfx_bind_all(g_r.pfx_srv[0], g_r.pfx_srv[5], W, W, g_r.pfx_srv[6],
                    grain_slot, g_r.pfx_srv[2], W);
-      cmd->Draw(3, 0);
+      pfx_draw();
       pfx_to_srv(g_r.pfx_full[1]);
       // The finished chain replaces the output: back to RT for fisheye.
       cmd->Barrier(context.guest_output,
@@ -12109,7 +12136,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       cmd->SetPipeline(g_r.pfx_pso[6]);
       cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(kPfxFisheye));
       pfx_bind_all(g_r.pfx_srv[1], W, vig_slot, W, g_r.pfx_srv[6], W, W, W);
-      cmd->Draw(3, 0);
+      pfx_draw();
       photo_fx_applied = true;
 
       // 8b) Debug view (photo_native_debug): overwrite the output with the
@@ -12121,7 +12148,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(-1));
         pfx_bind_all(g_r.pfx_srv[0], g_r.pfx_srv[5], W, W, g_r.pfx_srv[6], W,
                      W, W);
-        cmd->Draw(3, 0);
+        pfx_draw();
       }
 
       // 9) Accumulation mode 2: next frame's visualfx t3 = the finished
@@ -12135,7 +12162,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         cmd->SetPipeline(g_r.pfx_pso[7]);
         cmd->SetConstantBuffer(0, g_r.pfx_cb, fill_cb(-1));
         pfx_bind_all(g_r.pfx_srv[1], W, W, W, g_r.pfx_srv[6], W, W, W);
-        cmd->Draw(3, 0);
+        pfx_draw();
       }
 
       // Restore steady states (all pfx color targets idle as RENDER_TARGET)

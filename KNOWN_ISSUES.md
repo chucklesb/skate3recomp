@@ -186,21 +186,6 @@ repro steps; the entry says where the problem is and how it would show.
   either backend, even when GPU-bound. With #28's 8 regions, the fallback
   that would need this wait can't trigger in normal operation.
 
-### KI-40: Photo FX constant slots have no bounds check
-
-- **Status:** open · **Severity:** low
-- **Area:** native renderer, photo FX
-- **Tracking:** none yet. Found while fixing KI-16 (#28).
-- **Where:** `src/skate3_native_scene_gpu.cpp`, `RenderScene`, the photo FX
-  `fill_cb` lambda.
-- **Problem:** `cb_slot_next++` is never checked against
-  `RendererState::kPfxCbSlots` (10). Today at most 10 slots are used: depth
-  pack, accum feed, 6 passes, accum mode 2 and the debug view. One more pass
-  would silently write into the next frame's region, or past the end of the
-  buffer for the last region.
-- **Fix:** clamp it, or assert and log when `cb_slot_next` reaches
-  `kPfxCbSlots`.
-
 ### KI-43: A script/debug getter reads the scaled cull threshold
 
 - **Status:** open (unconfirmed) · **Severity:** low
@@ -2414,6 +2399,24 @@ repro steps; the entry says where the problem is and how it would show.
   stayed sim-inactive there (`ropa[rigid=0 ...]`), so the rigid branch still
   needs the in-game check: the player's tee (Ropa, sim active) up close.
 - **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 only, the user's normal signed-in profile, about 17 minutes over two runs. This PR was not tested on its own. The player confirmed the tee looked fine. ropa[rigid=N] rose to 342,431 in the first run (stale=17326, rescued=14602) and ended at 81,532 with stale=0 in the second; there was no run on main to compare stale= against.
+
+### KI-40: Photo FX constant slots have no bounds check
+
+- **Status:** fixed in rubensteezy/skate3recomp#65, tested in-game on 2026-11-02 · **Severity:** low
+- **Area:** native renderer, photo FX
+- **Tracking:** rubensteezy/skate3recomp#65. Found while fixing KI-16 (#28).
+- **Where:** `src/skate3_native_scene_gpu.cpp`, `RenderScene`, the photo FX
+  `fill_cb` lambda.
+- **Problem:** `cb_slot_next++` is never checked against
+  `RendererState::kPfxCbSlots` (10). Today at most 9 slots are used per frame
+  (depth pack, one accum pass for mode 1 or 2, 6 chain passes, the debug
+  view). One more pass would silently write into the next frame's region, or
+  past the end of the buffer for the last region.
+- **Fix:** `fill_cb` now checks `cb_slot_next` against `kPfxCbSlots`. When
+  the region is full it writes nothing, logs one warning (`photo FX constant
+  slots exhausted`) and the pass's draw is skipped (`pfx_draw`). A
+  `static_assert` keeps `kPfxCbSlots >= 9`. No change while slots fit.
+- **In-game test (2026-11-02):** Played on the big rig as part of one build, batch4 (main b612978 + #57-#68), D3D12 at MSAA x8, the user's normal signed-in profile, in a photo editor session of about 4.5 minutes. The photo FX chain ran: 'photo postfx pipeline ready (9 passes, msaa=8)' and 'photo editor postfx chain LIVE (native; accum mode 0, vignette resolved, grain resolved)', with 0 'photo FX constant slots exhausted' lines and nothing wrong seen in the editor effects. Not confirmed: whether the DoF and focus sliders were moved. The bound is not reachable today, so this shows only that the photo chain still works with the check in place. This PR was not tested on its own.
 
 ### Reviewed and ruled out (code review)
 
