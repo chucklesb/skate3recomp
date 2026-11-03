@@ -7384,9 +7384,17 @@ bool RenderShadowAtlas(const NativeGuestOutputRenderContext& context,
       // garment every frame, ~2.9 ms, the 160 fps cap during real play).
       // The dyn decode jobs / worker miss queue keep the cache fresh, one
       // frame behind the sim; a first-sight caster shadows 1-2 frames late.
-      if (!g_r.meshes.contains(item.mesh)) {
+      const auto mit = g_r.meshes.find(item.mesh);
+      if (mit == g_r.meshes.end()) {
         continue;
       }
+      // Stamp the mesh as used (KI-95), like RenderStaticSunMap does: a
+      // caster the main pass does not draw this frame (occlusion-culled, or
+      // outside the view) still casts here, and an unstamped entry looks
+      // idle to EvictMeshStore. Evicted under mesh-store pressure, the
+      // caster would silently drop out of the shadow until the main pass
+      // draws the item again.
+      mit->second.last_used_frame = frame_number;
       Caster c{&item, 0, false, false, nullptr};
       if (item.dynobj == 2) {
         c.clip = true;
