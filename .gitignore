@@ -9,11 +9,14 @@
 !/tools/package_linux.sh
 !/tools/package_macos.sh
 !/tools/package_windows.ps1
+!/tools/cross-aarch64/
 
 # Local game dump and retail media. Users must provide their own copy.
 /game/
 *.iso
 *.xex
+/TU_*
+*:Zone.Identifier
 
 # Local runtime/config overrides
 skate3.toml

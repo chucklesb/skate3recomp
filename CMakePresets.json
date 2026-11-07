@@ -90,6 +90,48 @@
       }
     },
     {
+      "name": "linux-host-codegen",
+      "displayName": "Linux host build for codegen (nix develop .#codegen)",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-aarch64-base",
+      "hidden": true,
+      "inherits": "base",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/linux-aarch64.cmake",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-aarch64-relwithdebinfo",
+      "displayName": "Linux aarch64 RelWithDebInfo (cross, nix develop .#cross)",
+      "inherits": "linux-aarch64-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "linux-aarch64-release",
+      "displayName": "Linux aarch64 Release (cross, nix develop .#cross)",
+      "inherits": "linux-aarch64-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
       "name": "macos-relwithdebinfo",
       "displayName": "macOS RelWithDebInfo",
       "inherits": "macos-base",
@@ -126,6 +168,18 @@
     {
       "name": "linux-release",
       "configurePreset": "linux-release"
+    },
+    {
+      "name": "linux-host-codegen",
+      "configurePreset": "linux-host-codegen"
+    },
+    {
+      "name": "linux-aarch64-relwithdebinfo",
+      "configurePreset": "linux-aarch64-relwithdebinfo"
+    },
+    {
+      "name": "linux-aarch64-release",
+      "configurePreset": "linux-aarch64-release"
     },
     {
       "name": "macos-relwithdebinfo",

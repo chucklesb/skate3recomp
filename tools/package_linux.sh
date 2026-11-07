@@ -6,7 +6,8 @@
 #
 # build-dir defaults to out/build/linux-release. The zip holds a
 # Skate3Recomp-Linux folder with the executable, the runtime library and the
-# GPU plugin library, and is written to out/release.
+# GPU plugin library, and is written to out/release. SKATE3_PACKAGE_NAME
+# overrides the folder/zip name (e.g. Skate3Recomp-Linux-aarch64).
 
 set -eu
 
@@ -20,8 +21,9 @@ for f in $files; do
     fi
 done
 
-stage=out/release/Skate3Recomp-Linux
-rm -rf "$stage" out/release/Skate3Recomp-Linux.zip
+name=${SKATE3_PACKAGE_NAME:-Skate3Recomp-Linux}
+stage=out/release/$name
+rm -rf "$stage" "out/release/$name.zip"
 mkdir -p "$stage"
 
 for f in $files; do
@@ -29,5 +31,5 @@ for f in $files; do
     chmod 755 "$stage/$f"
 done
 
-(cd out/release && zip -q -r -X Skate3Recomp-Linux.zip Skate3Recomp-Linux)
-echo "package_linux: wrote out/release/Skate3Recomp-Linux.zip"
+(cd out/release && zip -q -r -X "$name.zip" "$name")
+echo "package_linux: wrote out/release/$name.zip"

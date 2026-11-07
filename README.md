@@ -276,6 +276,40 @@ out/build/linux-release/librexruntime.so
 out/build/linux-release/librexgpu-xenos.so
 ```
 
+## Linux aarch64 Cross Build (Experimental)
+
+An x86_64 Linux host (WSL2 works) with [Nix](https://nixos.org/) and flakes
+enabled can cross-compile a linux-aarch64 build. The binaries link against an
+Ubuntu 26.04 arm64 sysroot (glibc 2.43, GCC 15 libstdc++), so they run on an
+Ubuntu 26.04 arm64 userland or anything newer. That includes the DroidDeck
+runtime on Snapdragon handhelds. The kernel must use 4K pages.
+
+```sh
+tools/cross-aarch64/build.sh            # release; or: build.sh relwithdebinfo
+```
+
+The script runs four steps, which can also be run one at a time with
+`build.sh release <step>...`:
+
+1. `sysroot`: `tools/cross-aarch64/make-sysroot.sh` downloads the pinned
+   `ubuntu-base-26.04.1-base-arm64` image. It verifies the archive signatures
+   with the keyring from that image and unpacks the `-dev` packages listed in
+   `tools/cross-aarch64/packages.txt` into `out/sysroot/ubuntu-26.04-arm64`.
+   No root or qemu is needed.
+2. `codegen`: builds `rexglue` natively in `nix develop .#codegen` with the
+   `linux-host-codegen` preset, then runs `generate-all`. The recompiled
+   sources in `generated/` are the same for every target architecture.
+3. `build`: configures and builds the `linux-aarch64-release` preset in
+   `nix develop .#cross`. That preset uses
+   `cmake/toolchains/linux-aarch64.cmake`: unwrapped clang/lld targeting
+   `aarch64-linux-gnu` with the sysroot.
+4. `package`: writes `out/release/Skate3Recomp-Linux-aarch64.zip`.
+
+The game dump and Title Update 3 requirements are the same as for a native
+build. On the device, the runtime needs `libgtk-3-0`, a Vulkan driver with
+geometry shader and BC texture support (Turnip on Adreno), and a writable
+`/dev/shm`.
+
 ## macOS Build (Apple Silicon)
 
 macOS builds use Homebrew LLVM - the `macos-*` presets expect the toolchain at
