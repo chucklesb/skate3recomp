@@ -36,7 +36,7 @@
 #else
 #include <sys/wait.h>
 
-#include <gtk/gtk.h>
+#include "skate3_linux_file_picker.h"
 #endif
 
 REXCVAR_DEFINE_STRING(skate3_title_update_url,
@@ -611,32 +611,10 @@ std::filesystem::path PickTitleUpdateFile() {
 }
 #else
 std::filesystem::path PickTitleUpdateFile() {
-  GtkWidget* dialog = gtk_file_chooser_dialog_new(
-      "Select the Skate 3 Title Update 3 package", nullptr, GTK_FILE_CHOOSER_ACTION_OPEN,
-      "_Cancel", GTK_RESPONSE_CANCEL, "_Open", GTK_RESPONSE_ACCEPT, nullptr);
-  if (!dialog) {
-    return {};
-  }
-
-  GtkFileFilter* all_filter = gtk_file_filter_new();
-  gtk_file_filter_set_name(all_filter, "All files");
-  gtk_file_filter_add_pattern(all_filter, "*");
-  gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dialog), all_filter);
-
-  std::filesystem::path result;
-  if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
-    char* filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
-    if (filename) {
-      result = filename;
-      g_free(filename);
-    }
-  }
-
-  gtk_widget_destroy(dialog);
-  while (gtk_events_pending()) {
-    gtk_main_iteration_do(FALSE);
-  }
-  return result;
+  skate3::LinuxFilePickerRequest request;
+  request.title = "Select the Skate 3 Title Update 3 package";
+  request.env_var = "SKATE3_INSTALL_TU";
+  return skate3::PickFileLinux(request);
 }
 #endif
 

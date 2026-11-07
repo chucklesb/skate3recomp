@@ -27,7 +27,7 @@
 
 #elif defined(__APPLE__)
 #else
-#include <gtk/gtk.h>
+#include "skate3_linux_file_picker.h"
 #endif
 
 namespace skate3 {
@@ -123,38 +123,12 @@ std::filesystem::path PickIsoFile() {
 }
 #else
 std::filesystem::path PickIsoFile() {
-  GtkWidget* dialog = gtk_file_chooser_dialog_new(
-      "Select Skate 3 Xbox 360 ISO", nullptr, GTK_FILE_CHOOSER_ACTION_OPEN, "_Cancel",
-      GTK_RESPONSE_CANCEL, "_Open", GTK_RESPONSE_ACCEPT, nullptr);
-  if (!dialog) {
-    return {};
-  }
-
-  GtkFileFilter* iso_filter = gtk_file_filter_new();
-  gtk_file_filter_set_name(iso_filter, "Xbox 360 ISO (*.iso)");
-  gtk_file_filter_add_pattern(iso_filter, "*.iso");
-  gtk_file_filter_add_pattern(iso_filter, "*.ISO");
-  gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dialog), iso_filter);
-
-  GtkFileFilter* all_filter = gtk_file_filter_new();
-  gtk_file_filter_set_name(all_filter, "All files");
-  gtk_file_filter_add_pattern(all_filter, "*");
-  gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dialog), all_filter);
-
-  std::filesystem::path result;
-  if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
-    char* filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
-    if (filename) {
-      result = filename;
-      g_free(filename);
-    }
-  }
-
-  gtk_widget_destroy(dialog);
-  while (gtk_events_pending()) {
-    gtk_main_iteration_do(FALSE);
-  }
-  return result;
+  skate3::LinuxFilePickerRequest request;
+  request.title = "Select Skate 3 Xbox 360 ISO";
+  request.filter_name = "Xbox 360 ISO (*.iso)";
+  request.filter_patterns = {"*.iso", "*.ISO"};
+  request.env_var = "SKATE3_INSTALL_ISO";
+  return skate3::PickFileLinux(request);
 }
 #endif
 

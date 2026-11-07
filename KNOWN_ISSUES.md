@@ -828,33 +828,6 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** compare the same route on F5 and at a higher
   `skate3_draw_distance_scale` (see KI-18, #30).
 
-### KI-102: Linux crashes at the ISO picker on X11 (GTK has no display)
-
-- **Status:** investigating
-- **Area:** Linux, installer file picker
-- **Tracking:** GitHub issue rubensteezy/skate3recomp#53 (reported by
-  cproo12); fix agent working on it.
-- **Symptom:** on Linux Mint 22.3 with an X11 session (Intel UHD 630), the
-  v2.1.0 release crashes when it opens the "Select ISO" dialog: GTK prints
-  `Gtk-ERROR: Can't create a GtkStyleContext without a display connection`
-  and the process dies with a trace trap. The log shows
-  `SDL video driver: x11` just before. The same code is reported to work under
-  Wayland.
-- **Where:** `PickIsoFile` in `src/skate3_iso_installer.cpp` and
-  `PickTitleUpdateFile` in `src/skate3_title_update_installer.cpp` call
-  `gtk_file_chooser_dialog_new` directly on non-Windows, non-macOS builds.
-- **Cause so far (unconfirmed):** nothing in `src/` calls `gtk_init` or
-  `gtk_init_check`, so GTK never opens its own display connection. Under
-  Wayland something else may initialise GTK as a side effect (for example the
-  libdecor GTK plugin that SDL loads for window decorations), which would hide
-  the bug. Under X11 nothing does. The "X11 vs Wayland" framing in the GitHub
-  thread may therefore be a symptom, not the cause.
-- **Next step:** confirm by reading the code and the SDL/libdecor sources, then
-  call `gtk_init_check` before the first dialog and fall back to something
-  that cannot crash (a clear error, a `zenity`/`kdialog` call, or SDL3's
-  `SDL_ShowOpenFileDialog`). Testing needs an X11 Linux machine; there is
-  currently none (see the Linux build note in the project memory).
-
 ### KI-103: GTK 3 is a hard runtime dependency of the Linux zip
 
 - **Status:** open · **Severity:** low–medium
@@ -1044,6 +1017,51 @@ repro steps; the entry says where the problem is and how it would show.
   the gate (`pr63b`); a photo session on that build is queued.
 
 ## Resolved
+
+### KI-102: Linux crashes at the ISO picker on X11 (GTK never initialised)
+
+- **Status:** fix in review in rubensteezy/skate3recomp#55, not yet run on
+  Linux
+- **Area:** Linux, installer file picker
+- **Tracking:** GitHub issue rubensteezy/skate3recomp#53 (reported by
+  cproo12); PR #55.
+- **Symptom:** on Linux Mint 22.3 with an X11 session (Intel UHD 630), the
+  v2.1.0 release crashes when it opens the "Select ISO" dialog: GTK prints
+  `Gtk-ERROR: Can't create a GtkStyleContext without a display connection`
+  and the process dies with a trace trap. The log shows
+  `SDL video driver: x11` just before.
+- **Cause (from the code, not reproduced):** nothing in the game or the SDK
+  called `gtk_init_check`, so GTK never opened a display connection and the
+  first `gtk_file_chooser_dialog_new` aborted. The SDK used to initialise GTK
+  itself: its GTK windowing entry point (`windowed_app_main_posix.cpp`) called
+  `gtk_disable_setlocale()` and `gtk_init_check()`. SDK commit f709b92 ("replace
+  Win32/GTK windowing with unified SDL3 backend") deleted that code, and the
+  game's two pickers (`PickIsoFile`, `PickTitleUpdateFile`) were never given an
+  init of their own. So this is not "GTK can't talk to X11". It is a
+  regression from the SDL3 move. Under Wayland the libdecor GTK plugin that SDL
+  loads for window decorations calls `gtk_init_check` itself (libdecor
+  `src/plugins/gtk/libdecor-gtk.c`, in plugin creation, after
+  `gdk_set_allowed_backends("wayland")`), which would initialise GTK as a side
+  effect and hide the bug. That explanation for Wayland was read from libdecor's
+  source and not run; it depends on the libdecor GTK plugin being installed and
+  chosen.
+- **Fix:** new `src/skate3_linux_file_picker.cpp` (Linux only) with
+  `PickFileLinux`, used by both pickers. It calls `gtk_disable_setlocale()` and
+  `gtk_init_check(nullptr, nullptr)` once, on the first dialog, on the UI
+  thread (both pickers run from the ImGui wizard callbacks on the main loop).
+  `gtk_init_check` is idempotent, so it is harmless when libdecor already did
+  it. If GTK cannot open a display, it does not touch GTK again: it tries
+  `zenity --file-selection`, then `kdialog --getopenfilename` (started with
+  `posix_spawnp`, an argument vector and no shell), and if neither exists it
+  logs that `SKATE3_INSTALL_ISO` (or `SKATE3_INSTALL_TU`) set to the file path
+  skips the dialog. Windows and macOS code is unchanged.
+- **Not tested:** nothing ran on Linux. The Windows build compiles and the Linux
+  file was syntax-checked against mock GTK and POSIX headers only. A tester on
+  an X11 session needs to confirm the dialog opens (see PR #55 for steps).
+- **Possible follow-up:** replace GTK with SDL3's `SDL_ShowOpenFileDialog`
+  (SDL_DIALOG is already on in the SDK). It would drop the libgtk-3 runtime
+  dependency, but it is asynchronous and portal-based, so the synchronous picker
+  needs a wait and it changes behaviour on every distro.
 
 ### KI-72: The Defender trojan trigger shipped on main
 

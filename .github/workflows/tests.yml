@@ -89,3 +89,24 @@ jobs:
         run: cmake --build out/build/tests --target skate3_tests --parallel
       - name: Test
         run: ctest --test-dir out/build/tests --output-on-failure
+
+  # The Linux file picker (KI-102) is the only GTK code in the game and no other
+  # job compiles it, because building the game needs game data. This compiles
+  # just that file against the real GTK 3 headers, with a no-op stand-in for the
+  # SDK logging macros so no SDK checkout is needed. It checks the code
+  # compiles, not that it works.
+  linux-picker-compile:
+    name: linux file picker compiles (ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GTK 3 headers
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev pkg-config
+      - name: Compile src/skate3_linux_file_picker.cpp
+        run: |
+          mkdir -p "$RUNNER_TEMP/stub/rex"
+          printf '#pragma once\n#define REXLOG_WARN(...) ((void)0)\n#define REXLOG_ERROR(...) ((void)0)\n' > "$RUNNER_TEMP/stub/rex/logging.h"
+          g++ -std=c++20 -Wall -Wextra -fsyntax-only \
+            -I"$RUNNER_TEMP/stub" $(pkg-config --cflags gtk+-3.0) \
+            src/skate3_linux_file_picker.cpp

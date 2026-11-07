@@ -455,7 +455,9 @@ rexglue_configure_target(skate3 GPU_PLUGINS xenos)
 
 if(UNIX AND NOT APPLE)
     # The ISO and title update installers use GTK file choosers; the SDK no
-    # longer links GTK now that its windowing is SDL3.
+    # longer links GTK now that its windowing is SDL3, and no longer calls
+    # gtk_init_check either, so src/skate3_linux_file_picker.cpp does (KI-102).
+    target_sources(skate3 PRIVATE src/skate3_linux_file_picker.cpp)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
     target_include_directories(skate3 PRIVATE ${GTK3_INCLUDE_DIRS})
