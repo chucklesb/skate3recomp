@@ -1,0 +1,62 @@
+#!/bin/sh
+# AppImage entry point for skate3recomp.
+#
+# The AppDir is read-only (FUSE mount) or replaced on every update
+# (DroidDeck extracts it once), so everything the game writes goes under
+# ${XDG_DATA_HOME:-$HOME/.local/share}/skate3, the game's own user data root.
+#
+# Game data location, first match:
+#   1. $SKATE3_GAME_DATA_ROOT
+#   2. <user data>/game                        if it holds default.xex
+#   3. /storage/emulated/0/skate3recomp/game   if it holds default.xex
+#      (Android shared storage, as seen inside DroidDeck)
+#   4. <user data>/game, created empty for the ISO installer
+# A --game_data_root=... or --log_file=... argument wins over these.
+
+HERE=$(dirname "$(readlink -f "$0")")
+data=${XDG_DATA_HOME:-$HOME/.local/share}/skate3
+
+has_arg() {
+    name=$1
+    shift
+    for a in "$@"; do
+        case "$a" in
+            "--$name"|"--$name="*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+pick_game_root() {
+    if [ -n "${SKATE3_GAME_DATA_ROOT:-}" ]; then
+        printf '%s\n' "$SKATE3_GAME_DATA_ROOT"
+        return
+    fi
+    for candidate in "$data/game" /storage/emulated/0/skate3recomp/game; do
+        if [ -f "$candidate/default.xex" ]; then
+            printf '%s\n' "$candidate"
+            return
+        fi
+    done
+    printf '%s\n' "$data/game"
+}
+
+mkdir -p "$data/logs"
+
+if ! has_arg game_data_root "$@"; then
+    game_root=$(pick_game_root)
+    mkdir -p "$game_root" 2>/dev/null
+    set -- "--game_data_root=$game_root" "$@"
+fi
+if ! has_arg log_file "$@"; then
+    set -- "--log_file=$data/logs/skate3.log" "$@"
+fi
+
+# In-game restart re-runs the image itself when it is FUSE-mounted.
+if [ -n "${APPIMAGE:-}" ]; then
+    export SKATE3_RESTART_EXE="$APPIMAGE"
+fi
+
+# Screenshots are written relative to the working directory.
+cd "$data" || exit 1
+exec "$HERE/usr/bin/skate3" "$@"

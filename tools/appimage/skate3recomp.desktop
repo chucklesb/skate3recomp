@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Skate3Recomp
+Comment=Static recompilation of Skate 3 (bring your own game files)
+Exec=skate3
+Icon=skate3recomp
+Categories=Game;
+Terminal=false
+X-AppImage-Version=@VERSION@

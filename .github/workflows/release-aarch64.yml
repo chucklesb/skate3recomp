@@ -1,0 +1,125 @@
+# Validate and publish a linux-aarch64 release staged by
+# tools/release/stage-release.sh.
+#
+# The game cannot be built in CI: codegen needs the user's Skate 3 dump and
+# Title Update 3. Release binaries are built locally, uploaded to a *draft*
+# release, and this workflow checks them on an arm64 runner (the AppImage is
+# really extracted, as DroidDeck does) before publishing. A failed check
+# leaves the release as a draft.
+#
+# workflow_dispatch only: run by stage-release.sh, or by hand from the
+# Actions tab. The file must be on the repository's default branch to be
+# dispatchable; the run uses the copy at the tag.
+
+name: release-aarch64
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (v<upstream version>-aarch64.<n>), already staged as a draft"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-24.04-arm
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Check tag format
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-aarch64\.[0-9]+$ ]]; then
+            echo "::error::'$TAG' is not v<upstream version>-aarch64.<n>"
+            exit 1
+          fi
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Require a draft release for the tag
+        run: |
+          draft=$(gh release view "$TAG" --json isDraft --jq .isDraft)
+          if [ "$draft" != "true" ]; then
+            echo "::error::release $TAG is not a draft (already published?)"
+            exit 1
+          fi
+
+      - name: Download assets
+        run: |
+          mkdir assets
+          gh release download "$TAG" --dir assets
+          ls -l assets
+
+      - name: Check asset set and checksums
+        working-directory: assets
+        run: |
+          image="Skate3Recomp-$VERSION-aarch64.AppImage"
+          zip="Skate3Recomp-Linux-aarch64-$VERSION.zip"
+          for f in "$image" "$image.sha256" "$zip" "$zip.sha256"; do
+            [ -f "$f" ] || { echo "::error::missing asset $f"; exit 1; }
+          done
+          count=$(find . -maxdepth 1 -iname '*.appimage' | wc -l)
+          if [ "$count" -ne 1 ]; then
+            echo "::error::expected exactly one .AppImage asset, found $count (DroidDeck installs the first match)"
+            exit 1
+          fi
+          sha256sum -c "$image.sha256" "$zip.sha256"
+          echo "IMAGE=$PWD/$image" >> "$GITHUB_ENV"
+          echo "ZIP=$PWD/$zip" >> "$GITHUB_ENV"
+
+      - name: Validate the AppImage for DroidDeck
+        run: python3 -I tools/appimage/validate.py "$IMAGE" --expect-version "$VERSION"
+
+      - name: Check the zip matches the AppImage payload
+        run: |
+          mkdir zip extract
+          unzip -q "$ZIP" -d zip
+          (cd extract && "$IMAGE" --appimage-extract >/dev/null)
+          for f in skate3 librexruntime.so librexgpu-xenos.so; do
+            cmp "zip/Skate3Recomp-Linux-aarch64/$f" "extract/squashfs-root/usr/bin/$f"
+          done
+
+      - name: Write release notes
+        run: |
+          gh api "repos/$GH_REPO/releases/generate-notes" -f tag_name="$TAG" --jq .body > generated.md
+          image=$(basename "$IMAGE")
+          sha=$(cut -d' ' -f1 "$IMAGE.sha256")
+          {
+            echo "Skate3Recomp $VERSION for **linux-aarch64**: a native ARM64 build for handhelds"
+            echo "running [DroidDeck](https://github.com/Droid-Deck) (Snapdragon 8 Gen 2 tested) and other"
+            echo "aarch64 Linux systems with glibc 2.43+ (Ubuntu 26.04 userland), Vulkan (Turnip on Adreno)"
+            echo "and 4K memory pages."
+            echo
+            echo "### Install on DroidDeck"
+            echo "1. Setup → Launcher → Linux apps → enable AppImages."
+            echo "2. Desktop → Add App → **GitHub** → \`$GH_REPO\`."
+            echo "3. Provide your own Skate 3 files, with Title Update 3 staged, in one of:"
+            echo "   - \`~/.local/share/skate3/game\` inside DroidDeck's Linux environment, or"
+            echo "   - \`/storage/emulated/0/skate3recomp/game\` (Android shared storage)."
+            echo
+            echo "No game data is included: you must own Skate 3."
+            echo
+            echo "### Files"
+            echo "- \`$image\` (SHA-256 \`$sha\`)"
+            echo "- \`$(basename "$ZIP")\`: the same binaries as a plain zip"
+            echo
+            cat generated.md
+          } > notes.md
+          cat notes.md
+
+      - name: Publish
+        run: gh release edit "$TAG" --draft=false --latest --notes-file notes.md

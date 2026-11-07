@@ -10,6 +10,8 @@
 !/tools/package_macos.sh
 !/tools/package_windows.ps1
 !/tools/cross-aarch64/
+!/tools/appimage/
+!/tools/release/
 
 # Local game dump and retail media. Users must provide their own copy.
 /game/

@@ -8,6 +8,8 @@
 #   codegen   host x86_64 build of rexglue + generate-all (nix develop .#codegen)
 #   build     cross-configure and build                 (nix develop .#cross)
 #   package   zip into out/release/Skate3Recomp-Linux-aarch64.zip
+#   appimage  out/release/Skate3Recomp-<version>-aarch64.AppImage, validated
+#             against DroidDeck's import rules (tools/appimage/)
 #
 # The recompiled sources in generated/ do not depend on the host CPU, so a
 # host-built rexglue generates them for the aarch64 build too.
@@ -24,19 +26,22 @@ cd "$repo"
 config=${1:-release}
 case "$config" in
     release|relwithdebinfo) shift || true ;;
-    sysroot|codegen|build|package) config=release ;;
+    sysroot|codegen|build|package|appimage) config=release ;;
     *) echo "build.sh: unknown config '$config'" >&2; exit 2 ;;
 esac
 steps=("$@")
-[ ${#steps[@]} -eq 0 ] && steps=(sysroot codegen build package)
+[ ${#steps[@]} -eq 0 ] && steps=(sysroot codegen build package appimage)
 
 game_root=${SKATE3_GAME_DATA_ROOT:-$repo/game}
 jobs=${SKATE3_JOBS:-$(nproc)}
 preset=linux-aarch64-$config
+# nix shells pin SOURCE_DATE_EPOCH to 1980; use the commit time so the
+# build stamp is both reproducible and meaningful.
+epoch=$(git -C "$repo" log -1 --format=%ct 2>/dev/null || date +%s)
 
 in_shell() {
     local shell=$1; shift
-    nix develop "$repo#$shell" --command bash -euo pipefail -c "$*"
+    nix develop "$repo#$shell" --command bash -euo pipefail -c "export SOURCE_DATE_EPOCH=$epoch; $*"
 }
 
 for step in "${steps[@]}"; do
@@ -70,6 +75,9 @@ for step in "${steps[@]}"; do
             ;;
         package)
             in_shell cross "SKATE3_PACKAGE_NAME=Skate3Recomp-Linux-aarch64 sh tools/package_linux.sh out/build/$preset"
+            ;;
+        appimage)
+            in_shell cross "tools/appimage/build-appimage.sh out/build/$preset out/release"
             ;;
         *)
             echo "build.sh: unknown step '$step'" >&2

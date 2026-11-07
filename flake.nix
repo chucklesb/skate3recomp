@@ -9,6 +9,13 @@
       pkgs = nixpkgs.legacyPackages.${system};
       llvm = pkgs.llvmPackages_20;
 
+      # Static aarch64 AppImage type-2 runtime (supports --appimage-extract,
+      # zstd squashfs). Pinned to a dated release, not "continuous".
+      appimageRuntime = pkgs.fetchurl {
+        url = "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-aarch64";
+        sha256 = "00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444";
+      };
+
       commonTools = with pkgs; [
         cmake
         ninja
@@ -66,7 +73,14 @@
             gnupg
             gnutar
             qemu-user
+            squashfsTools
+            desktop-file-utils
+            librsvg
+            shellcheck
+            gh
           ]);
+
+          SKATE3_APPIMAGE_RUNTIME = "${appimageRuntime}";
 
           SKATE3_CROSS_CLANG = "${llvm.clang-unwrapped}/bin/clang";
           SKATE3_CROSS_CLANGXX = "${llvm.clang-unwrapped}/bin/clang++";

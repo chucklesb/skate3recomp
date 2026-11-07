@@ -288,7 +288,7 @@ runtime on Snapdragon handhelds. The kernel must use 4K pages.
 tools/cross-aarch64/build.sh            # release; or: build.sh relwithdebinfo
 ```
 
-The script runs four steps, which can also be run one at a time with
+The script runs five steps, which can also be run one at a time with
 `build.sh release <step>...`:
 
 1. `sysroot`: `tools/cross-aarch64/make-sysroot.sh` downloads the pinned
@@ -304,11 +304,60 @@ The script runs four steps, which can also be run one at a time with
    `cmake/toolchains/linux-aarch64.cmake`: unwrapped clang/lld targeting
    `aarch64-linux-gnu` with the sysroot.
 4. `package`: writes `out/release/Skate3Recomp-Linux-aarch64.zip`.
+5. `appimage`: writes `out/release/Skate3Recomp-<version>-aarch64.AppImage`
+   (see below) and validates it.
 
 The game dump and Title Update 3 requirements are the same as for a native
 build. On the device, the runtime needs `libgtk-3-0`, a Vulkan driver with
 geometry shader and BC texture support (Turnip on Adreno), and a writable
 `/dev/shm`.
+
+### AppImage for DroidDeck
+
+`tools/appimage/build-appimage.sh` packs the three binaries, a launcher
+(`AppRun`), a desktop entry, an icon and the third-party license texts into a
+type-2 AppImage. It bundles no system libraries: GTK, the Vulkan loader and
+driver, X11/Wayland and audio come from the host. That matters on DroidDeck,
+whose own Turnip driver must be the one used.
+
+[DroidDeck](https://github.com/Droid-Deck) installs it from **Desktop → Add App
+→ GitHub** once AppImages are enabled under Setup → Launcher → Linux apps.
+DroidDeck extracts the image once rather than mounting it.
+`tools/appimage/validate.py` checks the image against DroidDeck's import rules,
+asset-name matching and runtime library set. `build-appimage.sh` runs it
+automatically.
+
+The AppImage itself is read-only, so `AppRun` keeps everything the game
+writes under `${XDG_DATA_HOME:-~/.local/share}/skate3`. It passes
+`--game_data_root` pointing at the first of these that holds `default.xex`:
+
+1. `$SKATE3_GAME_DATA_ROOT`
+2. `~/.local/share/skate3/game`
+3. `/storage/emulated/0/skate3recomp/game` (Android shared storage inside DroidDeck)
+
+If none holds the game, it falls back to an empty `~/.local/share/skate3/game`
+for the ISO installer. Logs go to `~/.local/share/skate3/logs`. Passing your
+own `--game_data_root=` or `--log_file=` overrides these.
+
+### Publishing aarch64 releases (fork workflow)
+
+CI cannot build the game, because codegen needs your Skate 3 files. Release
+binaries are therefore built locally and CI only validates and publishes them:
+
+1. Add your fork as a remote (`git remote add fork <url>`), and run
+   `gh auth login` (`gh` is in `nix develop .#cross`). The fork's default
+   branch must contain `.github/workflows/release-aarch64.yml`.
+2. Tag the release commit `v<upstream version>-aarch64.<n>`, for example
+   `v2.1.0-aarch64.1`, then push the tag to the fork.
+3. Run `tools/release/stage-release.sh v2.1.0-aarch64.1`. It builds from the
+   tag, checks that the embedded version matches, and uploads the AppImage
+   and zip (with `.sha256` files) to a draft release. It then starts the
+   `release-aarch64` workflow, which re-validates the assets on an arm64
+   runner, including a real `--appimage-extract`, and publishes the release.
+   A failed check leaves the release as a draft.
+
+The `cross-tooling` workflow exercises the toolchain, sysroot and AppImage
+pipeline with stub binaries on every change to these tools.
 
 ## macOS Build (Apple Silicon)
 

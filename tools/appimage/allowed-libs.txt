@@ -1,0 +1,39 @@
+# Shared libraries the AppImage's ELFs may link (DT_NEEDED). Each must be
+# provided by DroidDeck's Ubuntu runtime (DroidDeck tools/ubuntu/
+# packages-runtime.txt: libc6, libstdc++6, libgcc-s1, gir1.2-gtk-3.0 ->
+# libgtk-3-0t64, libx11-6, libx11-xcb1, libxcb1, libwayland-client0, zlib1g).
+# A new entry here needs a matching runtime package; validate.py fails on
+# anything not listed. Libraries SDL/the SDK dlopen at runtime are not
+# DT_NEEDED and are not checked here.
+
+# bundled in the AppImage
+librexruntime.so
+librexgpu-xenos.so
+
+# glibc / toolchain runtime
+ld-linux-aarch64.so.1
+libc.so.6
+libm.so.6
+libstdc++.so.6
+libgcc_s.so.1
+
+# GTK3 (ISO and title update installer file dialogs)
+libgtk-3.so.0
+libgdk-3.so.0
+libpangocairo-1.0.so.0
+libpango-1.0.so.0
+libharfbuzz.so.0
+libatk-1.0.so.0
+libcairo-gobject.so.2
+libcairo.so.2
+libgdk_pixbuf-2.0.so.0
+libgio-2.0.so.0
+libgobject-2.0.so.0
+libglib-2.0.so.0
+libz.so.1
+
+# windowing (SDK presenters)
+libX11.so.6
+libX11-xcb.so.1
+libxcb.so.1
+libwayland-client.so.0

@@ -1,0 +1,94 @@
+# Checks the linux-aarch64 cross build and AppImage tooling without game
+# data: CI cannot run codegen (it needs the user's Skate 3 files), so the
+# packaging pipeline is exercised end to end with cross-compiled stub
+# binaries in place of the game.
+
+name: cross-tooling
+
+on:
+  push:
+    branches: [main, linux-aarch64-cross]
+    paths:
+      - flake.nix
+      - flake.lock
+      - CMakePresets.json
+      - cmake/toolchains/**
+      - tools/cross-aarch64/**
+      - tools/appimage/**
+      - tools/release/**
+      - tests/test_cross_sysroot.py
+      - tests/test_appimage_validate.py
+      - .github/workflows/cross-tooling.yml
+      - .github/workflows/release-aarch64.yml
+  pull_request:
+    paths:
+      - flake.nix
+      - flake.lock
+      - CMakePresets.json
+      - cmake/toolchains/**
+      - tools/cross-aarch64/**
+      - tools/appimage/**
+      - tools/release/**
+      - tests/test_cross_sysroot.py
+      - tests/test_appimage_validate.py
+      - .github/workflows/cross-tooling.yml
+      - .github/workflows/release-aarch64.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cross-tooling-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tooling:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ github.token }}
+
+      - name: Evaluate the flake
+        run: nix flake check --no-build
+
+      - name: Unit tests
+        run: python3 -B -m unittest tests/test_cross_sysroot.py tests/test_appimage_validate.py -v
+
+      - name: Shellcheck
+        run: |
+          nix develop .#cross --command shellcheck \
+            tools/cross-aarch64/build.sh tools/cross-aarch64/make-sysroot.sh \
+            tools/appimage/AppRun tools/appimage/build-appimage.sh tools/appimage/stub-build.sh \
+            tools/release/stage-release.sh tools/package_linux.sh
+
+      - name: Cache the arm64 sysroot
+        uses: actions/cache@v4
+        with:
+          path: out/sysroot
+          key: sysroot-${{ hashFiles('tools/cross-aarch64/packages.txt', 'tools/cross-aarch64/sysroot.py', 'tools/cross-aarch64/make-sysroot.sh') }}
+
+      - name: Build the sysroot
+        run: nix develop .#cross --command tools/cross-aarch64/make-sysroot.sh
+
+      - name: Stub build, AppImage and validation
+        run: |
+          nix develop .#cross --command bash -euo pipefail -c '
+            tools/appimage/stub-build.sh out/build/stub 0.0.0-aarch64.0
+            SKATE3_SOURCE_URL=https://github.com/${{ github.repository }} \
+              tools/appimage/build-appimage.sh out/build/stub out/stub-release
+          '
+
+      - name: Corrupted image must fail validation
+        run: |
+          image=out/stub-release/Skate3Recomp-0.0.0-aarch64.0-aarch64.AppImage
+          cp "$image" broken.AppImage
+          printf 'XX' | dd of=broken.AppImage bs=1 seek=8 conv=notrunc status=none
+          if nix develop .#cross --command python3 -I tools/appimage/validate.py broken.AppImage; then
+            echo "::error::validate.py accepted an image without the AppImage magic"
+            exit 1
+          fi

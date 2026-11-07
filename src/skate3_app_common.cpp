@@ -1114,7 +1114,13 @@ void Skate3BaseApp::RestartGame() {
     CloseHandle(process_info.hThread);
     CloseHandle(process_info.hProcess);
 #elif defined(__linux__) || defined(__APPLE__)
-    const auto executable_path = rex::filesystem::GetExecutablePath();
+    auto executable_path = rex::filesystem::GetExecutablePath();
+    // A FUSE-mounted AppImage unmounts when this process exits, taking
+    // /proc/self/exe with it; its AppRun points this at the image itself.
+    if (const char* restart_exe = std::getenv("SKATE3_RESTART_EXE");
+        restart_exe && *restart_exe) {
+      executable_path = restart_exe;
+    }
     if (executable_path.empty()) {
       REXLOG_WARN("Restart requested, but the executable path could not be resolved");
       return;
