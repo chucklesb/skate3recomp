@@ -1,6 +1,7 @@
 #include "skate3_app_common.h"
 
 #include "harness/harness.h"
+#include "harness/harness_overlay.h"
 
 #include "skate3_demo_path.h"
 #include "skate3_fov.h"
@@ -695,6 +696,9 @@ void Skate3BaseApp::OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) {
   // skate3_native_render_mode_indicator shows it live). Input-transparent,
   // so it never affects cursor or focus handling.
   render_mode_indicator_ = std::make_unique<skate3::RenderModeIndicator>(drawer);
+  // Draws nothing unless the scenario harness is recording, playing back,
+  // scripting input or paused.
+  harness_overlay_ = std::make_unique<skate3::harness::HarnessOverlay>(drawer);
   RegisterAppBind("bind_skate3_menu", "Escape", "Skate 3 settings", [this] {
     // Escape backs out of the settings screen level by level (rows ->
     // category rail -> closed); when the screen is closed it opens it.
@@ -971,6 +975,7 @@ void Skate3BaseApp::OnShutdown() {
   }
   native_debug_dialog_.reset();
   render_mode_indicator_.reset();
+  harness_overlay_.reset();
 }
 
 void Skate3BaseApp::RegisterAppBind(std::string_view name, std::string_view default_key,

@@ -677,6 +677,7 @@ extern "C" REX_FUNC(sub_825623F0) {
   if (skate3::native_render::Enabled()) {
     skate3::native_scene::OnPhotoReplayUpdate();
   }
+  skate3::harness::OnReplayTick();
   __imp__sub_825623F0(ctx, base);
 }
 
@@ -874,6 +875,7 @@ extern "C" REX_FUNC(sub_82A92DC8) {
   if (skate3::native_render::Enabled()) {
     skate3::native_scene::OnMovieDecode();
   }
+  skate3::harness::OnMovieTick();
   __imp__sub_82A92DC8(ctx, base);
 }
 

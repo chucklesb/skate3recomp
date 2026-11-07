@@ -72,6 +72,8 @@ constexpr uint32_t kFeStackEnd = 0x214;
 constexpr uint32_t kFeRecordSize = 20;
 // PresentationEntity::m_MatLtoW (Matrix44, row-vector: translation in row 3).
 constexpr uint32_t kEntityMatLtoW = 352;
+// How long a skater entity stays a candidate after its last bind.
+constexpr uint64_t kSkaterKeepFrames = 120;
 
 std::atomic<bool> g_enabled{false};
 
@@ -108,6 +110,7 @@ struct GameState {
   int64_t fe_top = -1;
   uint32_t fe_depth = 0;
   uint32_t skater = 0;
+  uint32_t skater_candidates = 0;  // skater entities bound recently
   bool skater_valid = false;
   float skater_pos[3] = {};
   double skater_speed = 0.0;    // units/s, 3D
@@ -115,17 +118,44 @@ struct GameState {
   bool cam_valid = false;
   float cam_pos[3] = {};
   bool paused = false;
+  bool replay_active = false;  // PhotoReplayController::Update ticking
+  bool movie_active = false;   // MovieDecoder::Decode ticking
+  // Full FE push-state stack: screen id and the record's second field
+  // (-1 except in the photo editor).
+  std::vector<std::pair<int32_t, int32_t>> fe_stack;
 };
+
+// Frames a heartbeat stays "active" after its last tick.
+constexpr uint64_t kHeartbeatFrames = 10;
+std::atomic<uint64_t> g_replay_tick_frame{0};
+std::atomic<uint64_t> g_movie_tick_frame{0};
+
+std::string FeStackJson(const std::vector<std::pair<int32_t, int32_t>>& stack) {
+  std::string out = "[";
+  for (size_t i = 0; i < stack.size(); ++i) {
+    if (i) {
+      out += ",";
+    }
+    out += std::to_string(stack[i].first);
+    if (stack[i].second != -1) {
+      out += ":" + std::to_string(stack[i].second);
+    }
+  }
+  return out + "]";
+}
 
 std::string StateJson(const GameState& s, std::string_view tag = {}) {
   char buf[640];
   int n = std::snprintf(
       buf, sizeof(buf),
       "{\"frame\":%llu,\"t\":%.3f,\"fps\":%.1f,\"presence\":%u,\"fe_top\":%lld,"
-      "\"fe_depth\":%u,\"paused\":%s",
+      "\"fe_depth\":%u,\"paused\":%s,\"skaters\":%u,\"replay\":%s,\"movie\":%s",
       static_cast<unsigned long long>(s.frame), s.t, s.fps, s.presence,
-      static_cast<long long>(s.fe_top), s.fe_depth, s.paused ? "true" : "false");
+      static_cast<long long>(s.fe_top), s.fe_depth, s.paused ? "true" : "false",
+      s.skater_candidates, s.replay_active ? "true" : "false",
+      s.movie_active ? "true" : "false");
   std::string out(buf, n > 0 ? static_cast<size_t>(n) : 0);
+  out += ",\"fe\":" + FeStackJson(s.fe_stack);
   if (s.skater_valid) {
     n = std::snprintf(buf, sizeof(buf),
                       ",\"skater\":{\"entity\":\"0x%08X\",\"pos\":[%.3f,%.3f,%.3f],"
@@ -158,6 +188,7 @@ struct Run {
   std::mutex mu;
   std::condition_variable cv;  // frame advanced, poll advanced, pause changes
   uint64_t frame = 0;
+  std::atomic<uint64_t> frame_atomic{0};  // frame, readable without mu
   uint64_t poll = 0;
   GameState state;
   int64_t state_every = 10;
@@ -167,9 +198,11 @@ struct Run {
   bool have_last_pos = false;
   Clock::time_point last_pos_time;
 
-  // Skater entities bound since the last frame boundary.
+  // Skater entities and the frame each was last bound on. Binding runs on
+  // the render side and does not land between every pair of frame
+  // boundaries, so entities stay candidates for kSkaterKeepFrames.
   std::mutex skater_mu;
-  std::vector<uint32_t> skaters_this_frame;
+  std::vector<std::pair<uint32_t, uint64_t>> skaters_seen;
 
   // Scripted pad (input step).
   bool script_active = false;
@@ -1160,11 +1193,16 @@ void OnSkaterEntity(uint32_t entity) {
   if (!r || !g_enabled.load(std::memory_order_relaxed) || entity == 0) {
     return;
   }
+  const uint64_t frame = r->frame_atomic.load(std::memory_order_relaxed);
   std::lock_guard lk(r->skater_mu);
-  if (std::find(r->skaters_this_frame.begin(), r->skaters_this_frame.end(), entity) ==
-          r->skaters_this_frame.end() &&
-      r->skaters_this_frame.size() < 64) {
-    r->skaters_this_frame.push_back(entity);
+  for (auto& [e, seen] : r->skaters_seen) {
+    if (e == entity) {
+      seen = frame;
+      return;
+    }
+  }
+  if (r->skaters_seen.size() < 64) {
+    r->skaters_seen.emplace_back(entity, frame);
   }
 }
 
@@ -1183,9 +1221,15 @@ void OnFrame(uint8_t* base) {
       ReadU32(base, mgr + kFeStackEnd, &end) && end > beg && (end - beg) % kFeRecordSize == 0 &&
       (end - beg) / kFeRecordSize < 64) {
     s.fe_depth = (end - beg) / kFeRecordSize;
-    uint32_t top = 0;
-    if (ReadU32(base, end - kFeRecordSize, &top)) {
-      s.fe_top = top;
+    for (uint32_t a = beg; a < end; a += kFeRecordSize) {
+      uint32_t id = 0, second = 0;
+      if (!ReadU32(base, a, &id) || !ReadU32(base, a + 4, &second)) {
+        break;
+      }
+      s.fe_stack.emplace_back(static_cast<int32_t>(id), static_cast<int32_t>(second));
+    }
+    if (!s.fe_stack.empty()) {
+      s.fe_top = s.fe_stack.back().first;
     }
   }
   if (const uint32_t vc = native_scene::MainViewCamera()) {
@@ -1201,17 +1245,36 @@ void OnFrame(uint8_t* base) {
   }
   std::vector<uint32_t> skaters;
   {
+    const uint64_t frame = r->frame_atomic.load(std::memory_order_relaxed);
     std::lock_guard lk(r->skater_mu);
-    skaters.swap(r->skaters_this_frame);
+    auto& seen = r->skaters_seen;
+    seen.erase(std::remove_if(seen.begin(), seen.end(),
+                              [&](const auto& p) { return frame - p.second > kSkaterKeepFrames; }),
+               seen.end());
+    for (const auto& p : seen) {
+      skaters.push_back(p.first);
+    }
+  }
+  // The skater tracked last frame stays a candidate while its transform
+  // reads valid: binding is intermittent, its matrix is not.
+  if (r->last_skater &&
+      std::find(skaters.begin(), skaters.end(), r->last_skater) == skaters.end()) {
+    skaters.push_back(r->last_skater);
   }
   // The player's skater: the one the camera follows (closest to it), else
   // the one tracked last frame, else the first bound.
   uint32_t chosen = 0;
   float chosen_pos[3] = {};
   float best = 0.0f;
+  s.skater_candidates = static_cast<uint32_t>(skaters.size());
   for (uint32_t e : skaters) {
-    float m[16];
-    if (!ReadF32x16(base, e + kEntityMatLtoW, m) || !std::isfinite(m[12]) ||
+    float m[16] = {};
+    const bool read_ok = ReadF32x16(base, e + kEntityMatLtoW, m);
+    // Frontend and stand-in skaters sit at the origin with an identity
+    // transform; the player's never does.
+    const bool at_origin =
+        std::fabs(m[12]) < 1e-3f && std::fabs(m[13]) < 1e-3f && std::fabs(m[14]) < 1e-3f;
+    if (!read_ok || at_origin || !std::isfinite(m[12]) ||
         !std::isfinite(m[13]) || !std::isfinite(m[14]) || std::fabs(m[12]) > 1e6f ||
         std::fabs(m[13]) > 1e6f || std::fabs(m[14]) > 1e6f) {
       continue;
@@ -1235,9 +1298,13 @@ void OnFrame(uint8_t* base) {
 
   bool write_state = false;
   std::string state_line;
+  std::string fe_event;
+  const char* replay_event = nullptr;
+  const char* movie_event = nullptr;
   {
     std::unique_lock lk(r->mu);
     ++r->frame;
+    r->frame_atomic.store(r->frame, std::memory_order_relaxed);
     const double dt = std::chrono::duration<double>(now - r->last_frame_time).count();
     r->last_frame_time = now;
     s.frame = r->frame;
@@ -1269,6 +1336,22 @@ void OnFrame(uint8_t* base) {
       s.skater_hspeed = 0.0;
     }
     s.paused = r->paused;
+    s.replay_active = r->frame - g_replay_tick_frame.load(std::memory_order_relaxed) <=
+                          kHeartbeatFrames &&
+                      g_replay_tick_frame.load(std::memory_order_relaxed) != 0;
+    s.movie_active = r->frame - g_movie_tick_frame.load(std::memory_order_relaxed) <=
+                         kHeartbeatFrames &&
+                     g_movie_tick_frame.load(std::memory_order_relaxed) != 0;
+    if (s.fe_stack != r->state.fe_stack) {
+      fe_event = "\"stack\":" + FeStackJson(s.fe_stack) + ",\"from\":" +
+                 FeStackJson(r->state.fe_stack);
+    }
+    if (s.replay_active != r->state.replay_active) {
+      replay_event = s.replay_active ? "replay_start" : "replay_stop";
+    }
+    if (s.movie_active != r->state.movie_active) {
+      movie_event = s.movie_active ? "movie_start" : "movie_stop";
+    }
     r->state = s;
     if (r->state_every > 0 && r->frame % static_cast<uint64_t>(r->state_every) == 0) {
       write_state = true;
@@ -1289,6 +1372,54 @@ void OnFrame(uint8_t* base) {
     std::lock_guard lk(r->file_mu);
     r->state_out << state_line << "\n";
   }
+  // Transitions (after the run lock: Event takes it).
+  if (!fe_event.empty()) {
+    Event(*r, "fe", fe_event);
+  }
+  if (replay_event) {
+    Event(*r, replay_event, {});
+  }
+  if (movie_event) {
+    Event(*r, movie_event, {});
+  }
+}
+
+void OnReplayTick() {
+  if (Run* r = g_run; r && g_enabled.load(std::memory_order_relaxed)) {
+    g_replay_tick_frame.store(r->frame_atomic.load(std::memory_order_relaxed) + 1,
+                              std::memory_order_relaxed);
+  }
+}
+
+void OnMovieTick() {
+  if (Run* r = g_run; r && g_enabled.load(std::memory_order_relaxed)) {
+    g_movie_tick_frame.store(r->frame_atomic.load(std::memory_order_relaxed) + 1,
+                             std::memory_order_relaxed);
+  }
+}
+
+void Note(const char* kind, const std::string& fields_json) {
+  if (Run* r = g_run; r && g_enabled.load(std::memory_order_relaxed)) {
+    Event(*r, kind, fields_json);
+  }
+}
+
+Status CurrentStatus() {
+  Status st;
+  Run* r = g_run;
+  if (!r || !g_enabled.load(std::memory_order_relaxed)) {
+    return st;
+  }
+  st.enabled = true;
+  std::lock_guard lk(r->mu);
+  st.recording = r->recording;
+  st.playing = r->play_active;
+  st.scripted = r->script_active;
+  st.paused = r->paused;
+  if (r->recording) {
+    st.record_seconds = static_cast<double>(r->frame - r->rec_start_frame) / 60.0;
+  }
+  return st;
 }
 
 void ToggleRecording() {

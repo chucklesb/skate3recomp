@@ -1,0 +1,76 @@
+# Boot signed-out to the spawn plaza, look around, push off, and check the
+# skater actually moved. A smoke test for the harness itself.
+#
+#   tools/harness/run_scenario.py local scenarios/boot_to_plaza.toml
+#   tools/harness/run_scenario.py odin2 scenarios/boot_to_plaza.toml
+
+name = "boot_to_plaza"
+timeout_s = 300
+boot = "demo"
+state_every_frames = 5
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 240
+
+[[step]]
+do = "wait"
+frames = 90
+
+[[step]]
+do = "state"
+tag = "spawn"
+
+[[step]]
+do = "screenshot"
+tag = "spawn"
+count = 2
+every_frames = 30
+
+# Push off: tap A (push) four times while holding the stick forward.
+[[step]]
+do = "input"
+buttons = "a"
+ly = 1.0
+frames = 8
+
+[[step]]
+do = "input"
+ly = 1.0
+frames = 20
+
+[[step]]
+do = "input"
+buttons = "a"
+ly = 1.0
+frames = 8
+
+[[step]]
+do = "input"
+ly = 1.0
+frames = 20
+
+[[step]]
+do = "input"
+buttons = "a"
+ly = 1.0
+frames = 8
+
+[[step]]
+do = "screenshot"
+tag = "rolling"
+count = 6
+every_frames = 5
+
+[[step]]
+do = "state"
+tag = "rolling"
+
+[[step]]
+do = "expect"
+speed_gt = 0.5
+
+[[step]]
+do = "expect"
+no_log = "harness: screenshot .* failed"

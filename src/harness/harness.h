@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <vector>
 
 namespace skate3::harness {
@@ -50,5 +51,27 @@ void OnSkaterEntity(uint32_t entity);
 
 // Toggle input recording (bind), any thread.
 void ToggleRecording();
+
+// Heartbeats from existing guest hooks (any guest thread):
+// Sk8::Challenge::PhotoReplayController::Update (replay playback/editor) and
+// rw::movie::MovieDecoder::Decode (any movie). State reports each as active
+// while it ticked within the last few frames.
+void OnReplayTick();
+void OnMovieTick();
+
+// Free-form event for events.jsonl from other subsystems (any thread);
+// `fields_json` is the inside of a JSON object ("\"a\":1,\"b\":\"x\"").
+void Note(const char* kind, const std::string& fields_json);
+
+// For the on-screen indicator (UI thread).
+struct Status {
+  bool enabled = false;
+  bool recording = false;
+  bool playing = false;
+  bool scripted = false;
+  bool paused = false;
+  double record_seconds = 0.0;
+};
+Status CurrentStatus();
 
 }  // namespace skate3::harness
