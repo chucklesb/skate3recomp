@@ -91,15 +91,20 @@ jobs:
 
       - name: Testing variant AppImage and validation
         run: |
+          # The x86 runner extracts the aarch64 image through the cross
+          # shell's qemu-aarch64, as validate.py does.
           nix develop .#cross --command bash -euo pipefail -c '
-            SKATE3_APPIMAGE_VARIANT=testing SKATE3_APPIMAGE_STUB=1               SKATE3_SOURCE_URL=https://github.com/${{ github.repository }}               tools/appimage/build-appimage.sh out/build/stub out/stub-testing
+            SKATE3_APPIMAGE_VARIANT=testing SKATE3_APPIMAGE_STUB=1 \
+              SKATE3_SOURCE_URL=https://github.com/${{ github.repository }} \
+              tools/appimage/build-appimage.sh out/build/stub out/stub-testing
+            image=$PWD/out/stub-testing/skate3recomp-testing-0.0.0-aarch64.0-aarch64.AppImage
+            mkdir extract-testing
+            (cd extract-testing && qemu-aarch64 "$image" --appimage-extract >/dev/null)
+            root=extract-testing/squashfs-root
+            grep -qx "Name=Skate3Recomp Testing" "$root/skate3recomp-testing.desktop"
+            grep -qx "Icon=skate3recomp-testing" "$root/skate3recomp-testing.desktop"
+            cmp tools/appimage/skate3recomp-testing.png "$root/.DirIcon"
           '
-          image=out/stub-testing/skate3recomp-testing-0.0.0-aarch64.0-aarch64.AppImage
-          mkdir extract-testing
-          (cd extract-testing && "../$image" --appimage-extract >/dev/null)
-          grep -qx "Name=Skate3Recomp Testing" extract-testing/squashfs-root/skate3recomp-testing.desktop
-          grep -qx "Icon=skate3recomp-testing" extract-testing/squashfs-root/skate3recomp-testing.desktop
-          cmp tools/appimage/skate3recomp-testing.png extract-testing/squashfs-root/.DirIcon
 
       - name: Downloaded (non-executable) image must still validate
         run: |
