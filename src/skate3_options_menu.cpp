@@ -1,6 +1,8 @@
 #include "skate3_options_menu.h"
 
 #include "generated/skate3_init.h"
+#include "harness/harness.h"
+#include "harness/harness_pad.h"
 #include "native/skate3_native_guest_read.h"
 
 #include <algorithm>
@@ -1266,9 +1268,35 @@ extern "C" REX_FUNC(sub_82EDE718) {
                      REX_LOAD_U32(content + 4) == kContentTypeSavedGame &&
                      (ctx.r6.u32 & kDispositionMask) != kDispositionOpenExisting;
   const std::string root = write ? GuestRootName(base, ctx.r4.u32) : std::string();
+  // Scenario harness: every content open (type, file name, display name,
+  // disposition) goes to events.jsonl, to map where e.g. skate.Reel videos
+  // live. XCONTENT_DATA: +0 device, +4 type, +8 display name (WCHAR[128],
+  // big-endian), +0x108 file name (CHAR[42]).
+  std::string harness_fields;
+  if (skate3::harness::Enabled() && content >= 0x10000) {
+    std::string display;
+    for (uint32_t i = 0; i < 128; ++i) {
+      const uint16_t ch = REX_LOAD_U16(content + 8 + i * 2);
+      if (ch == 0) {
+        break;
+      }
+      display.push_back(ch < 0x80 ? static_cast<char>(ch) : '?');
+    }
+    const char* file = reinterpret_cast<const char*>(base + content + 0x108);
+    harness_fields = "\"type\":" + std::to_string(REX_LOAD_U32(content + 4)) +
+                     ",\"disposition\":" + std::to_string(ctx.r6.u32 & kDispositionMask) +
+                     ",\"root\":\"" +
+                     skate3::harness::JsonEscape(GuestRootName(base, ctx.r4.u32)) +
+                     "\",\"file\":\"" + skate3::harness::JsonEscape(std::string(file, strnlen(file, 42))) +
+                     "\",\"display\":\"" + skate3::harness::JsonEscape(display) + "\"";
+  }
   __imp__sub_82EDE718(ctx, base);
   if (write && (ctx.r3.u32 == 0 || ctx.r3.u32 == kErrorIoPending)) {
     SaveOpened(root);
+  }
+  if (!harness_fields.empty()) {
+    skate3::harness::Note("content_open",
+                          harness_fields + ",\"result\":" + std::to_string(ctx.r3.u32));
   }
 }
 

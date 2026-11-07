@@ -12,6 +12,7 @@
 !/tools/cross-aarch64/
 !/tools/appimage/
 !/tools/release/
+!/tools/harness/
 
 # Local game dump and retail media. Users must provide their own copy.
 /game/

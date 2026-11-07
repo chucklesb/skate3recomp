@@ -1,5 +1,6 @@
 #include "skate3_native_render.h"
 
+#include "harness/harness.h"
 #include "native/skate3_native_diag.h"
 #include "native/skate3_native_entity.h"
 #include "native/skate3_native_guest_read.h"
@@ -470,6 +471,7 @@ extern "C" REX_FUNC(sub_82B82E08) {
   if (skate3::native_render::Enabled()) {
     skate3::native_render::OnFrameEnd(base);
   }
+  skate3::harness::OnFrame(base);
   __imp__sub_82B82E08(ctx, base);
 }
 
@@ -607,6 +609,7 @@ extern "C" REX_FUNC(sub_82783D68) {  // Sk8::SkaterPresEntity
     skate3::native_entity::OnBindClass(
         entity, skate3::native_entity::EntClass::kSkater);
   }
+  skate3::harness::OnSkaterEntity(entity);
 }
 
 extern "C" REX_FUNC(sub_82785260) {  // ColorizedSkaterPresEntity
@@ -674,6 +677,7 @@ extern "C" REX_FUNC(sub_825623F0) {
   if (skate3::native_render::Enabled()) {
     skate3::native_scene::OnPhotoReplayUpdate();
   }
+  skate3::harness::OnReplayTick();
   __imp__sub_825623F0(ctx, base);
 }
 
@@ -871,6 +875,7 @@ extern "C" REX_FUNC(sub_82A92DC8) {
   if (skate3::native_render::Enabled()) {
     skate3::native_scene::OnMovieDecode();
   }
+  skate3::harness::OnMovieTick();
   __imp__sub_82A92DC8(ctx, base);
 }
 
