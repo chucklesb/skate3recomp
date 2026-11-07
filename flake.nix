@@ -75,7 +75,6 @@
             qemu-user
             squashfsTools
             desktop-file-utils
-            librsvg
             shellcheck
             gh
           ]);

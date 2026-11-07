@@ -315,8 +315,8 @@ geometry shader and BC texture support (Turnip on Adreno), and a writable
 ### AppImage for DroidDeck
 
 `tools/appimage/build-appimage.sh` packs the three binaries, a launcher
-(`AppRun`), a desktop entry, an icon and the third-party license texts into a
-type-2 AppImage. It bundles no system libraries: GTK, the Vulkan loader and
+(`AppRun`), a desktop entry, an icon cropped from `banner.png`, and the
+third-party license texts into a type-2 AppImage. It bundles no system libraries: GTK, the Vulkan loader and
 driver, X11/Wayland and audio come from the host. That matters on DroidDeck,
 whose own Turnip driver must be the one used.
 

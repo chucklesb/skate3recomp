@@ -6,7 +6,7 @@
 # Writes <out-dir>/Skate3Recomp-<version>-aarch64.AppImage and a .sha256
 # next to it (out-dir defaults to out/release), then runs validate.py on it
 # (SKATE3_APPIMAGE_SKIP_VALIDATE=1 skips that). Run inside
-# `nix develop .#cross`, which provides mksquashfs, rsvg-convert,
+# `nix develop .#cross`, which provides mksquashfs,
 # desktop-file-validate and SKATE3_APPIMAGE_RUNTIME (the pinned aarch64
 # type-2 runtime).
 #
@@ -45,9 +45,9 @@ done
 
 sed "s/@VERSION@/$version/" "$here/skate3recomp.desktop" > "$appdir/skate3recomp.desktop"
 desktop-file-validate "$appdir/skate3recomp.desktop"
-install -m 644 "$here/skate3recomp.svg" "$appdir/skate3recomp.svg"
-rsvg-convert -w 256 -h 256 "$here/skate3recomp.svg" -o "$appdir/skate3recomp.png"
-cp "$appdir/skate3recomp.png" "$appdir/.DirIcon"
+# 256x256, cropped from the repository's banner.png.
+install -m 644 "$here/skate3recomp.png" "$appdir/skate3recomp.png"
+install -m 644 "$here/skate3recomp.png" "$appdir/.DirIcon"
 
 licenses=$appdir/usr/share/licenses/skate3recomp
 sdk=$repo/third_party/rexglue-sdk
