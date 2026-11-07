@@ -73,10 +73,10 @@ REXCVAR_DECLARE(bool, skate3_native_render_scene_ssao);
 REXCVAR_DECLARE(double, skate3_native_render_scene_ssao_radius);
 REXCVAR_DECLARE(double, skate3_native_render_scene_ssao_intensity);
 REXCVAR_DECLARE(double, skate3_native_render_scene_ssao_luma_protect);
-REXCVAR_DECLARE(bool, skate3_native_render_scene_experimental_static_shadows);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_shadow_static_casters);
 REXCVAR_DECLARE(double, skate3_native_render_scene_shadow_static_strength);
 REXCVAR_DECLARE(double, skate3_native_render_scene_shadow_static_radius);
-REXCVAR_DECLARE(bool, skate3_native_render_scene_experimental_pcss);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_shadow_pcss);
 REXCVAR_DECLARE(double, skate3_native_render_scene_shadow_pcss_sun_deg);
 REXCVAR_DECLARE(double, skate3_native_render_scene_shadow_pcss_max_m);
 REXCVAR_DECLARE(double, skate3_native_render_scene_shadow_static_bias);
@@ -745,14 +745,13 @@ void DrawLightingPostSection() {
 void DrawShadowsSection() {
   CvarCheckbox("Dynamic shadows", REXCVAR_GET(skate3_native_render_scene_shadows),
                "Native CSM: skater/NPC/prop shadows onto the world");
-  CvarCheckbox("Static sun shadows (experimental)",
-               REXCVAR_GET(skate3_native_render_scene_experimental_static_shadows),
+  CvarCheckbox("Static sun shadows",
+               REXCVAR_GET(skate3_native_render_scene_shadow_static_casters),
                "Native static sun-shadow map: buildings, trees, rails and "
                "placed props cast live shadows from a dedicated "
                "sun-aligned depth map: shade on characters and props, "
                "and shadows that follow a moved sun. The game's own "
-               "dynamic shadow cascades are untouched. Shelved (KI-5): reads as "
-               "odd extra shadows in places; off by default.");
+               "dynamic shadow cascades are untouched. Off by default.");
   CvarSlider("static shadow strength",
              REXCVAR_GET(skate3_native_render_scene_shadow_static_strength), 0.0f, 1.0f, "%.2f",
              "How dark static-geometry shadows get (characters/props always "
@@ -763,11 +762,11 @@ void DrawShadowsSection() {
              "Far-cascade half-extent of the static sun-shadow map (mid and "
              "inner cascades cover 1/2 and 1/6 at 2x/6x density). Larger "
              "reaches farther at lower far-cascade density.");
-  CvarCheckbox("Soft shadows (PCSS, experimental)",
-               REXCVAR_GET(skate3_native_render_scene_experimental_pcss),
+  CvarCheckbox("Soft shadows (PCSS)",
+               REXCVAR_GET(skate3_native_render_scene_shadow_pcss),
                "Contact-hardening filter: crisp where a shadow touches "
-               "its caster, progressively softer with caster height. Shelved "
-               "(KI-5); off = the game-exact atlas sampling.");
+               "its caster, progressively softer with caster height. "
+               "Off = the game-exact atlas sampling.");
   CvarSlider("sun angular size (deg)", REXCVAR_GET(skate3_native_render_scene_shadow_pcss_sun_deg),
              0.1f, 8.0f, "%.1f",
              "Penumbra growth per meter of caster height (the real sun "

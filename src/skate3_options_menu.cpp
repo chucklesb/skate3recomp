@@ -381,6 +381,14 @@ Page BuildGraphicsPage(const RestartSettings& settings) {
   }
   NativeOnly(AddRestart(page, settings, "msaa"));
   NativeOnly(AddRestart(page, settings, "shadow_quality"));
+  NativeOnly(AddToggle(page, "Enhanced Shadows",
+                       "Shadows from buildings and level geometry, not just characters.",
+                       {"skate3_native_render_scene_shadow_static_casters"}));
+  NativeOnly(AddRestart(page, settings, "static_shadow_res"));
+  NativeOnly(AddToggle(page, "PCSS Shadows",
+                       "Contact-hardening soft shadows: sharp near the caster, softer with "
+                       "distance.",
+                       {"skate3_native_render_scene_shadow_pcss"}));
   NativeOnly(AddToggle(page, "Ambient Occlusion",
                        "Soft contact shading where surfaces meet: under ledges, rails and "
                        "the skater.",

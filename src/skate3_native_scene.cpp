@@ -684,17 +684,14 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_shadow_caster_parity, true,
                     "casting it painted a hard brim band across the editor face). "
                     "OFF = every published character piece casts (old behavior).")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
-// Shelved enhancements (KI-5): the static sun-shadow map and PCSS read as
-// odd, blocky extra shadows in play and were pulled from the settings
-// menus. The code and tuning knobs stay for a later revisit; these two
-// switches default off and use names the settings UI does not know, so
-// the SDK overlay hides its rows and a saved "on" from an older
-// settings.toml no longer applies. Turn them back on with
-// --skate3_native_render_scene_experimental_static_shadows=true /
-// --skate3_native_render_scene_experimental_pcss=true or the F12 dialog.
-REXCVAR_DEFINE_BOOL(skate3_native_render_scene_experimental_static_shadows, false,
+// Opt-in enhancements (KI-5): the static sun-shadow map ("Enhanced
+// Shadows") and PCSS default off but are offered in the settings menus
+// again. Upstream shelved them as odd extra shadows; on Turnip (Odin 2)
+// they read as plausible hard/soft shadows, at a ~5-6 ms GPU cost there.
+// These names are the ones the SDK settings overlay and settings.toml
+// key on, so its rows and persistence follow them.
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_shadow_static_casters, false,
                     "Skate 3",
-                    "EXPERIMENTAL (shelved, KI-5). "
                     "Native static sun-shadow map: render the STATIC world "
                     "(buildings, trees, rails, placed props) into a separate "
                     "camera-centered ortho depth map along the material sun, "
@@ -731,8 +728,7 @@ REXCVAR_DEFINE_INT32(skate3_native_render_scene_shadow_static_size, 4096,
                      "~9 cm. Applies live: the map recreates on change.")
     .range(1024, 8192)
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
-REXCVAR_DEFINE_BOOL(skate3_native_render_scene_experimental_pcss, false, "Skate 3",
-                    "EXPERIMENTAL (shelved, KI-5). "
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_shadow_pcss, false, "Skate 3",
                     "Contact-hardening soft shadows (PCSS): a blocker search "
                     "estimates the caster distance per pixel and the filter "
                     "width follows the sun's angular size: crisp at the "

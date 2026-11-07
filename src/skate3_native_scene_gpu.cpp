@@ -105,8 +105,8 @@ REXCVAR_DECLARE(bool, skate3_native_render_scene_ropa_blend);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_ropa_inline);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_selection_outline);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_shadow_caster_parity);
-REXCVAR_DECLARE(bool, skate3_native_render_scene_experimental_pcss);
-REXCVAR_DECLARE(bool, skate3_native_render_scene_experimental_static_shadows);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_shadow_pcss);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_shadow_static_casters);
 REXCVAR_DECLARE(double, skate3_native_render_scene_shadow_pcss_blocker_m);
 REXCVAR_DECLARE(double, skate3_native_render_scene_shadow_pcss_max_m);
 REXCVAR_DECLARE(double, skate3_native_render_scene_shadow_pcss_min_texel);
@@ -4243,12 +4243,22 @@ bool EnsureShadowResources(const NativeGuestOutputRenderContext& context) {
   }
   uint32_t want_static_size = uint32_t(std::clamp(
       REXCVAR_GET(skate3_native_render_scene_shadow_static_size), 1024, 8192));
-  if (device->backend() == nrhi::Backend::kD3D12) {
-    // The 3-tile cascade row must fit D3D12's 16384 2D-texture width cap:
-    // per-tile sizes above 5461 cannot allocate there (the 8192 setting
-    // asks for 24576x8192), while desktop Vulkan allows 32768-wide.
+  {
+    // The 3-tile cascade row must fit a 16384-wide 2D texture: D3D12's hard
+    // cap, and Adreno's maxImageDimension2D (Qualcomm and Turnip) on Vulkan.
+    // Per-tile sizes above 5461 exceed it (the 8192 setting asks for
+    // 24576x8192), which is invalid on such a device rather than a clean
+    // allocation failure. Some desktop Vulkan GPUs allow 32768, but nrhi
+    // exposes no device limits, so the portable cap applies everywhere.
+    const uint32_t asked_static_size = want_static_size;
     while (want_static_size * 3 > 16384) {
       want_static_size /= 2;
+    }
+    static uint32_t logged_static_clamp = 0;
+    if (want_static_size != asked_static_size && logged_static_clamp != asked_static_size) {
+      logged_static_clamp = asked_static_size;
+      REXLOG_INFO("native-scene: static sun map size {} clamped to {} ({}x{} atlas, 16384 cap)",
+                  asked_static_size, want_static_size, want_static_size * 3, want_static_size);
     }
   }
   if (g_r.static_sun != nullptr && g_r.static_sun_requested != want_static_size) {
@@ -4264,7 +4274,7 @@ bool EnsureShadowResources(const NativeGuestOutputRenderContext& context) {
     g_r.nsm_built_radius = 0.0f;
   }
   if (!g_r.static_sun && g_r.shadow_raw != nullptr &&
-      REXCVAR_GET(skate3_native_render_scene_experimental_static_shadows)) {
+      REXCVAR_GET(skate3_native_render_scene_shadow_static_casters)) {
     // Native static sun-shadow map (see RendererState). THREE cascade
     // tiles side by side: inner (r/6, centimeter contact detail with
     // useful reach), mid (r/2) and far (full radius, large-caster
@@ -6917,7 +6927,7 @@ static void RenderStaticSunMap(const NativeGuestOutputRenderContext& context,
       g_r.pso_shadow_caster_clip == nullptr || debug_mode != 0 ||
       !scene.shadow_valid ||
       !REXCVAR_GET(skate3_native_render_scene_shadows) ||
-      !REXCVAR_GET(skate3_native_render_scene_experimental_static_shadows)) {
+      !REXCVAR_GET(skate3_native_render_scene_shadow_static_casters)) {
     return;
   }
   // Sun axis = the material sun (c6). It is the only sun-like direction
@@ -8902,7 +8912,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
     // shares the angular knobs even on frames with no dynamic casters.
     if (scene.shadow_valid) {
       cb[136] =
-          REXCVAR_GET(skate3_native_render_scene_experimental_pcss) ? 1.0f : 0.0f;
+          REXCVAR_GET(skate3_native_render_scene_shadow_pcss) ? 1.0f : 0.0f;
       cb[137] = std::tan(
           0.5f * 0.01745329f *
           float(REXCVAR_GET(skate3_native_render_scene_shadow_pcss_sun_deg)));
