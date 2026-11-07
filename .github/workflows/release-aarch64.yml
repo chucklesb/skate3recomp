@@ -88,6 +88,7 @@ jobs:
         run: |
           mkdir zip extract
           unzip -q "$ZIP" -d zip
+          chmod +x "$IMAGE"
           (cd extract && "$IMAGE" --appimage-extract >/dev/null)
           for f in skate3 librexruntime.so librexgpu-xenos.so; do
             cmp "zip/Skate3Recomp-Linux-aarch64/$f" "extract/squashfs-root/usr/bin/$f"

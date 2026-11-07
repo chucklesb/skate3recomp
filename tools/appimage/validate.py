@@ -190,7 +190,12 @@ def load_allowlist(path):
 
 
 def extract(image, dest):
-    cmd = [os.path.abspath(image), "--appimage-extract"]
+    # Run an executable copy, as DroidDeck's importer does: downloads (e.g.
+    # `gh release download`) do not keep the executable bit.
+    runnable = os.path.join(dest, "image.AppImage")
+    shutil.copyfile(image, runnable)
+    os.chmod(runnable, 0o755)
+    cmd = [runnable, "--appimage-extract"]
     if platform.machine() not in ("aarch64", "arm64"):
         qemu = shutil.which("qemu-aarch64") or shutil.which("qemu-aarch64-static")
         if not qemu:
@@ -230,7 +235,7 @@ def validate(args):
     with tempfile.TemporaryDirectory() as tmp:
         try:
             appdir = extract(image, tmp)
-        except (subprocess.CalledProcessError, RuntimeError) as e:
+        except (subprocess.CalledProcessError, RuntimeError, OSError) as e:
             r.check(False, "--appimage-extract", str(e))
             return r.failures
         r.check(os.path.isdir(appdir), "--appimage-extract produced squashfs-root")

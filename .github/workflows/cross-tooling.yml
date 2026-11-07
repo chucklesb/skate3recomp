@@ -87,6 +87,14 @@ jobs:
               tools/appimage/build-appimage.sh out/build/stub out/stub-release
           '
 
+      - name: Downloaded (non-executable) image must still validate
+        run: |
+          image=out/stub-release/Skate3Recomp-0.0.0-aarch64.0-aarch64.AppImage
+          mkdir -p downloaded
+          cp "$image" downloaded/
+          chmod 644 downloaded/*.AppImage
+          nix develop .#cross --command python3 -I tools/appimage/validate.py downloaded/*.AppImage
+
       - name: Corrupted image must fail validation
         run: |
           image=out/stub-release/Skate3Recomp-0.0.0-aarch64.0-aarch64.AppImage
