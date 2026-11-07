@@ -4072,6 +4072,7 @@ nrhi::Pipeline* EnsureScreenFxPipeline(
     desc.format = format;
     desc.usage = nrhi::kTextureUsageRenderTarget;
     desc.initial_state = nrhi::ResourceState::kRenderTarget;
+    desc.name = "native: screen fx input";
     g_r.screen_fx_input = device->CreateTexture(desc);
     if (g_r.screen_fx_input == nullptr) return nullptr;
     nrhi::TextureViewDesc view;
@@ -4227,6 +4228,7 @@ bool EnsureShadowResources(const NativeGuestOutputRenderContext& context) {
     desc.initial_state = nrhi::ResourceState::kRenderTarget;
     desc.clear_color[0] = 1.0f;  // depth: far = lit
     desc.clear_color[1] = 1.0f;
+    desc.name = "native: shadow atlas";
     g_r.world_shadow = device->CreateTexture(desc);
     if (g_r.world_shadow != nullptr) {
       nrhi::TextureViewDesc vd;
@@ -4289,6 +4291,7 @@ bool EnsureShadowResources(const NativeGuestOutputRenderContext& context) {
     desc.initial_state = nrhi::ResourceState::kRenderTarget;
     desc.clear_color[0] = 1.0f;  // depth: far = lit
     desc.clear_color[1] = 1.0f;
+    desc.name = "native: static sun map";
     g_r.static_sun = device->CreateTexture(desc);
     // Allocation-failure fallback (VRAM pressure, driver limits): a
     // coarser static sun map beats marking the whole renderer failed and
@@ -4301,6 +4304,7 @@ bool EnsureShadowResources(const NativeGuestOutputRenderContext& context) {
           "native-scene: static sun-shadow map allocation failed, retrying "
           "at {}x{}",
           g_r.static_sun_size * 3, g_r.static_sun_size);
+      desc.name = "native: static sun map";
       g_r.static_sun = device->CreateTexture(desc);
     }
     if (g_r.static_sun != nullptr) {
@@ -4366,6 +4370,7 @@ bool EnsureBlurOutlineTargets(const NativeGuestOutputRenderContext& context) {
       desc.usage = nrhi::kTextureUsageRenderTarget |
                    (t == 0 ? nrhi::kTextureUsageCopySource
                            : nrhi::kTextureUsageNone);
+      desc.name = "native: photo blur";
       g_r.blur_tex[t] = device->CreateTexture(desc);
       if (g_r.blur_tex[t] == nullptr) {
         ok = false;
@@ -4416,6 +4421,7 @@ bool EnsureBlurOutlineTargets(const NativeGuestOutputRenderContext& context) {
     desc.usage = nrhi::kTextureUsageRenderTarget;
     bool ok = true;
     for (int t = 0; t < 2 && ok; ++t) {
+      desc.name = "native: menu blur";
       g_r.menu_blur_tex[t] = device->CreateTexture(desc);
       if (g_r.menu_blur_tex[t] == nullptr) {
         ok = false;
@@ -4465,6 +4471,7 @@ bool EnsureBlurOutlineTargets(const NativeGuestOutputRenderContext& context) {
     desc.format = nrhi::Format::kR8_UNORM;
     desc.usage = nrhi::kTextureUsageRenderTarget;
     desc.initial_state = nrhi::ResourceState::kRenderTarget;
+    desc.name = "native: outline mask";
     g_r.outline_mask = device->CreateTexture(desc);
     if (g_r.outline_mask == nullptr) {
       REXLOG_ERROR("native-scene: outline mask creation failed; outline disabled");
@@ -4630,6 +4637,7 @@ bool EnsureOutputSizedTargets(const NativeGuestOutputRenderContext& context) {
     desc.usage = nrhi::kTextureUsageDepthStencil;
     desc.initial_state = nrhi::ResourceState::kDepthWrite;
     desc.clear_depth = 1.0f;
+    desc.name = "native: scene depth";
     g_r.depth = g_r.device->CreateTexture(desc);
     if (g_r.depth == nullptr) {
       g_r.failed = true;
@@ -4655,6 +4663,7 @@ bool EnsureOutputSizedTargets(const NativeGuestOutputRenderContext& context) {
       cdesc.clear_color[1] = 0.35f;
       cdesc.clear_color[2] = 0.55f;
       cdesc.clear_color[3] = 1.0f;
+      cdesc.name = "native: scene color (msaa)";
       g_r.msaa_color = g_r.device->CreateTexture(cdesc);
       if (g_r.msaa_color == nullptr) {
         if (g_r.hdr_active) {
@@ -4713,6 +4722,7 @@ bool EnsureOutputSizedTargets(const NativeGuestOutputRenderContext& context) {
       hdesc.format = g_r.hdr_scene_format;
       hdesc.usage = nrhi::kTextureUsageRenderTarget;
       hdesc.initial_state = nrhi::ResourceState::kRenderTarget;
+      hdesc.name = "native: hdr resolved";
       g_r.hdr_resolved = g_r.device->CreateTexture(hdesc);
       if (g_r.hdr_resolved != nullptr) {
         nrhi::TextureViewDesc vd;
@@ -4745,6 +4755,7 @@ bool EnsureHallOfMeatDepth(const NativeGuestOutputRenderContext& context) {
   desc.usage = nrhi::kTextureUsageDepthStencil;
   desc.initial_state = nrhi::ResourceState::kDepthWrite;
   desc.clear_depth = 1.0f;
+  desc.name = "native: occlusion depth";
   g_r.hom_depth = context.device->CreateTexture(desc);
   return g_r.hom_depth != nullptr;
 }

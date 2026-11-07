@@ -47,6 +47,7 @@ enum class Verb {
   kExpect,      // log="regex" | no_log="regex" | speed_gt | speed_lt | presence
   kExit,        // code=0
   kQuery,       // live channel only: what="state"|"status"
+  kCapture,     // tag="x": RenderDoc capture of the next frame (RenderDoc attached)
 };
 
 struct Step {
@@ -101,6 +102,10 @@ struct Scenario {
   double timeout_s = 600.0;
   bool boot_demo = true;
   int64_t state_every_frames = 10;
+  // Vulkan validation layers wanted. The instance exists before the harness
+  // starts, so run_scenario.py passes --vulkan_validation_enabled and
+  // --vulkan_log_debug_messages; the harness only checks and reports.
+  bool vulkan_validation = false;
   std::vector<std::pair<std::string, std::string>> cvars;
   std::vector<Step> steps;
 };

@@ -222,13 +222,26 @@ def fetch(dev: Device, out_root: Path) -> Path:
 # ------------------------------------------------------------------ scenario files
 
 
-def scenario_timeout(path: Path) -> float:
+def scenario_settings(path: Path) -> dict:
     try:
         import tomllib  # Python 3.11+
         with path.open("rb") as f:
-            return float(tomllib.load(f).get("timeout_s", 600))
+            return tomllib.load(f)
     except Exception:
-        return 600.0
+        return {}
+
+
+def scenario_timeout(path: Path) -> float:
+    return float(scenario_settings(path).get("timeout_s", 600))
+
+
+def scenario_flags(path: Path) -> list[str]:
+    """Init-time flags a scenario needs before the harness starts."""
+    flags = []
+    if scenario_settings(path).get("vulkan_validation"):
+        # The Vulkan instance exists before the harness loads the scenario.
+        flags += ["--vulkan_validation_enabled=true", "--vulkan_log_debug_messages=true"]
+    return flags
 
 
 def summary(run: Path) -> int:
@@ -240,6 +253,11 @@ def summary(run: Path) -> int:
     print(f"{run.name}: {r['status']} (code {r['code']}) - {r['reason']}")
     print(f"  {r['frames']} frames, {r['seconds']:.1f} s, {r['screenshots']} screenshots, "
           f"{r['warnings']} warnings, {r['errors']} errors")
+    if r.get("validation_enabled"):
+        print(f"  Vulkan validation: {r.get('validation_messages', 0)} messages "
+              f"(validation.txt)")
+    for c in r.get("captures", []):
+        print(f"  RenderDoc capture: {c}")
     for f in r.get("failures", []):
         print(f"  FAIL {f}")
     state = run / "state.jsonl"
@@ -308,7 +326,7 @@ def main() -> int:
         out = a.out.resolve()
         out.mkdir(parents=True, exist_ok=True)
         args = [str(a.exe.resolve()), f"--skate3_harness_scenario={a.scenario.resolve()}",
-                f"--skate3_harness_out={out}", *extra]
+                f"--skate3_harness_out={out}", *scenario_flags(a.scenario), *extra]
         log(" ".join(shlex.quote(x) for x in args))
         code = subprocess.run(args).returncode
         current = (out / "current_run.txt")
@@ -322,7 +340,8 @@ def main() -> int:
 
     if a.cmd == "odin2":
         dev.adb_push(a.scenario.resolve(), f"{SHARED}/scenarios/{a.scenario.name}")
-        launch(dev, [f"--skate3_harness_scenario={SHARED}/scenarios/{a.scenario.name}", *extra])
+        launch(dev, [f"--skate3_harness_scenario={SHARED}/scenarios/{a.scenario.name}",
+                     *scenario_flags(a.scenario), *extra])
         log(f"running {a.scenario.name}")
         wait_for_exit(dev, scenario_timeout(a.scenario) + 120)
         run = fetch(dev, a.out.resolve())

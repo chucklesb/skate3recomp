@@ -1,0 +1,28 @@
+# Boot to gameplay and take a RenderDoc capture of a gameplay frame.
+# Run it with RenderDoc injected (launch from qrenderdoc / renderdoccmd on
+# desktop, or LD_PRELOAD + the RenderDoc implicit layer on Linux). Without
+# RenderDoc the capture step fails with a clear message. With RenderDoc
+# attached, GPU debug markers turn on automatically, so the capture shows
+# the native renderer's passes as labels ("native: main scene", ...) and its
+# render targets by name.
+
+name = "renderdoc_capture"
+timeout_s = 600
+boot = "demo"
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 120
+
+[[step]]
+do = "screenshot"
+tag = "captured_view"
+
+[[step]]
+do = "capture"
+tag = "gameplay"

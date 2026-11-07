@@ -29,6 +29,7 @@
 #include <rex/logging.h>
 #include <rex/logging/api.h>
 #include <rex/ppc/context.h>
+#include <rex/ui/renderdoc_capture.h>
 #include <spdlog/sinks/base_sink.h>
 
 #include "harness/harness_pad.h"
@@ -246,6 +247,9 @@ struct Run {
   std::atomic<uint64_t> warnings{0};
   std::atomic<uint64_t> errors{0};
   std::atomic<uint64_t> shots{0};
+  std::atomic<uint64_t> validation{0};  // Vulkan validation-layer messages
+  std::ofstream validation_out;         // validation.txt, opened on the first
+  std::vector<std::string> captures;    // RenderDoc .rdc paths (guarded by mu)
   std::vector<std::string> failures;  // guarded by mu
 
   // Threads.
@@ -326,10 +330,24 @@ class LogTap final : public spdlog::sinks::base_sink<std::mutex> {
     spdlog::memory_buf_t formatted;
     formatter_->format(msg, formatted);
     const std::string line(formatted.data(), formatted.size());
+    // Validation-layer messages, as the SDK's debug messenger formats them:
+    // "Vulkan <severity> (Validation, ID ...".
+    const std::string_view payload(msg.payload.data(), msg.payload.size());
+    const bool validation = payload.substr(0, 7) == "Vulkan " &&
+                            payload.find("Validation") != std::string_view::npos &&
+                            payload.find("Validation") < 40;
     {
       std::lock_guard lk(run_->file_mu);
       if (run_->log_out) {
         run_->log_out << line;
+      }
+      if (validation) {
+        run_->validation.fetch_add(1, std::memory_order_relaxed);
+        if (!run_->validation_out.is_open()) {
+          run_->validation_out.open(run_->dir / "validation.txt",
+                                    std::ios::binary | std::ios::app);
+        }
+        run_->validation_out << line;
       }
     }
     std::lock_guard lk(waiters_mu_);
@@ -373,7 +391,16 @@ std::string ResultJson(Run& r, int code, std::string_view status, std::string_vi
     }
     os << "],\n";
     os << "  \"last_state\": " << StateJson(r.state) << ",\n";
+    os << "  \"captures\": [";
+    for (size_t i = 0; i < r.captures.size(); ++i) {
+      os << (i ? ", " : "") << "\"" << JsonEscape(r.captures[i]) << "\"";
+    }
+    os << "],\n";
   }
+  // GetFlagByName: "" when the cvar does not exist (no Vulkan backend).
+  os << "  \"validation_enabled\": "
+     << (rex::cvar::GetFlagByName("vulkan_validation_enabled") == "true" ? "true" : "false")
+     << ",\n  \"validation_messages\": " << r.validation.load() << ",\n";
   os << "  \"seconds\": " << Seconds(r) << ",\n  \"warnings\": " << r.warnings.load()
      << ",\n  \"errors\": " << r.errors.load() << ",\n  \"screenshots\": " << r.shots.load()
      << ",\n  \"dir\": \"" << JsonEscape(r.dir.generic_string()) << "\"\n}\n";
@@ -626,6 +653,7 @@ std::string StopRecording(Run& r) {
 }
 
 Outcome Execute(Run& r, const Step& st);
+std::string SafeName(std::string s);
 
 Outcome ExecuteWait(Run& r, const Step& st) {
   if (st.ms) {
@@ -863,6 +891,34 @@ Outcome Execute(Run& r, const Step& st) {
 
     case Verb::kExit:
       FinishAndExit(r, st.code, st.code == 0 ? "pass" : "fail", "exit step");
+
+    case Verb::kCapture: {
+      if (!rex::ui::renderdoc::Attached()) {
+        return Fail("RenderDoc is not attached (launch the game from RenderDoc, or preload it)");
+      }
+      std::error_code ec;
+      fs::create_directories(r.dir / "captures", ec);
+      const std::string tag = st.tag.empty() ? "capture" : SafeName(st.tag);
+      const uint32_t before = rex::ui::renderdoc::NumCaptures();
+      rex::ui::renderdoc::TriggerCapture((r.dir / "captures" / tag).string());
+      // The capture lands on the next presented frame; writing it can take
+      // a few seconds on a handheld.
+      const auto deadline = Clock::now() + std::chrono::seconds(60);
+      while (rex::ui::renderdoc::NumCaptures() <= before) {
+        if (Clock::now() > deadline || r.stop.load()) {
+          return Fail("RenderDoc did not write a capture within 60 s");
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
+      const std::string path = rex::ui::renderdoc::CapturePath(before);
+      {
+        std::lock_guard lk(r.mu);
+        r.captures.push_back(path);
+      }
+      Outcome o;
+      o.result_json = "\"file\":\"" + JsonEscape(path) + "\"";
+      return o;
+    }
 
     case Verb::kQuery: {
       Outcome o;
@@ -1144,6 +1200,13 @@ void Prepare() {
   g_enabled.store(true, std::memory_order_release);
   REXLOG_INFO("harness: enabled ({}), run folder {}", r->scenario ? "scenario" : "live",
               r->dir.string());
+  if (r->scenario && r->scenario->vulkan_validation &&
+      rex::cvar::GetFlagByName("vulkan_validation_enabled") != "true") {
+    REXLOG_WARN(
+        "harness: the scenario asks for vulkan_validation, but the Vulkan instance was created "
+        "without it; pass --vulkan_validation_enabled=true --vulkan_log_debug_messages=true "
+        "(run_scenario.py does)");
+  }
   Event(*r, "prepare",
         "\"scenario\":\"" + JsonEscape(r->scenario ? r->scenario->path : "") + "\"");
 }

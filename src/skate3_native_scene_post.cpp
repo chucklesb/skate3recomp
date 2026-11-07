@@ -146,6 +146,7 @@ bool EnsureAoLinearDepth(nrhi::Device* device, uint32_t width,
   desc.format = nrhi::Format::kR32_FLOAT;
   desc.usage = nrhi::kTextureUsageRenderTarget;
   desc.initial_state = nrhi::ResourceState::kRenderTarget;
+  desc.name = "native: ao linear depth";
   g_r.ao_lin_depth = device->CreateTexture(desc);
   if (g_r.ao_lin_depth == nullptr) {
     return false;
@@ -283,6 +284,7 @@ void RecordOcclusionGrid(const NativeGuestOutputRenderContext& context,
     // state and the copy itself are invalid without it.
     td.usage = nrhi::kTextureUsageRenderTarget | nrhi::kTextureUsageCopySource;
     td.initial_state = nrhi::ResourceState::kRenderTarget;
+    td.name = "native: occlusion grid";
     g_r.occl_tex = device->CreateTexture(td);
     nrhi::BufferDesc bd;
     bd.size = uint64_t(RendererState::kOcclRowPitch) * RendererState::kOcclGridH;
@@ -945,6 +947,7 @@ bool EnsureSsrTargets(const NativeGuestOutputRenderContext& context) {
     dd.usage = nrhi::kTextureUsageDepthStencil;
     dd.initial_state = nrhi::ResourceState::kDepthWrite;
     dd.clear_depth = 1.0f;
+    dd.name = "native: ssr gbuffer depth";
     g_r.ssr_gbuf_depth = device->CreateTexture(dd);
     if (g_r.ssr_gbuf_depth == nullptr) {
       g_r.ssr_failed = true;
@@ -1036,6 +1039,7 @@ bool ApplySsrPass(const NativeGuestOutputRenderContext& context,
       desc.format = nrhi::Format::kR32_FLOAT;
       desc.usage = nrhi::kTextureUsageRenderTarget;
       desc.initial_state = nrhi::ResourceState::kRenderTarget;
+      desc.name = "native: ssr linear depth";
       g_r.ssr_lin_depth = device->CreateTexture(desc);
       if (g_r.ssr_lin_depth == nullptr) {
         g_r.ssr_failed = true;
@@ -1372,6 +1376,7 @@ bool ApplyVolumetricPass(const NativeGuestOutputRenderContext& context,
       desc.format = nrhi::Format::kR32_FLOAT;
       desc.usage = nrhi::kTextureUsageRenderTarget;
       desc.initial_state = nrhi::ResourceState::kRenderTarget;
+      desc.name = "native: volumetrics linear depth";
       g_r.vol_lin_depth = device->CreateTexture(desc);
       if (g_r.vol_lin_depth == nullptr) {
         g_r.vol_failed = true;
@@ -1815,6 +1820,7 @@ void ApplyHdrPost(const NativeGuestOutputRenderContext& context,
       desc.format = nrhi::Format::kR16G16B16A16_FLOAT;
       desc.usage = nrhi::kTextureUsageRenderTarget;
       desc.initial_state = nrhi::ResourceState::kRenderTarget;
+      desc.name = "native: bloom";
       g_r.bloom_tex[i] = device->CreateTexture(desc);
       if (g_r.bloom_tex[i] == nullptr) {
         break;

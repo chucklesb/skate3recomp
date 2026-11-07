@@ -1,0 +1,49 @@
+# Boot to gameplay with the Vulkan validation layers on, skate a little,
+# and record what the layers report. validation.txt in the run folder holds
+# every message; result.json counts them.
+#
+# Needs VK_LAYER_KHRONOS_validation installed (desktop: the Vulkan SDK or
+# the distro's vulkan-validationlayers; DroidDeck: apt install
+# vulkan-validationlayers in the Linux environment). run_scenario.py passes
+# the init-time flags (--vulkan_validation_enabled, --vulkan_log_debug_messages).
+#
+# Validation slows the game down a lot; the timeouts allow for it.
+
+name = "validation_smoke"
+timeout_s = 900
+boot = "demo"
+vulkan_validation = true
+state_every_frames = 30
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 600
+
+[[step]]
+do = "wait"
+frames = 60
+timeout_s = 120
+
+[[step]]
+do = "screenshot"
+tag = "spawn"
+
+[[step]]
+do = "input"
+buttons = "a"
+ly = 1.0
+frames = 8
+
+[[step]]
+do = "input"
+ly = 1.0
+frames = 60
+
+[[step]]
+do = "screenshot"
+tag = "rolling"
+
+[[step]]
+do = "state"
+tag = "end"

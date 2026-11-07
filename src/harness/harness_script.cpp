@@ -21,7 +21,7 @@ constexpr VerbEntry kVerbs[] = {
     {"snapshot", Verb::kSnapshot}, {"pause", Verb::kPause},
     {"step", Verb::kStep},         {"resume", Verb::kResume},
     {"expect", Verb::kExpect},     {"exit", Verb::kExit},
-    {"query", Verb::kQuery},
+    {"query", Verb::kQuery},       {"capture", Verb::kCapture},
 };
 
 // TOML scalar -> the string form rex::cvar::SetFlagByName takes.
@@ -229,6 +229,7 @@ std::optional<Scenario> LoadScenario(const std::string& path, std::string* error
   }
   sc.boot_demo = boot == "demo";
   sc.state_every_frames = std::max<int64_t>(0, Integer(root, "state_every_frames").value_or(10));
+  sc.vulkan_validation = root["vulkan_validation"].value_or(false);
   if (const toml::table* cv = root["cvars"].as_table()) {
     for (const auto& [k, v] : *cv) {
       auto str = ScalarString(v);
