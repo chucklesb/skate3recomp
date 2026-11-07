@@ -59,6 +59,16 @@ while IFS= read -r -d '' f; do
     cp "$f" "$licenses/$(printf '%s' "$rel" | tr '/' '_')"
 done < <(find "$sdk/thirdparty" -mindepth 2 -maxdepth 3 -type f \
     \( -iname 'LICEN[CS]E*' -o -iname 'COPYING*' -o -iname 'NOTICE*' \) -print0)
+# Real releases statically link these; their notices must ship. The CI stub
+# build checks out the SDK without its nested submodules.
+if [ -z "${SKATE3_APPIMAGE_STUB:-}" ]; then
+    for required in FFmpeg_COPYING.LGPLv2.1 sdl3_LICENSE.txt fmt_LICENSE spdlog_LICENSE; do
+        [ -f "$licenses/$required" ] || {
+            echo "build-appimage: missing $required; run git submodule update --init --recursive" >&2
+            exit 1
+        }
+    done
+fi
 commit=$(git -C "$repo" rev-parse HEAD 2>/dev/null || echo unknown)
 sdk_commit=$(git -C "$sdk" rev-parse HEAD 2>/dev/null || echo unknown)
 source_url=${SKATE3_SOURCE_URL:-$(git -C "$repo" remote get-url "${SKATE3_RELEASE_REMOTE:-fork}" 2>/dev/null \

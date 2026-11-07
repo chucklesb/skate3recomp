@@ -46,9 +46,12 @@ jobs:
   tooling:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # The SDK itself (for its license texts), not its nested third-party
+      # submodules: the stub build compiles none of them.
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          submodules: true
 
       - uses: cachix/install-nix-action@v31
         with:
@@ -80,7 +83,7 @@ jobs:
         run: |
           nix develop .#cross --command bash -euo pipefail -c '
             tools/appimage/stub-build.sh out/build/stub 0.0.0-aarch64.0
-            SKATE3_SOURCE_URL=https://github.com/${{ github.repository }} \
+            SKATE3_APPIMAGE_STUB=1 SKATE3_SOURCE_URL=https://github.com/${{ github.repository }} \
               tools/appimage/build-appimage.sh out/build/stub out/stub-release
           '
 
