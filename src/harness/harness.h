@@ -1,0 +1,54 @@
+#pragma once
+// Scenario harness: scripted, recordable, observable game runs.
+//
+// Off unless --skate3_harness_scenario=<file.toml> (an unattended run that
+// exits with a result code) or --skate3_harness=true (live channel and
+// input recording only) is given. With both off every entry point below is
+// a single relaxed atomic load.
+//
+// Each run writes <skate3_harness_out>/<stamp>_<name>/:
+//   result.json   status, exit code, failures, counts
+//   events.jsonl  every step and command with frame number and time
+//   state.jsonl   periodic game state (presence, FE screen, skater, camera)
+//   log.txt       this run's log lines
+//   shots/        PNG screenshots
+//   *.s3rec       input recordings
+// <skate3_harness_out>/inbox/*.toml takes live commands (same keys as a
+// scenario [[step]]); replies land in <skate3_harness_out>/outbox/.
+// README "Scenario harness" documents the scenario format.
+
+#include <cstdint>
+#include <functional>
+#include <vector>
+
+namespace skate3::harness {
+
+// Latest presented guest frame as tightly packed RGBA8 (alpha 255).
+using CaptureFn = std::function<bool(std::vector<uint8_t>& rgba, uint32_t& width,
+                                     uint32_t& height)>;
+
+// OnPostSetup, before the selected profile is applied: loads the scenario
+// and applies its cvars (including the demo-path boot), so the profile
+// override and the demo-path hooks see them. Exits the process with code 3
+// when the scenario file does not parse.
+void Prepare();
+
+// OnPostSetup, after the guest hooks are installed: starts the run, the
+// live channel and the log tap.
+void Start(CaptureFn capture);
+
+// OnShutdown.
+void Shutdown();
+
+bool Enabled();
+
+// Guest D3D Swap (frame boundary), guest thread.
+void OnFrame(uint8_t* base);
+
+// Sk8::SkaterPresEntity::BindConstants, r3 = entity. Guest thread.
+void OnSkaterEntity(uint32_t entity);
+
+// Toggle input recording (bind), any thread.
+void ToggleRecording();
+
+}  // namespace skate3::harness

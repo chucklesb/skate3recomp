@@ -11229,6 +11229,12 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
 
 // StartRecording / WriteRecording: native/skate3_native_diagnostics.cpp.
 
+// Scenario harness (src/harness/harness.cpp): the main perspective
+// ViewCamera BuildFrameScene published last, 0 before the first build.
+uint32_t MainViewCamera() {
+  return g_sampler_viewcam.load(std::memory_order_relaxed);
+}
+
 }  // namespace skate3::native_scene
 
 // The guest addresses hooked below are Title Update 3 (3.0.3.0) image

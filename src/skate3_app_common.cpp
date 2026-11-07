@@ -1,5 +1,7 @@
 #include "skate3_app_common.h"
 
+#include "harness/harness.h"
+
 #include "skate3_demo_path.h"
 #include "skate3_fov.h"
 #include "skate3_freecam_input.h"
@@ -51,6 +53,7 @@
 #include <rex/filesystem/devices/host_path_device.h>
 #include <rex/filesystem/vfs.h>
 #include <rex/graphics/flags.h>
+#include <rex/graphics/graphics_system.h>
 #include <rex/graphics/native_guest_renderer.h>
 #include <rex/input/input_system.h>
 #include <rex/kernel/xam/module.h>
@@ -747,6 +750,11 @@ void Skate3BaseApp::OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) {
                         skate3_native_render_scene_showcase,
                         !REXCVAR_GET(skate3_native_render_scene_showcase));
                   });
+  RegisterAppBind("bind_skate3_harness_record", "Ctrl+Shift+R",
+                  "Scenario harness: start/stop input recording", [] {
+                    // Inert unless --skate3_harness or a scenario enabled it.
+                    skate3::harness::ToggleRecording();
+                  });
   RegisterAppBind("bind_skate3_freecam", "End",
                   "Drone camera (free fly)", [] {
                     REXCVAR_SET(
@@ -757,6 +765,9 @@ void Skate3BaseApp::OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) {
 
 void Skate3BaseApp::OnPostSetup() {
   skate3::shader_disasm::RunIfRequested();
+  // Before the profile: a scenario's demo-path boot decides the signed-out
+  // override ApplySelectedProfileToRuntime applies.
+  skate3::harness::Prepare();
   ApplySelectedProfileToRuntime();
   ApplyGameplayCursorMode();
   if (REXCVAR_GET(skate3_native_debug_open_at_boot)) {
@@ -834,6 +845,29 @@ void Skate3BaseApp::OnPostSetup() {
   auto* dispatcher = runtime()->function_dispatcher();
   skate3::native_render::Install();
   skate3::demo_path::InstallHooks(dispatcher);
+  skate3::harness::Start([this](std::vector<uint8_t>& rgba, uint32_t& width,
+                                uint32_t& height) -> bool {
+    auto* graphics = static_cast<rex::graphics::GraphicsSystem*>(runtime()->graphics_system());
+    rex::ui::Presenter* presenter = graphics ? graphics->presenter() : nullptr;
+    rex::ui::RawImage image;
+    if (!presenter || !presenter->CaptureGuestOutput(image) || image.width == 0) {
+      return false;
+    }
+    width = image.width;
+    height = image.height;
+    rgba.resize(size_t(width) * height * 4);
+    for (uint32_t y = 0; y < height; ++y) {
+      const uint8_t* src = image.data.data() + y * image.stride;
+      uint8_t* dst = rgba.data() + size_t(y) * width * 4;
+      for (uint32_t x = 0; x < width; ++x) {
+        dst[x * 4 + 0] = src[x * 4 + 0];
+        dst[x * 4 + 1] = src[x * 4 + 1];
+        dst[x * 4 + 2] = src[x * 4 + 2];
+        dst[x * 4 + 3] = 255;  // RGBX: the X byte is undefined
+      }
+    }
+    return true;
+  });
   // User-facing intro-movie skip (independent of the demo path): the movie
   // completion override polls the merged UI pad state through this provider.
   skate3::demo_path::SetUiInputProvider(
@@ -906,7 +940,10 @@ void Skate3BaseApp::OnPostSetup() {
 }
 
 void Skate3BaseApp::OnShutdown() {
-  // First: close the gate on the callbacks OnPostSetup gave to the input
+  // The harness threads call back into this app (frame capture): stop and
+  // join them before anything is torn down.
+  skate3::harness::Shutdown();
+  // Then: close the gate on the callbacks OnPostSetup gave to the input
   // system, demo path and Options screen (they capture `this`). Exclusive, so
   // a callback already running on the guest/input thread finishes before the
   // dialogs below are reset; every later call is a no-op. The setters are not
