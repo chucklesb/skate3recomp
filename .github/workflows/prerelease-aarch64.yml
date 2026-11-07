@@ -1,0 +1,124 @@
+# Validate and publish a linux-aarch64 *testing* pre-release staged by
+# tools/release/stage-prerelease.sh.
+#
+# Same checks as release-aarch64.yml, for the testing variant of the
+# AppImage (app "Skate3Recomp Testing", red icon). It is published as a
+# GitHub pre-release and never marked latest: DroidDeck's GitHub install
+# skips pre-releases, so only testers who import the AppImage by hand get
+# it. A failed check leaves the release as a draft.
+#
+# workflow_dispatch only; the file must be on the default branch to be
+# dispatchable, and the run uses the copy at the tag.
+
+name: prerelease-aarch64
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Pre-release tag (v<upstream version>-testing.<n>), already staged as a draft"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-24.04-arm
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Check tag format
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-testing\.[0-9]+$ ]]; then
+            echo "::error::'$TAG' is not v<upstream version>-testing.<n>"
+            exit 1
+          fi
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Require a draft pre-release for the tag
+        run: |
+          read -r draft pre < <(gh release view "$TAG" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"')
+          if [ "$draft" != "true" ]; then
+            echo "::error::release $TAG is not a draft (already published?)"
+            exit 1
+          fi
+          if [ "$pre" != "true" ]; then
+            echo "::error::release $TAG is not marked as a pre-release"
+            exit 1
+          fi
+
+      - name: Download assets
+        run: |
+          mkdir assets
+          gh release download "$TAG" --dir assets
+          ls -l assets
+
+      - name: Check asset set and checksum
+        working-directory: assets
+        run: |
+          image="skate3recomp-testing-$VERSION-aarch64.AppImage"
+          for f in "$image" "$image.sha256"; do
+            [ -f "$f" ] || { echo "::error::missing asset $f"; exit 1; }
+          done
+          count=$(find . -maxdepth 1 -iname '*.appimage' | wc -l)
+          if [ "$count" -ne 1 ]; then
+            echo "::error::expected exactly one .AppImage asset, found $count"
+            exit 1
+          fi
+          sha256sum -c "$image.sha256"
+          echo "IMAGE=$PWD/$image" >> "$GITHUB_ENV"
+
+      - name: Validate the AppImage for DroidDeck
+        run: python3 -I tools/appimage/validate.py "$IMAGE" --expect-version "$VERSION"
+
+      - name: Check it is the testing variant
+        run: |
+          mkdir extract
+          chmod +x "$IMAGE"
+          (cd extract && "$IMAGE" --appimage-extract >/dev/null)
+          desktop=extract/squashfs-root/skate3recomp-testing.desktop
+          grep -qx 'Name=Skate3Recomp Testing' "$desktop" || { echo "::error::$desktop is not the testing variant"; exit 1; }
+          grep -qx 'Icon=skate3recomp-testing' "$desktop"
+          [ -f extract/squashfs-root/skate3recomp-testing.png ]
+
+      - name: Write release notes
+        run: |
+          gh api "repos/$GH_REPO/releases/generate-notes" -f tag_name="$TAG" --jq .body > generated.md
+          image=$(basename "$IMAGE")
+          sha=$(cut -d' ' -f1 "$IMAGE.sha256")
+          {
+            echo "**Testing build.** Skate3Recomp $VERSION for **linux-aarch64**, for trying changes before"
+            echo "they reach a release. It may be broken."
+            echo
+            echo "DroidDeck's **Add App → GitHub** install ignores pre-releases, so this build is only"
+            echo "installed by hand: download \`$image\` and import it as a local AppImage. It shows up"
+            echo "as **Skate3Recomp Testing** with a red icon, next to the normal Skate3Recomp app."
+            echo
+            echo "It uses the same game files, settings and saves as the normal app"
+            echo "(\`~/.local/share/skate3\` inside DroidDeck's Linux environment)."
+            echo
+            echo "No game data is included: you must own Skate 3."
+            echo
+            echo "### Files"
+            echo "- \`$image\` (SHA-256 \`$sha\`)"
+            echo
+            cat generated.md
+          } > notes.md
+          cat notes.md
+
+      - name: Publish
+        run: gh release edit "$TAG" --draft=false --prerelease --latest=false --notes-file notes.md

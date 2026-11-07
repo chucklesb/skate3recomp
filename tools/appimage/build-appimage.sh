@@ -5,7 +5,12 @@
 #
 # Writes <out-dir>/Skate3Recomp-<version>-aarch64.AppImage and a .sha256
 # next to it (out-dir defaults to out/release), then runs validate.py on it
-# (SKATE3_APPIMAGE_SKIP_VALIDATE=1 skips that). Run inside
+# (SKATE3_APPIMAGE_SKIP_VALIDATE=1 skips that).
+#
+# SKATE3_APPIMAGE_VARIANT=testing builds the pre-release variant instead:
+# app name "Skate3Recomp Testing", the red skate3recomp-testing.png icon
+# and skate3recomp-testing-<version>-aarch64.AppImage, so DroidDeck keeps
+# it as a separate app next to the release one. Run inside
 # `nix develop .#cross`, which provides mksquashfs,
 # desktop-file-validate and SKATE3_APPIMAGE_RUNTIME (the pinned aarch64
 # type-2 runtime).
@@ -28,6 +33,13 @@ if [ -z "$version" ]; then
     exit 1
 fi
 
+variant=${SKATE3_APPIMAGE_VARIANT:-release}
+case "$variant" in
+    release) stem=skate3recomp; app_name=Skate3Recomp; file_prefix=Skate3Recomp ;;
+    testing) stem=skate3recomp-testing; app_name="Skate3Recomp Testing"; file_prefix=skate3recomp-testing ;;
+    *) echo "build-appimage: unknown SKATE3_APPIMAGE_VARIANT '$variant' (release|testing)" >&2; exit 1 ;;
+esac
+
 bins=(skate3 librexruntime.so librexgpu-xenos.so)
 for f in "${bins[@]}"; do
     [ -f "$build_dir/$f" ] || { echo "build-appimage: $build_dir/$f is missing" >&2; exit 1; }
@@ -43,11 +55,12 @@ for f in "${bins[@]}"; do
     install -m 755 "$build_dir/$f" "$appdir/usr/bin/$f"
 done
 
-sed "s/@VERSION@/$version/" "$here/skate3recomp.desktop" > "$appdir/skate3recomp.desktop"
-desktop-file-validate "$appdir/skate3recomp.desktop"
-# 256x256, cropped from the repository's banner.png.
-install -m 644 "$here/skate3recomp.png" "$appdir/skate3recomp.png"
-install -m 644 "$here/skate3recomp.png" "$appdir/.DirIcon"
+sed -e "s/@VERSION@/$version/" -e "s/^Name=.*/Name=$app_name/" -e "s/^Icon=.*/Icon=$stem/" \
+    "$here/skate3recomp.desktop" > "$appdir/$stem.desktop"
+desktop-file-validate "$appdir/$stem.desktop"
+# 256x256, cropped from the repository's banner.png (testing: red background).
+install -m 644 "$here/$stem.png" "$appdir/$stem.png"
+install -m 644 "$here/$stem.png" "$appdir/.DirIcon"
 
 licenses=$appdir/usr/share/licenses/skate3recomp
 sdk=$repo/third_party/rexglue-sdk
@@ -74,7 +87,7 @@ sdk_commit=$(git -C "$sdk" rev-parse HEAD 2>/dev/null || echo unknown)
 source_url=${SKATE3_SOURCE_URL:-$(git -C "$repo" remote get-url "${SKATE3_RELEASE_REMOTE:-fork}" 2>/dev/null \
     || git -C "$repo" remote get-url origin 2>/dev/null || echo unknown)}
 cat > "$licenses/SOURCE.txt" <<EOF
-Skate3Recomp $version (linux-aarch64)
+$app_name $version (linux-aarch64)
 Source: $source_url (commit $commit)
 rexglue SDK commit: $sdk_commit
 Third-party sources, including FFmpeg (LGPL), are in third_party/rexglue-sdk/thirdparty
@@ -82,7 +95,7 @@ at that commit. No Skate 3 game data is included.
 EOF
 
 mkdir -p "$out_dir"
-name=Skate3Recomp-$version-aarch64.AppImage
+name=$file_prefix-$version-aarch64.AppImage
 image=$out_dir/$name
 mksquashfs "$appdir" "$work/fs.sqfs" -root-owned -noappend -comp zstd -Xcompression-level 19 \
     -b 1M -quiet -no-progress

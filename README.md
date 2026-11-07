@@ -356,8 +356,27 @@ binaries are therefore built locally and CI only validates and publishes them:
    runner, including a real `--appimage-extract`, and publishes the release.
    A failed check leaves the release as a draft.
 
+#### Testing pre-releases
+
+Test builds go out as GitHub pre-releases. DroidDeck's **Add App → GitHub**
+install skips pre-releases, so they only reach testers who download the
+AppImage and import it by hand. The testing AppImage is a separate app,
+**Skate3Recomp Testing** with a red icon
+(`skate3recomp-testing-<version>-aarch64.AppImage`). It installs next to the
+release app, and shares its game files, settings and saves.
+
+1. Tag the commit `v<upstream version>-testing.<n>`, for example
+   `v2.1.0-testing.1`, and push the tag to the fork.
+2. Run `tools/release/stage-prerelease.sh v2.1.0-testing.1`. It builds with
+   `SKATE3_APPIMAGE_VARIANT=testing` and uploads the AppImage to a draft
+   pre-release. It then starts the `prerelease-aarch64` workflow, which
+   validates the image and publishes it as a pre-release, never as latest.
+
+`SKATE3_APPIMAGE_VARIANT=testing` also works with
+`tools/appimage/build-appimage.sh` for a local testing image.
+
 The `cross-tooling` workflow exercises the toolchain, sysroot and AppImage
-pipeline with stub binaries on every change to these tools.
+pipeline (both variants) with stub binaries on every change to these tools.
 
 ## macOS Build (Apple Silicon)
 

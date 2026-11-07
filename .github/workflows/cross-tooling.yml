@@ -21,6 +21,7 @@ on:
       - tests/test_appimage_validate.py
       - .github/workflows/cross-tooling.yml
       - .github/workflows/release-aarch64.yml
+      - .github/workflows/prerelease-aarch64.yml
   pull_request:
     paths:
       - flake.nix
@@ -34,6 +35,7 @@ on:
       - tests/test_appimage_validate.py
       - .github/workflows/cross-tooling.yml
       - .github/workflows/release-aarch64.yml
+      - .github/workflows/prerelease-aarch64.yml
 
 permissions:
   contents: read
@@ -68,7 +70,7 @@ jobs:
           nix develop .#cross --command shellcheck \
             tools/cross-aarch64/build.sh tools/cross-aarch64/make-sysroot.sh \
             tools/appimage/AppRun tools/appimage/build-appimage.sh tools/appimage/stub-build.sh \
-            tools/release/stage-release.sh tools/package_linux.sh
+            tools/release/stage-release.sh tools/release/stage-prerelease.sh tools/package_linux.sh
 
       - name: Cache the arm64 sysroot
         uses: actions/cache@v4
@@ -86,6 +88,18 @@ jobs:
             SKATE3_APPIMAGE_STUB=1 SKATE3_SOURCE_URL=https://github.com/${{ github.repository }} \
               tools/appimage/build-appimage.sh out/build/stub out/stub-release
           '
+
+      - name: Testing variant AppImage and validation
+        run: |
+          nix develop .#cross --command bash -euo pipefail -c '
+            SKATE3_APPIMAGE_VARIANT=testing SKATE3_APPIMAGE_STUB=1               SKATE3_SOURCE_URL=https://github.com/${{ github.repository }}               tools/appimage/build-appimage.sh out/build/stub out/stub-testing
+          '
+          image=out/stub-testing/skate3recomp-testing-0.0.0-aarch64.0-aarch64.AppImage
+          mkdir extract-testing
+          (cd extract-testing && "../$image" --appimage-extract >/dev/null)
+          grep -qx "Name=Skate3Recomp Testing" extract-testing/squashfs-root/skate3recomp-testing.desktop
+          grep -qx "Icon=skate3recomp-testing" extract-testing/squashfs-root/skate3recomp-testing.desktop
+          cmp tools/appimage/skate3recomp-testing.png extract-testing/squashfs-root/.DirIcon
 
       - name: Downloaded (non-executable) image must still validate
         run: |
