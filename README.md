@@ -323,6 +323,21 @@ On Windows, ultrawide displays are detected automatically in fullscreen. For an
 ultrawide window, pass matching `--window_width` and `--window_height` values;
 the native renderer then draws true widescreen frames at that aspect.
 
+### Scenario harness
+
+For reproducing bugs and checking fixes, the game can run a scripted
+scenario unattended. It boots to gameplay, drives the controller, takes
+screenshots, traces the skater and camera, and exits with a pass/fail code:
+
+```sh
+./out/build/linux-relwithdebinfo/skate3 --game_data_root="$PWD/game" \
+  --skate3_harness_scenario=scenarios/boot_to_plaza.toml
+```
+
+`--skate3_harness=true` adds a live command channel and input recording
+(Ctrl+Shift+R) to a normal session. See [scenarios/README.md](scenarios/README.md)
+for the scenario format, the run folder and `tools/harness/run_scenario.py`.
+
 ## rexglue Fork
 
 `third_party/rexglue-sdk` is pinned as a Git submodule to the
