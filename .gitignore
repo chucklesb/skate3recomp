@@ -9,6 +9,7 @@
 !/tools/package_linux.sh
 !/tools/package_macos.sh
 !/tools/package_windows.ps1
+!/tools/harness/
 
 # Local game dump and retail media. Users must provide their own copy.
 /game/

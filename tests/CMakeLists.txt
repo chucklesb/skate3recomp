@@ -16,6 +16,7 @@ set(SKATE3_TESTS
     character_fade_test
     file_stamp_test
     hall_of_meat_test
+    harness_pad_test
     screen_fx_test
 )
 
