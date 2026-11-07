@@ -6,6 +6,7 @@
     run_scenario.py live   [--no-deploy] [-- args...]     # live mode (inbox + recording)
     run_scenario.py send   <verb> [key=value ...]          # one live command, prints the reply
     run_scenario.py fetch                                  # copy the device's latest run folder
+    run_scenario.py install-renderdoc                      # push an arm64 RenderDoc to the device
     run_scenario.py summary <run-folder>
 
 Run it with `python3 -I` from WSL or Linux. The `odin2` commands drive
@@ -39,6 +40,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 GUEST_APP_DIR = "/root/skate3-harness"
 GUEST_HARNESS = "/root/.local/share/skate3/harness"
+GUEST_RENDERDOC = "/root/renderdoc"
 SHARED = "/storage/emulated/0/Download/skate3-harness"
 DEFAULT_ADB_PORT_HINT = "ANDROID_ADB_SERVER_PORT"
 
@@ -104,8 +106,23 @@ class Device:
 
     def start_desktop(self) -> None:
         d = self.ctl_json("start", "desktop", "--wait", timeout=240)
-        if not d.get("ok", False):
-            raise RuntimeError(f"could not start a desktop session: {d.get('error')}")
+        if d.get("ok", False):
+            return
+        # droiddeckctl can report ACTIVITY_START_FAILED ("no new session
+        # appeared; phase is READY") although the session did start.
+        phase, running = self.phase()
+        if phase == "READY" and running:
+            return
+        raise RuntimeError(f"could not start a desktop session: {d.get('error')}")
+
+    def set_session_env(self, pairs: list[str]) -> None:
+        """KEY=VALUE pairs for the next session only (droiddeckctl env set)."""
+        for kv in pairs:
+            if "=" not in kv:
+                die(f"--env expects KEY=VALUE, got '{kv}'")
+            d = self.ctl_json("env", "set", kv)
+            if not d.get("ok", False):
+                die(f"env set {kv} failed: {d.get('error')}")
 
     def run(self, program: str, *args: str) -> None:
         # `run` sometimes reports ACTIVITY_START_FAILED although the session
@@ -164,9 +181,12 @@ def deploy(dev: Device) -> None:
     dev.stop()
 
 
-def launch(dev: Device, args: list[str]) -> None:
+def launch(dev: Device, args: list[str], env: list[str] | None = None) -> None:
     if dev.phase()[1]:
         dev.stop()
+    # Session environment applies to the next session, so it is set only now,
+    # after any deploy's desktop session has come and gone.
+    dev.set_session_env(env or [])
     dev.run("/usr/local/bin/droiddeck-appimage-run", GUEST_APP_DIR, *args)
     for _ in range(30):
         time.sleep(2)
@@ -295,29 +315,37 @@ def command_toml(verb: str, pairs: list[str], cid: str) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
+    # Game arguments go after `--`; everything argparse does not recognise
+    # is passed to the game (parse_known_args below).
     p_local = sub.add_parser("local")
     p_local.add_argument("scenario", type=Path)
     p_local.add_argument("--exe", required=True, type=Path)
     p_local.add_argument("--out", type=Path, default=REPO / "out/harness-runs")
-    p_local.add_argument("extra", nargs=argparse.REMAINDER)
     p_odin = sub.add_parser("odin2")
     p_odin.add_argument("scenario", type=Path)
     p_odin.add_argument("--no-deploy", action="store_true")
     p_odin.add_argument("--out", type=Path, default=REPO / "out/harness-runs")
-    p_odin.add_argument("extra", nargs=argparse.REMAINDER)
+    p_odin.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
+                        help="session environment for this run (repeatable), e.g. "
+                             "LD_PRELOAD=/root/renderdoc/librenderdoc.so")
     p_live = sub.add_parser("live")
     p_live.add_argument("--no-deploy", action="store_true")
-    p_live.add_argument("extra", nargs=argparse.REMAINDER)
+    p_live.add_argument("--env", action="append", default=[], metavar="KEY=VALUE")
     p_send = sub.add_parser("send")
     p_send.add_argument("verb")
     p_send.add_argument("pairs", nargs="*")
     p_send.add_argument("--wait", type=float, default=120)
+    p_rd = sub.add_parser("install-renderdoc",
+                          help="copy tools/harness/build-renderdoc-aarch64.sh output to the device")
+    p_rd.add_argument("--from", dest="rd_from", type=Path, default=REPO / "out/renderdoc-aarch64")
     p_fetch = sub.add_parser("fetch")
     p_fetch.add_argument("--out", type=Path, default=REPO / "out/harness-runs")
     p_sum = sub.add_parser("summary")
     p_sum.add_argument("run", type=Path)
-    a = ap.parse_args()
-    extra = [x for x in getattr(a, "extra", []) if x != "--"]
+    a, unknown = ap.parse_known_args()
+    extra = [x for x in unknown if x != "--"]
+    if extra and a.cmd not in ("local", "odin2", "live"):
+        ap.error(f"unrecognized arguments: {' '.join(extra)}")
 
     if a.cmd == "summary":
         return summary(a.run)
@@ -341,7 +369,7 @@ def main() -> int:
     if a.cmd == "odin2":
         dev.adb_push(a.scenario.resolve(), f"{SHARED}/scenarios/{a.scenario.name}")
         launch(dev, [f"--skate3_harness_scenario={SHARED}/scenarios/{a.scenario.name}",
-                     *scenario_flags(a.scenario), *extra])
+                     *scenario_flags(a.scenario), *extra], env=a.env)
         log(f"running {a.scenario.name}")
         wait_for_exit(dev, scenario_timeout(a.scenario) + 120)
         run = fetch(dev, a.out.resolve())
@@ -349,7 +377,7 @@ def main() -> int:
         return summary(run)
 
     if a.cmd == "live":
-        launch(dev, ["--skate3_harness=true", *extra])
+        launch(dev, ["--skate3_harness=true", *extra], env=a.env)
         log("live mode running; use `send` for commands, Ctrl+Shift+R to record")
         return 0
 
@@ -366,6 +394,23 @@ def main() -> int:
                 return 0 if json.loads(reply).get("ok") else 1
             time.sleep(1)
         die(f"no reply within {a.wait:.0f} s (is the game running in live mode?)")
+
+    if a.cmd == "install-renderdoc":
+        src = a.rd_from.resolve()
+        if not (src / "librenderdoc.so").exists():
+            die(f"{src} has no librenderdoc.so (run tools/harness/build-renderdoc-aarch64.sh)")
+        dev.adb_push(src, f"{SHARED}/")
+        if dev.phase()[1]:
+            dev.stop()
+        dev.start_desktop()
+        out = dev.guest(
+            f"rm -rf {GUEST_RENDERDOC} && cp -r '{SHARED}/{src.name}' {GUEST_RENDERDOC} && "
+            f"chmod +x {GUEST_RENDERDOC}/renderdoccmd && {GUEST_RENDERDOC}/renderdoccmd version | head -1",
+            timeout=120)
+        dev.stop()
+        log(f"installed to {GUEST_RENDERDOC}: {out.strip()}")
+        log(f"run with: odin2 <scenario> --env SKATE3_RENDERDOC={GUEST_RENDERDOC}")
+        return 0
 
     if a.cmd == "fetch":
         run = fetch(dev, a.out.resolve())

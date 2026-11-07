@@ -900,13 +900,28 @@ Outcome Execute(Run& r, const Step& st) {
       fs::create_directories(r.dir / "captures", ec);
       const std::string tag = st.tag.empty() ? "capture" : SafeName(st.tag);
       const uint32_t before = rex::ui::renderdoc::NumCaptures();
-      rex::ui::renderdoc::TriggerCapture((r.dir / "captures" / tag).string());
-      // The capture lands on the next presented frame; writing it can take
-      // a few seconds on a handheld.
+      // Explicit bracket over `frames` game frames (default 1), aligned to
+      // the guest frame boundary. TriggerCapture would wait for a present on
+      // a window RenderDoc tracks, which it does not do on every window
+      // system (Wayland under gamescope).
+      const int64_t frames = st.frames ? std::max<int64_t>(1, *st.frames) : 1;
+      if (!WaitFrames(r, 1, 30.0)) {
+        return Fail("game stopped presenting frames");
+      }
+      rex::ui::renderdoc::StartFrameCapture((r.dir / "captures" / tag).string());
+      const bool frames_ok = WaitFrames(r, frames, 60.0);
+      const bool written = rex::ui::renderdoc::EndFrameCapture();
+      if (!frames_ok) {
+        return Fail("game stopped presenting frames during the capture");
+      }
+      if (!written) {
+        return Fail("RenderDoc did not write the capture (see its log in /tmp/RenderDoc)");
+      }
+      // Writing the file can take a few seconds on a handheld.
       const auto deadline = Clock::now() + std::chrono::seconds(60);
       while (rex::ui::renderdoc::NumCaptures() <= before) {
         if (Clock::now() > deadline || r.stop.load()) {
-          return Fail("RenderDoc did not write a capture within 60 s");
+          return Fail("RenderDoc did not report the capture within 60 s");
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
       }

@@ -57,6 +57,16 @@ if [ -n "${APPIMAGE:-}" ]; then
     export SKATE3_RESTART_EXE="$APPIMAGE"
 fi
 
+# Debugging: SKATE3_RENDERDOC=<dir> loads RenderDoc into the game process
+# only (<dir>/librenderdoc.so, layer manifest in <dir>/layers). Set as late
+# as this so no launcher process loads RenderDoc first: RenderDoc does not
+# follow child processes and clears these variables for them.
+if [ -n "${SKATE3_RENDERDOC:-}" ]; then
+    export LD_PRELOAD="${LD_PRELOAD:+$LD_PRELOAD:}$SKATE3_RENDERDOC/librenderdoc.so"
+    export VK_ADD_IMPLICIT_LAYER_PATH="$SKATE3_RENDERDOC/layers${VK_ADD_IMPLICIT_LAYER_PATH:+:$VK_ADD_IMPLICIT_LAYER_PATH}"
+    export ENABLE_VULKAN_RENDERDOC_CAPTURE=1
+fi
+
 # Screenshots are written relative to the working directory.
 cd "$data" || exit 1
 exec "$HERE/usr/bin/skate3" "$@"

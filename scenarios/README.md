@@ -37,7 +37,9 @@ python3 -I tools/harness/run_scenario.py summary <run>  # print a run's result
 
 For `odin2` and `live`, `DROIDDECK_DIR` points at a DroidDeck checkout
 (default `~/dev/DroidDeck`), and `ADB` / `ANDROID_ADB_SERVER_PORT` select
-the adb to use.
+the adb to use. `--no-deploy` reuses the build already on the device.
+`--env KEY=VALUE` (repeatable) sets environment variables for that run's
+session only. Game arguments go after `--`.
 
 Exit codes: 0 pass, 1 a step or expectation failed, 2 the scenario timed
 out, 3 the scenario file did not parse.
@@ -98,6 +100,7 @@ Steps run in order. A failing step ends the run with code 1.
 | `pause` / `step` / `resume` | Hold the game at a frame boundary. `step frames = N` advances N frames while paused. |
 | `expect` | `log = "regex"` (seen in this run's log), `no_log = "regex"`, `speed_gt`, `speed_lt`, `presence`. |
 | `exit` | `code = 0`. |
+| `capture` | `tag`, `frames = 1`: RenderDoc capture of the next N frames (see below). |
 
 Button names: `a b x y lb rb l3 r3 start back up down left right guide`.
 
@@ -123,6 +126,59 @@ expecting a pixel-exact path.
 
 `.s3rec` is text: a `# s3rec 1 {json}` header, then one line per input change:
 `<poll> <frame> <buttons hex> <lt> <rt> <lx> <ly> <rx> <ry>`.
+
+## Vulkan validation and RenderDoc
+
+The native renderer labels each pass for Vulkan debug tools ("native: main
+scene", "native: shadow atlas", "native: bloom + tonemap", …). It also names
+its render targets, buffers, shaders and pipelines. The labels are on while
+RenderDoc is attached or with `--gpu_debug_markers=true`. This needs the
+rexglue SDK fork `chucklesb/rexglue-skate3`, branch `vulkan-debug-labels`.
+
+**Validation layers.** Add `vulkan_validation = true` to a scenario
+(`scenarios/validation_smoke.toml`). `run_scenario.py` then passes
+`--vulkan_validation_enabled=true --vulkan_log_debug_messages=true`. The
+Vulkan instance exists before the harness starts, so scenario `[cvars]`
+can't enable it. Every message goes to `validation.txt` in the run folder,
+and `result.json` counts them in `validation_messages`.
+
+Install the layers first:
+- desktop: the Vulkan SDK or the distro's `vulkan-validationlayers`;
+- DroidDeck: `sudo apt-get install vulkan-validationlayers` in the Linux
+  environment.
+
+Validation is slow, so give scenarios long timeouts.
+
+**RenderDoc captures.** The `capture` step (`tag`, `frames = 1`) captures
+the next N game frames into `<run>/captures/<tag>_capture.rdc`. It brackets
+the frames with RenderDoc's explicit start/end calls, so it doesn't depend on
+RenderDoc tracking the window, which it doesn't do on Wayland. Without
+RenderDoc attached, the step fails with a clear message.
+
+- **Desktop:** launch the game from RenderDoc (qrenderdoc or `renderdoccmd
+  capture`) and run a scenario with a `capture` step
+  (`scenarios/renderdoc_capture.toml`).
+- **DroidDeck handheld:** RenderDoc has no arm64 Linux release, so build one:
+
+  ```sh
+  tools/harness/build-renderdoc-aarch64.sh          # v1.46, Vulkan only -> out/renderdoc-aarch64
+  python3 -I tools/harness/run_scenario.py install-renderdoc
+  python3 -I tools/harness/run_scenario.py odin2 scenarios/renderdoc_capture.toml \
+      --env SKATE3_RENDERDOC=/root/renderdoc
+  ```
+
+  `SKATE3_RENDERDOC` makes the AppImage's `AppRun` preload RenderDoc and
+  enable its Vulkan layer for the game process only. DroidDeck's session
+  environment would otherwise load it into a launcher process first, and
+  RenderDoc clears its variables for that process's children. Open the
+  fetched `.rdc` (a gameplay frame is about 200 MB) in desktop RenderDoc
+  v1.46. Verified on an Odin 2 Portal with Turnip: every native pass is
+  labelled and the targets are named.
+
+Known noise on DroidDeck: every present reports
+`VUID-VkSwapchainPresentModeInfoKHR-swapchainCount-07760`. The game presents
+with no `pNext`, so a layer in DroidDeck's stack adds that structure,
+probably gamescope's WSI layer.
 
 ## How it hooks the game (TU3 addresses)
 

@@ -1,6 +1,7 @@
 # Boot to gameplay and take a RenderDoc capture of a gameplay frame.
-# Run it with RenderDoc injected (launch from qrenderdoc / renderdoccmd on
-# desktop, or LD_PRELOAD + the RenderDoc implicit layer on Linux). Without
+# Run it with RenderDoc injected: launch from qrenderdoc / renderdoccmd on
+# desktop, or on DroidDeck `run_scenario.py odin2 ... --env
+# SKATE3_RENDERDOC=/root/renderdoc` (see scenarios/README.md). Without
 # RenderDoc the capture step fails with a clear message. With RenderDoc
 # attached, GPU debug markers turn on automatically, so the capture shows
 # the native renderer's passes as labels ("native: main scene", ...) and its

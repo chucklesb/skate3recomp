@@ -47,7 +47,7 @@ enum class Verb {
   kExpect,      // log="regex" | no_log="regex" | speed_gt | speed_lt | presence
   kExit,        // code=0
   kQuery,       // live channel only: what="state"|"status"
-  kCapture,     // tag="x": RenderDoc capture of the next frame (RenderDoc attached)
+  kCapture,     // tag="x" frames=1: RenderDoc capture of the next N frames (RenderDoc attached)
 };
 
 struct Step {
