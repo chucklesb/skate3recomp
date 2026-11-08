@@ -11,13 +11,24 @@
 #include <mutex>
 #include <optional>
 
+#include <rex/cvar.h>
 #include <rex/logging.h>
+#include <rex/system/kernel_state.h>
+#include <rex/system/xmemory.h>
+
+#include <cstdio>
+
+REXCVAR_DEFINE_INT32(skate3_harness_re_load_reel, 0, "Skate 3",
+                     "Harness RE experiment: load saved replay N (REPLY_N) the way My Replays "
+                     "does; reset to 0 once issued")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
 #include "native/skate3_native_guest_read.h"
 
 // The guest functions called below (recompiled; TU3 image addresses).
 REX_EXTERN(sub_82910CE8);  // registry find(map*, u32 key) -> entry* (node + 20) or 0
 REX_EXTERN(sub_82706F50);  // teleport sequencer(teleporter, matrix*, id, flag, b, b, b) -> bool
+REX_EXTERN(sub_8271A828);  // memcard owner event handler(owner, ref<event>*) -> 1 handled / 2 not
 REX_EXTERN(sub_82720B50);  // state transition(component, target state fn, param)
 // The pause map's entry point: TeleportToLocation(service, u64* map key,
 // const char** name, a, b) (the menu passes a = 0, b = 1). It loads the
@@ -292,7 +303,62 @@ TeleportResult Teleport(const std::string& location, double timeout_s, uint64_t 
   return *req.result;
 }
 
+// ---- skate.Reel load experiment (RE; see scenarios/README.md) ----------------
+// "Load replay N" the way FE 59 (My Replays) does it: the replay save content
+// is named REPLY_N with load type 'B' (body; 'H' = header), then a type-36
+// memcard request {id 14, content} goes to the memcard owner's event handler.
+// The load then deserializes into the type-27 request that starts StateReplay.
+//   gctx    = *(*(0x83083BCC) + 156)   (table of the game-mode state objects)
+//   owner   = *(gctx + 0x11C)          (memcard owner; handler sub_8271A828)
+//   content = *(*(gctx + 0xE4) + 0x38) (replay save content, vtable 0x822FDE48)
+//   request param = content + 0x198 (secondary base, vtable 0x822FDEC0)
+namespace {
+uint32_t g_reel_event = 0;  // persistent type-36 event object (system heap)
+uint32_t g_reel_ref = 0;    // ref cell pointing at it
+
+void DoLoadReelExperiment(PPCContext& ctx, uint8_t* base, int n) {
+  uint32_t world = 0, gctx = 0, owner = 0, holder = 0, content = 0;
+  if (!Read32(base, kWorldPtr, &world) || !Read32(base, world + kWorldModeOwner, &gctx) ||
+      !Read32(base, gctx + 0x11C, &owner) || !Read32(base, gctx + 0xE4, &holder) ||
+      !Read32(base, holder + 0x38, &content) || !owner || !content) {
+    REXLOG_INFO("harness: reel load {}: objects missing (world={:08X} gctx={:08X} owner={:08X} "
+                "content={:08X})", n, world, gctx, owner, content);
+    return;
+  }
+  if (!g_reel_event) {
+    auto* memory = rex::system::kernel_memory();
+    g_reel_event = memory->SystemHeapAlloc(64);
+    g_reel_ref = memory->SystemHeapAlloc(16);
+    if (!g_reel_event || !g_reel_ref) {
+      REXLOG_INFO("harness: reel load: guest alloc failed");
+      return;
+    }
+    std::memset(base + g_reel_event, 0, 64);
+  }
+  // Name the content REPLY_N, body load.
+  char name[16] = {};
+  std::snprintf(name, sizeof(name), "REPLY_%d", n);
+  std::memcpy(base + content + 0x1BC, name, sizeof(name));
+  base[content + 0x1AC] = 'B';
+  // Event: generic event vtable, a refcount that never reaches 0, type 36,
+  // memcard event 14, param = the content's secondary base.
+  Write32(base, g_reel_event + 0, 0x8230C738);
+  Write32(base, g_reel_event + 4, 0x10000);
+  Write32(base, g_reel_event + 8, 36);
+  Write32(base, g_reel_event + 12, 14);
+  Write32(base, g_reel_event + 16, content + 0x198);
+  Write32(base, g_reel_ref, g_reel_event);
+  const uint32_t r = CallGuest(ctx, base, sub_8271A828, {owner, g_reel_ref});
+  REXLOG_INFO("harness: reel load {}: request sent to owner {:08X} (content {:08X}) -> {}", n,
+              owner, content, r);
+}
+}  // namespace
+
 void OnGuestFrame(PPCContext& ctx, uint8_t* base) {
+  if (const int n = REXCVAR_GET(skate3_harness_re_load_reel); n > 0) {
+    rex::cvar::SetFlagByName("skate3_harness_re_load_reel", "0");
+    DoLoadReelExperiment(ctx, base, n);
+  }
   Request* req;
   {
     std::lock_guard lk(g_mu);

@@ -1289,6 +1289,25 @@ extern "C" REX_FUNC(sub_82EDE718) {
                      skate3::harness::JsonEscape(GuestRootName(base, ctx.r4.u32)) +
                      "\",\"file\":\"" + skate3::harness::JsonEscape(std::string(file, strnlen(file, 42))) +
                      "\",\"display\":\"" + skate3::harness::JsonEscape(display) + "\"";
+    // Guest call stack (lr, then the saved LR of each frame: back chain at
+    // *(r1), saved LR at frame-8), to find which game code asked for the open.
+    std::string stack;
+    char buf[12];
+    std::snprintf(buf, sizeof(buf), "%08X", static_cast<uint32_t>(ctx.lr));
+    stack = buf;
+    uint32_t sp = ctx.r1.u32;
+    for (int i = 0; i < 12 && sp >= 0x10000; ++i) {
+      uint32_t raw = 0, prev = 0, lr = 0;
+      if (!skate3::native_scene::GuestTryCopy(&raw, base + sp, 4)) break;
+      prev = __builtin_bswap32(raw);
+      if (prev <= sp || prev - sp > 0x10000) break;
+      if (!skate3::native_scene::GuestTryCopy(&raw, base + prev - 8, 4)) break;
+      lr = __builtin_bswap32(raw);
+      std::snprintf(buf, sizeof(buf), " %08X", lr);
+      stack += buf;
+      sp = prev;
+    }
+    harness_fields += ",\"stack\":\"" + stack + "\"";
   }
   __imp__sub_82EDE718(ctx, base);
   if (write && (ctx.r3.u32 == 0 || ctx.r3.u32 == kErrorIoPending)) {

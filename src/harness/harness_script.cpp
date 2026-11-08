@@ -29,8 +29,8 @@ constexpr VerbEntry kVerbs[] = {
 
 // TOML scalar -> the string form rex::cvar::SetFlagByName takes.
 std::optional<std::string> ScalarString(const toml::node& n) {
-  if (auto v = n.value<bool>()) {
-    return *v ? "true" : "false";
+  if (n.is_boolean()) {
+    return *n.value<bool>() ? "true" : "false";
   }
   if (n.is_integer()) {
     return std::to_string(*n.value<int64_t>());

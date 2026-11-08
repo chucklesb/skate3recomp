@@ -413,6 +413,9 @@ def build_windows(config: str) -> None:
 
 
 WIN_RENDERDOC = os.environ.get("SKATE3_WINDOWS_RENDERDOC", "")
+# Optional user-data root for Windows runs (saves, replays, settings): a test
+# copy, so harness runs never touch the player's %APPDATA%\skate3.
+WIN_USER_DATA = os.environ.get("SKATE3_WINDOWS_USER_DATA", "")
 
 
 def win_launch(config: str, backend: str, game_args: list[str],
@@ -438,6 +441,9 @@ def win_launch(config: str, backend: str, game_args: list[str],
             log(f"cleared {len(stale)} stale inbox command(s)")
     game_argv = [f"--gpu_backend={backend}", f"--game_data_root={win_path(game)}",
                  f"--skate3_harness_out={WIN_HARNESS_OUT}", *game_args]
+    # Test saves (profile, replays) kept apart from the player's %APPDATA%.
+    if WIN_USER_DATA:
+        game_argv.insert(2, f"--user_data_root={win_path(Path(WIN_USER_DATA))}")
     log(f"windows {config}/{backend}: " + " ".join(shlex.quote(x) for x in game_argv))
     args = [str(exe), *game_argv]
     env = dict(os.environ)
