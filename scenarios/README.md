@@ -170,7 +170,7 @@ expecting a pixel-exact path.
 `.s3rec` is text: a `# s3rec 1 {json}` header, then one line per input change:
 `<poll> <frame> <buttons hex> <lt> <rt> <lx> <ly> <rx> <ry>`.
 
-## Vulkan validation and RenderDoc
+## Validation layers and RenderDoc
 
 The native renderer labels each pass for Vulkan debug tools ("native: main
 scene", "native: shadow atlas", "native: bloom + tonemap", …). It also names
@@ -187,8 +187,20 @@ and `result.json` counts them in `validation_messages`.
 
 Install the layers first:
 - desktop: the Vulkan SDK or the distro's `vulkan-validationlayers`;
+- Windows: the LunarG Vulkan SDK (it registers `VK_LAYER_KHRONOS_validation`
+  system-wide);
 - DroidDeck: `sudo apt-get install vulkan-validationlayers` in the Linux
   environment.
+
+**D3D12 debug layer.** A `vulkan_validation = true` scenario run with
+`windows --backend d3d12` gets `--d3d12_debug=true` instead. The SDK then
+logs the debug layer's warnings and errors (Windows 11's
+`ID3D12InfoQueue1` message callback) as `D3D12 <severity> (debug layer, ID
+<n>): ...`. The harness puts them in the same `validation.txt` and
+`validation_messages`, and `result.json`'s `validation_layers` says which
+layer it was. It needs Windows' "Graphics Tools" optional feature
+(`d3d12SDKLayers.dll`). The debug layer's live-object report at process exit
+also lands there and can be ignored.
 
 Validation is slow, so give scenarios long timeouts.
 
@@ -201,6 +213,14 @@ RenderDoc attached, the step fails with a clear message.
 - **Desktop:** launch the game from RenderDoc (qrenderdoc or `renderdoccmd
   capture`) and run a scenario with a `capture` step
   (`scenarios/renderdoc_capture.toml`).
+- **Windows from WSL:** `run_scenario.py windows <scenario> --renderdoc
+  [DIR]` launches through `<DIR>/renderdoccmd.exe capture` (default DIR:
+  `$SKATE3_WINDOWS_RENDERDOC`, a RenderDoc folder; the portable zip works).
+  It also sets `VK_ADD_IMPLICIT_LAYER_PATH` to that folder, because a
+  portable RenderDoc's Vulkan layer isn't registered. Captures land in the run
+  folder as usual. Use `--backend d3d12`: on an NVIDIA RTX 4070 with RenderDoc
+  1.46, a Vulkan frame capture loses the device the moment it starts
+  (`ErrorDeviceLost`), while RenderDoc injection itself works until then.
 - **DroidDeck handheld:** RenderDoc has no arm64 Linux release, so build one:
 
   ```sh

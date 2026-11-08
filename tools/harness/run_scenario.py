@@ -4,7 +4,8 @@
     run_scenario.py local  <scenario.toml> --exe <skate3 or AppImage> [-- args...]
     run_scenario.py odin2  <scenario.toml> [--config release|relwithdebinfo] [--no-deploy] [-- args...]
     run_scenario.py live   [--config ...] [--no-deploy] [-- args...]  # live mode (inbox + recording)
-    run_scenario.py windows <scenario.toml> [--config ...] [--backend d3d12|vulkan] [--no-build] [-- args...]
+    run_scenario.py windows <scenario.toml> [--config ...] [--backend d3d12|vulkan] [--no-build]
+                           [--renderdoc [DIR]] [--timeout s] [-- args...]
     run_scenario.py ab     <scenario.toml> [--config ...] [--backends d3d12,vulkan] [--fps-cap 30]
                            [--no-build] [--no-deploy] [--no-odin2]   # Odin 2 vs Windows, compared
     run_scenario.py live --target windows [--config ...] [--backend ...]; send --target windows ...
@@ -280,12 +281,17 @@ def scenario_timeout(path: Path) -> float:
     return float(scenario_settings(path).get("timeout_s", 600))
 
 
-def scenario_flags(path: Path) -> list[str]:
+def scenario_flags(path: Path, backend: str = "vulkan") -> list[str]:
     """Init-time flags a scenario needs before the harness starts."""
     flags = []
     if scenario_settings(path).get("vulkan_validation"):
-        # The Vulkan instance exists before the harness loads the scenario.
-        flags += ["--vulkan_validation_enabled=true", "--vulkan_log_debug_messages=true"]
+        # The graphics device exists before the harness loads the scenario.
+        # On D3D12 the same request turns on the D3D12 debug layer, whose
+        # messages the SDK logs and the harness counts the same way.
+        if backend == "d3d12":
+            flags += ["--d3d12_debug=true"]
+        else:
+            flags += ["--vulkan_validation_enabled=true", "--vulkan_log_debug_messages=true"]
     return flags
 
 
@@ -315,8 +321,9 @@ def summary(run: Path) -> int:
     print(f"  {r['frames']} frames, {r['seconds']:.1f} s, {r['screenshots']} screenshots, "
           f"{r['warnings']} warnings, {r['errors']} errors")
     if r.get("validation_enabled"):
-        print(f"  Vulkan validation: {r.get('validation_messages', 0)} messages "
-              f"(validation.txt)")
+        layer = {"d3d12": "D3D12 debug layer"}.get(r.get("validation_layers", ""),
+                                                   "Vulkan validation")
+        print(f"  {layer}: {r.get('validation_messages', 0)} messages (validation.txt)")
     for c in r.get("captures", []):
         print(f"  RenderDoc capture: {c}")
     for f in r.get("failures", []):
@@ -405,7 +412,11 @@ def build_windows(config: str) -> None:
                env={"SKATE3_WINDOWS_STAGE_ROOT": str(WIN_STAGE_ROOT)})
 
 
-def win_launch(config: str, backend: str, game_args: list[str]) -> subprocess.Popen:
+WIN_RENDERDOC = os.environ.get("SKATE3_WINDOWS_RENDERDOC", "")
+
+
+def win_launch(config: str, backend: str, game_args: list[str],
+               renderdoc: Path | None = None) -> subprocess.Popen:
     stage = win_stage(config)
     exe = stage / "skate3.exe"
     if not exe.exists():
@@ -416,18 +427,35 @@ def win_launch(config: str, backend: str, game_args: list[str]) -> subprocess.Po
         die(f"no game dump in {game} (build.sh stage copies it once)")
     if win_game_running():
         die("skate3.exe is already running on Windows; close it first")
-    args = [str(exe), f"--gpu_backend={backend}", f"--game_data_root={win_path(game)}",
-            f"--skate3_harness_out={WIN_HARNESS_OUT}", *game_args]
-    log(f"windows {config}/{backend}: " + " ".join(shlex.quote(x) for x in args[1:]))
+    game_argv = [f"--gpu_backend={backend}", f"--game_data_root={win_path(game)}",
+                 f"--skate3_harness_out={WIN_HARNESS_OUT}", *game_args]
+    log(f"windows {config}/{backend}: " + " ".join(shlex.quote(x) for x in game_argv))
+    args = [str(exe), *game_argv]
+    env = dict(os.environ)
+    if renderdoc is not None:
+        cmd = renderdoc / "renderdoccmd.exe"
+        if not cmd.exists():
+            die(f"{cmd} is missing (--renderdoc / SKATE3_WINDOWS_RENDERDOC: a RenderDoc folder)")
+        # renderdoccmd injects RenderDoc at startup (D3D12 directly, Vulkan
+        # through its implicit layer). A portable RenderDoc's layer isn't
+        # registered, so point the loader at it, like AppRun does on Linux;
+        # WSLENV carries the variable to the Windows processes.
+        args = [str(cmd), "capture", "--wait-for-exit", "--working-dir", win_path(stage),
+                win_path(exe), *game_argv]
+        env["VK_ADD_IMPLICIT_LAYER_PATH"] = win_path(renderdoc)
+        env["WSLENV"] = ":".join(filter(None, [env.get("WSLENV", ""),
+                                               "VK_ADD_IMPLICIT_LAYER_PATH"]))
+        log(f"through RenderDoc: {cmd}")
     # A /mnt/c working directory becomes the Windows process's working directory.
     # Own session: `live` returns at once and the game must outlive this script.
     return subprocess.Popen(args, cwd=stage, stdin=subprocess.DEVNULL,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                            start_new_session=True)
+                            start_new_session=True, env=env)
 
 
 def run_windows(scenario: Path, config: str, backend: str, extra: list[str],
-                out_root: Path, timeout_s: float | None = None) -> Path | None:
+                out_root: Path, timeout_s: float | None = None,
+                renderdoc: Path | None = None) -> Path | None:
     """Run a scenario on this PC; return the run folder moved under out_root."""
     stage = win_stage(config)
     (stage / "scenarios").mkdir(parents=True, exist_ok=True)
@@ -435,14 +463,25 @@ def run_windows(scenario: Path, config: str, backend: str, extra: list[str],
     current = stage / WIN_HARNESS_OUT / "current_run.txt"
     current.unlink(missing_ok=True)
     proc = win_launch(config, backend, [f"--skate3_harness_scenario=scenarios/{scenario.name}",
-                                        *scenario_flags(scenario), *extra])
+                                        *scenario_flags(scenario, backend), *extra],
+                      renderdoc=renderdoc)
     log(f"running {scenario.name}")
+    deadline = time.time() + (timeout_s or scenario_timeout(scenario) + 120)
     try:
-        code = proc.wait(timeout=timeout_s or scenario_timeout(scenario) + 120)
-        log(f"game exited ({code})")
+        code = proc.wait(timeout=max(1.0, deadline - time.time()))
+        log(f"{'renderdoccmd' if renderdoc else 'game'} exited ({code})")
     except subprocess.TimeoutExpired:
+        pass
+    # A launcher (renderdoccmd) can return while the game still runs, e.g.
+    # hung after a device loss: wait for skate3.exe itself, up to the deadline.
+    while win_game_running() and time.time() < deadline:
+        time.sleep(2)
+    if win_game_running():
         log("timeout: killing skate3.exe")
         subprocess.run(["taskkill.exe", "/F", "/IM", "skate3.exe"], capture_output=True)
+        time.sleep(2)
+    if proc.poll() is None:
+        proc.kill()
         proc.wait(timeout=30)
     if not current.exists():
         log("the game wrote no current_run.txt (it failed before the harness started)")
@@ -453,7 +492,12 @@ def run_windows(scenario: Path, config: str, backend: str, extra: list[str],
     dst = out_root / name
     if dst.exists():
         shutil.rmtree(dst)
-    shutil.move(str(src), str(dst))
+    try:
+        shutil.move(str(src), str(dst))
+    except OSError as e:
+        # A file still held open on the Windows side: copy what's there.
+        log(f"could not move the run folder ({e}); copying it instead")
+        shutil.copytree(src, dst, dirs_exist_ok=True)
     return dst
 
 
@@ -792,6 +836,9 @@ def main() -> int:
     p_win.add_argument("--no-build", action="store_true",
                        help="run the staged build as is (default: build.sh <config> build stage)")
     p_win.add_argument("--out", type=Path, default=REPO / "out/harness-runs")
+    p_win.add_argument("--renderdoc", nargs="?", const="", metavar="DIR",
+                       help="launch through RenderDoc (renderdoccmd capture) so `capture` steps "
+                            "work; DIR is a RenderDoc folder (default: $SKATE3_WINDOWS_RENDERDOC)")
     p_win.add_argument("--timeout", type=float,
                        help="kill the game after this many seconds "
                             "(default: the scenario's timeout_s + 120)")
@@ -870,8 +917,14 @@ def main() -> int:
     if a.cmd == "windows":
         if not a.no_build:
             build_windows(a.config)
+        renderdoc = None
+        if a.renderdoc is not None:
+            rd_dir = a.renderdoc or WIN_RENDERDOC
+            if not rd_dir:
+                die("--renderdoc needs a RenderDoc folder (or set SKATE3_WINDOWS_RENDERDOC)")
+            renderdoc = Path(rd_dir)
         run = run_windows(a.scenario.resolve(), a.config, a.backend, extra, a.out.resolve(),
-                          timeout_s=a.timeout)
+                          timeout_s=a.timeout, renderdoc=renderdoc)
         if run is None:
             return 4
         log(f"run folder: {run}")

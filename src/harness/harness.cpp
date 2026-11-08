@@ -332,12 +332,17 @@ class LogTap final : public spdlog::sinks::base_sink<std::mutex> {
     spdlog::memory_buf_t formatted;
     formatter_->format(msg, formatted);
     const std::string line(formatted.data(), formatted.size());
-    // Validation-layer messages, as the SDK's debug messenger formats them:
-    // "Vulkan <severity> (Validation, ID ...".
+    // Validation-layer messages, as the SDK formats them:
+    // "Vulkan <severity> (Validation, ID ..." from the debug messenger, and
+    // "D3D12 <severity> (debug layer, ID ..." from the D3D12 info queue.
     const std::string_view payload(msg.payload.data(), msg.payload.size());
-    const bool validation = payload.substr(0, 7) == "Vulkan " &&
-                            payload.find("Validation") != std::string_view::npos &&
-                            payload.find("Validation") < 40;
+    const auto within = [&](std::string_view prefix, std::string_view tag) {
+      const size_t at = payload.find(tag);
+      return payload.substr(0, prefix.size()) == prefix && at != std::string_view::npos &&
+             at < 40;
+    };
+    const bool validation =
+        within("Vulkan ", "Validation") || within("D3D12 ", "(debug layer");
     {
       std::lock_guard lk(run_->file_mu);
       if (run_->log_out) {
@@ -403,10 +408,18 @@ std::string ResultJson(Run& r, int code, std::string_view status, std::string_vi
     }
     os << "],\n";
   }
-  // GetFlagByName: "" when the cvar does not exist (no Vulkan backend).
-  os << "  \"validation_enabled\": "
-     << (rex::cvar::GetFlagByName("vulkan_validation_enabled") == "true" ? "true" : "false")
-     << ",\n  \"validation_messages\": " << r.validation.load() << ",\n";
+  // GetFlagByName: "" when the cvar does not exist (backend not built in).
+  // Each is only meaningful for the backend in use, which the run reports.
+  const bool vk_validation = rex::cvar::GetFlagByName("vulkan_validation_enabled") == "true";
+  const bool d3d12_debug = rex::cvar::GetFlagByName("d3d12_debug") == "true";
+  os << "  \"validation_enabled\": " << (vk_validation || d3d12_debug ? "true" : "false")
+     << ",\n  \"validation_layers\": \""
+     << (vk_validation && d3d12_debug ? "vulkan+d3d12"
+         : vk_validation              ? "vulkan"
+         : d3d12_debug                ? "d3d12"
+                                      : "")
+     << "\",\n  \"gpu_backend\": \"" << JsonEscape(rex::cvar::GetFlagByName("gpu_backend"))
+     << "\",\n  \"validation_messages\": " << r.validation.load() << ",\n";
   os << "  \"seconds\": " << Seconds(r) << ",\n  \"warnings\": " << r.warnings.load()
      << ",\n  \"errors\": " << r.errors.load() << ",\n  \"screenshots\": " << r.shots.load()
      << ",\n  \"dir\": \"" << JsonEscape(r.dir.generic_string()) << "\"\n}\n";
@@ -1253,11 +1266,12 @@ void Prepare() {
   REXLOG_INFO("harness: enabled ({}), run folder {}", r->scenario ? "scenario" : "live",
               r->dir.string());
   if (r->scenario && r->scenario->vulkan_validation &&
-      rex::cvar::GetFlagByName("vulkan_validation_enabled") != "true") {
+      rex::cvar::GetFlagByName("vulkan_validation_enabled") != "true" &&
+      rex::cvar::GetFlagByName("d3d12_debug") != "true") {
     REXLOG_WARN(
-        "harness: the scenario asks for vulkan_validation, but the Vulkan instance was created "
+        "harness: the scenario asks for validation, but the graphics device was created "
         "without it; pass --vulkan_validation_enabled=true --vulkan_log_debug_messages=true "
-        "(run_scenario.py does)");
+        "(Vulkan) or --d3d12_debug=true (D3D12); run_scenario.py does");
   }
   Event(*r, "prepare",
         "\"scenario\":\"" + JsonEscape(r->scenario ? r->scenario->path : "") + "\"");
