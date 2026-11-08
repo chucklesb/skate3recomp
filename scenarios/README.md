@@ -116,6 +116,7 @@ name = "boot_to_plaza"
 timeout_s = 300           # wall-clock limit, exit code 2 past it
 boot = "demo"             # "demo": signed-out boot straight to gameplay; "none": normal boot
 state_every_frames = 5    # state.jsonl interval (0 = only at state steps)
+start_spot = "Z_DT_Tresoutta"  # optional: teleport here after the first gameplay wait
 
 [cvars]                   # applied at startup, like --name=value
 skate3_native_render_scene = true
@@ -144,6 +145,7 @@ Steps run in order. A failing step ends the run with code 1.
 | `exit` | `code = 0`. |
 | `capture` | `tag`, `frames = 1`: RenderDoc capture of the next N frames (see below). |
 | `crash` | `where = "runner"` (default; the harness thread) or `"guest"` (the next controller poll, inside a guest call): fault on purpose to test crash capture. Refused unless the scenario sets `allow_crash = true`. |
+| `teleport` | `location = "Z_DT_Tresoutta"` (a named world locator), optional `tolerance` (metres, default 5) and `timeout_s` (default 60). It uses the game's own teleport, the pause map's path, then waits until the skater settles near the locator: within `tolerance` horizontally, between 15 m below and `tolerance` above it (many locators float above the ground), and slower than 2 m/s for 30 frames. Before issuing, it waits up to 20 s for free skate, so the previous teleport or a respawn can finish. A fall through a not-yet-loaded floor (more than 15 m below) re-issues the teleport, up to `retries` times (default 3). `settle = false` returns as soon as the skater reaches the locator. `path = "sequencer"` uses the lower-level teleport instead of the pause map's: it doesn't load another map, so into an unloaded district the skater falls through the world (that's what `repro_fast_fall_body_parts.toml` relies on). `map_key = "<hex>"` overrides the district's map key. Free skate only. See "Teleport locations" below. |
 
 Button names: `a b x y lb rb l3 r3 start back up down left right guide`.
 
@@ -295,6 +297,36 @@ thread.
   +0x210/+0x214, 20-byte records).
 - **Screenshots:** the presenter's guest-output capture, encoded with
   `src/thirdparty/stb/stb_image_write.h`.
+
+## Teleport locations
+
+The game keeps 1,080 named world locators. Each one is a 4×4 transform, keyed by a hash of its name, in a registry hanging off the world object. `teleport` hands one to the game's teleport sequencer. Rules for the names:
+
+- **The pause map's destinations** are mostly `Z_*` locators under internal names, e.g. `Z_UN_ClockTower` ("Clock Tower") and `Z_DT_Tresoutta` ("Tresoutta Plaza").
+- **Use the vetted names** in `scenarios/teleport_locations.md`: 72 Downtown, University and Industrial locations, checked by a survey that teleported to each one.
+- **Districts need a map key.** `teleport` goes through the pause map's own entry point, which loads the destination's map first. That needs the district's map key, captured from the menu: Downtown, University and Industrial so far. Districts without a key (the skate school, the separate skate parks, DLC) fall back to the game's lower-level teleport. That arrives before their map is loaded, so the skater falls through the world (the step fails, because the skater never settles).
+- **Regenerating the data:** the full locator list comes from a memory snapshot via `tools/re/registry.py <snapshot.gsnap>`. The locator-to-district table, `src/harness/teleport_districts.inc`, comes from `tools/re/locator_districts.py <game dump>`.
+
+## Notes for later work: game teleport
+
+How the harness teleport works (TU3 addresses). Implemented in `src/harness/harness_game.cpp`.
+
+| Piece | Where |
+|---|---|
+| world object | `*(0x83083BCC)` |
+| locator registry | `world + 168`: an EASTL map, nodes `{right, left, parent, color, key +16, type byte +20, object +24}` |
+| name hash | `sub_8296EA10`, ELF-style |
+| game-mode owner | `*(world + 156)`; its `+116` is the teleporter, its `+40` the teleport-mode component (vtable `0x8230DF88`, `+44` = teleporting allowed) |
+| **the pause map's entry point** (used by the harness) | `sub_82864628(service, u64* map key, const char** name, 0, 1)`. The service is `*(*(0x830CFD94) + 0x108)` (vtable `0x82315370`). It hashes the name, copies the locator's matrix from the registry (`service + 12`), and calls `sub_828646E0` (vtable slot 17). |
+| `sub_828646E0` | stores the requested map key in the state block `0x830B7AE8` (`+40` current, `+48` requested). When the map changes, it builds a load-map-then-teleport task (`sub_825582D0`); otherwise it takes the same-map path. It posts `523ED4CC`. |
+| map keys | the pause map's, per district: Downtown `4773016A41B2E05E`, University `CB473E68A2EAFABA`, Industrial `A8B1F47090679026`. These are not plain FNV/MD5/SHA hashes of the district names. |
+| sequencer | `sub_82706F50(teleporter, locator, hash, flag, 0, 0, 0)`, the lower-level path the harness falls back to for districts without a key |
+| enter teleporting state | `sub_82720B50(mode, 0x8270C7D0, teleporter)` |
+| the move | the teleporting state posts message `0x8FCDC5E2` (96 bytes, a 4×4 matrix) from `sub_827070C0` |
+
+- **The fallback sequencer path:** `sub_82864C40` decides whether the area must be streamed in, and the sequencer returns that. When it returns 0, the sequencer moves the player at once, but free skate ignores that instant move, so the harness forces 1 during its own call. That path never loads another map, and in a freshly streamed district the skater can arrive before the collision does.
+- **How the menu does it:** `sub_8270B3D0` on the mode component handles the event-driven variant (hash the name, sequencer, teleporting state). The pause map itself calls `sub_82864628` with the destination district's key (captured with the RE probe's teleport-start hooks).
+- **Finding these again:** the harness RE probe (`--skate3_harness_re_probe=true`, `src/harness/harness_re.cpp`) logs every new game message type with its sender. That's how the teleport message showed up. `tools/re/xrefs.py` (callers, callees, address references and disassembly from the generated code) and `tools/re/gsnap.py` (snapshot search and diff) are the static side.
 
 ## Notes for later work: skate.Reel playback
 

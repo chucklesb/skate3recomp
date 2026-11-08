@@ -334,8 +334,10 @@ set(SKATE3_COMMON_SOURCES
     src/exception_compat.cpp
     src/harness/harness.cpp
     src/harness/harness_crash.cpp
+    src/harness/harness_game.cpp
     src/harness/harness_overlay.cpp
     src/harness/harness_png.cpp
+    src/harness/harness_re.cpp
     src/harness/harness_script.cpp
     src/skate3_app_common.cpp
     src/skate3_demo_path.cpp

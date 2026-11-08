@@ -49,6 +49,8 @@ enum class Verb {
   kQuery,       // live channel only: what="state"|"status"
   kCapture,     // tag="x" frames=1: RenderDoc capture of the next N frames (RenderDoc attached)
   kCrash,       // where="runner"|"guest": fault on purpose (needs allow_crash = true)
+  kTeleport,    // location="Z_UN_ClockTower" (a registry locator) tolerance=5 timeout_s=60
+                // settle=true (false: return on arrival, e.g. a floorless locator)
 };
 
 struct Step {
@@ -98,6 +100,14 @@ struct Step {
 
   // crash
   std::string where = "runner";
+
+  // teleport
+  std::string location;
+  double tolerance = 5.0;  // metres from the locator the skater must end up
+  bool settle = true;      // false: done once the skater reaches the locator (may keep moving)
+  int retries = 3;         // re-issues after falling through an unloaded floor
+  uint64_t map_key = 0;    // override of the destination's map key (hex string in TOML)
+  bool via_sequencer = false;  // path = "sequencer": the lower-level teleport (no map load)
 };
 
 struct Scenario {
@@ -112,6 +122,9 @@ struct Scenario {
   bool vulkan_validation = false;
   // The `crash` verb only runs in a scenario that opts in.
   bool allow_crash = false;
+  // Locator to teleport to right after the first `wait gameplay = true` step
+  // (scenarios/teleport_locations.md), so every target starts at one place.
+  std::string start_spot;
   std::vector<std::pair<std::string, std::string>> cvars;
   std::vector<Step> steps;
 };

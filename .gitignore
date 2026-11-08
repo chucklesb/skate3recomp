@@ -14,6 +14,7 @@
 !/tools/appimage/
 !/tools/release/
 !/tools/harness/
+!/tools/re/
 
 # Local game dump and retail media. Users must provide their own copy.
 /game/

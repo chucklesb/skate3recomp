@@ -1,6 +1,7 @@
 #include "skate3_native_render.h"
 
 #include "harness/harness.h"
+#include "harness/harness_game.h"
 #include "native/skate3_native_diag.h"
 #include "native/skate3_native_entity.h"
 #include "native/skate3_native_guest_read.h"
@@ -472,6 +473,7 @@ extern "C" REX_FUNC(sub_82B82E08) {
     skate3::native_render::OnFrameEnd(base);
   }
   skate3::harness::OnFrame(base);
+  skate3::harness::game::OnGuestFrame(ctx, base);
   __imp__sub_82B82E08(ctx, base);
 }
 

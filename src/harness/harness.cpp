@@ -33,6 +33,7 @@
 #include <spdlog/sinks/base_sink.h>
 
 #include "harness/harness_crash.h"
+#include "harness/harness_game.h"
 #include "harness/harness_pad.h"
 #include "harness/harness_png.h"
 #include "harness/harness_script.h"
@@ -139,9 +140,11 @@ std::string FeStackJson(const std::vector<std::pair<int32_t, int32_t>>& stack) {
     if (i) {
       out += ",";
     }
-    out += std::to_string(stack[i].first);
+    // An entry with a second field is a string ("22:0") to keep the line JSON.
     if (stack[i].second != -1) {
-      out += ":" + std::to_string(stack[i].second);
+      out += "\"" + std::to_string(stack[i].first) + ":" + std::to_string(stack[i].second) + "\"";
+    } else {
+      out += std::to_string(stack[i].first);
     }
   }
   return out + "]";
@@ -996,6 +999,116 @@ Outcome Execute(Run& r, const Step& st) {
       }
       Outcome o;
       o.result_json = "\"file\":\"" + JsonEscape(path) + "\"";
+      return o;
+    }
+
+    case Verb::kTeleport: {
+      // A previous teleport, fall or respawn may still be finishing (presence
+      // leaves gameplay during the fade): wait for free skate before issuing.
+      constexpr double kReadyWaitS = 20.0;
+      if (!WaitUntil(r, kReadyWaitS,
+                     [&] { return r.state.presence == 1 && r.state.skater_valid; })) {
+        return Fail("teleport needs gameplay (free skate with the skater in the world)");
+      }
+      // A streamed destination moves the skater seconds later. Arrival means
+      // near the locator AND settled there (slow) for kSettleFrames frames in a
+      // row. A freshly streamed district's collision can arrive after the
+      // move: the skater then falls through the world. Falling well below the
+      // locator after reaching it re-issues the same teleport (the district is
+      // loaded by then), up to `retries` times within timeout_s.
+      constexpr uint64_t kSettleFrames = 30;
+      constexpr double kSettleSpeed = 2.0;
+      // Many locators float a few metres above the ground (the skater drops
+      // onto it), so arrival is horizontal distance within `tolerance` and
+      // height between kFellBelow under and `tolerance` over the locator. A
+      // fall through the world drops hundreds of metres.
+      constexpr double kFellBelow = 15.0;
+      const auto deadline = Clock::now() + std::chrono::duration_cast<Clock::duration>(
+                                               std::chrono::duration<double>(st.timeout_s));
+      game::TeleportResult tr;
+      char target[96] = "[]";
+      double dist = -1.0, speed = 0.0;
+      bool arrived = false;
+      int attempt = 0;
+      for (; attempt <= st.retries; ++attempt) {
+        const auto ready_deadline =
+            Clock::now() + std::chrono::duration_cast<Clock::duration>(
+                               std::chrono::duration<double>(kReadyWaitS));
+        const uint64_t key = st.via_sequencer ? game::kForceSequencer : st.map_key;
+        tr = game::Teleport(st.location, 15.0, key);
+        while (!tr.ok && tr.busy && Clock::now() < ready_deadline && !r.stop.load()) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(250));
+          tr = game::Teleport(st.location, 15.0, key);
+        }
+        if (!tr.ok) {
+          return Fail("teleport to '" + st.location + "': " + tr.error);
+        }
+        std::snprintf(target, sizeof(target), "[%.3f,%.3f,%.3f]", tr.target[0], tr.target[1],
+                      tr.target[2]);
+        Event(r, attempt ? "teleport_retry" : "teleport",
+              "\"location\":\"" + JsonEscape(st.location) + "\",\"target\":" + target +
+                  ",\"streamed\":" + (tr.streamed ? "true" : "false") +
+                  ",\"path\":\"" + (tr.via_service ? "map" : "sequencer") + "\"" +
+                  ",\"map_load\":" + (tr.map_load ? "true" : "false") + ",\"district\":\"" +
+                  JsonEscape(tr.district) + "\",\"attempt\":" + std::to_string(attempt + 1));
+        bool reached = false, fell = false;
+        uint64_t settled_since = 0;
+        const double left =
+            std::max(0.5, std::chrono::duration<double>(deadline - Clock::now()).count());
+        WaitUntil(r, left, [&] {
+          if (!r.state.skater_valid) {
+            settled_since = 0;
+            return false;
+          }
+          const double dx = r.state.skater_pos[0] - tr.target[0];
+          const double dy = r.state.skater_pos[1] - tr.target[1];
+          const double dz = r.state.skater_pos[2] - tr.target[2];
+          dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+          speed = r.state.skater_speed;
+          const bool near = std::sqrt(dx * dx + dz * dz) <= st.tolerance &&
+                            dy >= -kFellBelow && dy <= st.tolerance;
+          if (near) {
+            reached = true;
+          }
+          if (!st.settle) {
+            arrived = reached;  // arrival is enough
+            return arrived;
+          }
+          if (reached && dy < -kFellBelow) {
+            fell = true;  // through the floor: retry
+            return true;
+          }
+          if (!near || speed > kSettleSpeed) {
+            settled_since = 0;
+            return false;
+          }
+          if (!settled_since) {
+            settled_since = r.state.frame;
+          }
+          arrived = r.state.frame - settled_since >= kSettleFrames;
+          return arrived;
+        });
+        if (arrived || !fell || Clock::now() >= deadline) {
+          break;
+        }
+      }
+      if (!arrived) {
+        char why[240];
+        std::snprintf(why, sizeof(why),
+                      "teleport to '%s' issued %d time(s), but the skater did not settle there: "
+                      "%.1f m from %s at %.1f m/s after %.0f s",
+                      st.location.c_str(), std::min(attempt + 1, st.retries + 1), dist, target,
+                      speed, st.timeout_s);
+        return Fail(why);
+      }
+      Outcome o;
+      char extra[256];
+      std::snprintf(extra, sizeof(extra),
+                    "\"location\":\"%s\",\"target\":%s,\"distance\":%.2f,\"streamed\":%s,"
+                    "\"attempts\":%d",
+                    JsonEscape(st.location).c_str(), target, dist, tr.streamed ? "true" : "false",
+                    attempt + 1);
+      o.result_json = extra;
       return o;
     }
 

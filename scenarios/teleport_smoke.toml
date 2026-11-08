@@ -1,0 +1,56 @@
+# Teleport through the game's own locator teleport (the pause map's path) to
+# two map locations and check that the skater settles at each one.
+# Z_UN_ClockTower is the map's "Clock Tower"; Z_DT_Tresoutta is "Tresoutta
+# Plaza" (checked against the pause map by hand).
+name = "teleport_smoke"
+timeout_s = 600
+boot = "demo"
+
+[cvars]
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "state"
+tag = "start"
+
+[[step]]
+do = "teleport"
+location = "Z_UN_ClockTower"
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "state"
+tag = "clocktower"
+
+[[step]]
+do = "screenshot"
+tag = "clocktower"
+
+[[step]]
+do = "teleport"
+location = "Z_DT_Tresoutta"
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "state"
+tag = "tresoutta"
+
+[[step]]
+do = "screenshot"
+tag = "tresoutta"

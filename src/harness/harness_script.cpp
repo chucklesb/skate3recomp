@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
+#include <string>
 
 #include <toml++/toml.hpp>
 
@@ -22,7 +24,7 @@ constexpr VerbEntry kVerbs[] = {
     {"step", Verb::kStep},         {"resume", Verb::kResume},
     {"expect", Verb::kExpect},     {"exit", Verb::kExit},
     {"query", Verb::kQuery},       {"capture", Verb::kCapture},
-    {"crash", Verb::kCrash},
+    {"crash", Verb::kCrash},       {"teleport", Verb::kTeleport},
 };
 
 // TOML scalar -> the string form rex::cvar::SetFlagByName takes.
@@ -144,9 +146,36 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
   s.code = static_cast<int>(Integer(t, "code").value_or(0));
   s.what = t["what"].value_or(std::string("state"));
   s.where = t["where"].value_or(std::string("runner"));
+  s.location = t["location"].value_or(std::string());
+  s.tolerance = Number(t, "tolerance").value_or(5.0);
+  s.settle = t["settle"].value_or(true);
+  s.retries = static_cast<int>(std::max<int64_t>(0, Integer(t, "retries").value_or(3)));
+  const std::string tpath = t["path"].value_or(std::string("map"));
+  if (tpath != "map" && tpath != "sequencer") {
+    *error = "path must be \"map\" (default) or \"sequencer\"";
+    return false;
+  }
+  s.via_sequencer = tpath == "sequencer";
+  if (auto mk = t["map_key"].value<std::string>()) {
+    try {
+      s.map_key = std::stoull(*mk, nullptr, 16);
+    } catch (const std::exception&) {
+      *error = "map_key must be a hex string (e.g. \"A8B1F47090679026\")";
+      return false;
+    }
+  }
 
   // Per-verb requirements.
   switch (s.verb) {
+    case Verb::kTeleport:
+      if (s.location.empty()) {
+        *error = "teleport needs location = \"<locator name>\" (e.g. \"Z_UN_ClockTower\")";
+        return false;
+      }
+      if (!t.get("timeout_s")) {
+        s.timeout_s = 60.0;
+      }
+      break;
     case Verb::kCrash:
       if (s.where != "runner" && s.where != "guest") {
         *error = "crash needs where = \"runner\" or \"guest\"";
@@ -266,6 +295,25 @@ std::optional<Scenario> LoadScenario(const std::string& path, std::string* error
       }
       s.index = i;
       sc.steps.push_back(std::move(s));
+    }
+  }
+  // start_spot: teleport there right after the first gameplay wait, so every
+  // target (ab) starts at the same place instead of the save's last location.
+  sc.start_spot = root["start_spot"].value_or(std::string());
+  if (!sc.start_spot.empty()) {
+    auto it = std::find_if(sc.steps.begin(), sc.steps.end(),
+                           [](const Step& s) { return s.verb == Verb::kWait && s.gameplay; });
+    if (it == sc.steps.end()) {
+      *error = path + ": start_spot needs a `wait` step with gameplay = true to follow";
+      return std::nullopt;
+    }
+    Step tp;
+    tp.verb = Verb::kTeleport;
+    tp.location = sc.start_spot;
+    tp.timeout_s = 120.0;  // a map load (Industrial) takes ~11 s on its own
+    sc.steps.insert(it + 1, std::move(tp));
+    for (size_t k = 0; k < sc.steps.size(); ++k) {
+      sc.steps[k].index = k + 1;
     }
   }
   return sc;

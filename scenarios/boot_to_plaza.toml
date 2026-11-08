@@ -1,5 +1,8 @@
-# Boot signed-out to the spawn plaza, look around, push off, and check the
-# skater actually moved. A smoke test for the harness itself.
+# Boot signed-out, teleport to Tresoutta Plaza, look around, push off, and
+# check the skater actually moved. A smoke test for the harness itself.
+# start_spot makes every target start at the same place (the save's last
+# location differs between machines), so `ab` positions and screenshots
+# compare.
 #
 #   tools/harness/run_scenario.py local scenarios/boot_to_plaza.toml
 #   tools/harness/run_scenario.py odin2 scenarios/boot_to_plaza.toml
@@ -8,6 +11,7 @@ name = "boot_to_plaza"
 timeout_s = 300
 boot = "demo"
 state_every_frames = 5
+start_spot = "Z_DT_Tresoutta"
 
 # The input steps below count frames, so pin the frame rate: uncapped, a fast
 # PC runs ~150 fps and an 8-frame A press is too short to push off. 30 fps is
@@ -34,6 +38,16 @@ do = "screenshot"
 tag = "spawn"
 count = 2
 every_frames = 30
+
+# The teleport leaves the skater on foot, holding the board: Y gets on it.
+[[step]]
+do = "input"
+buttons = "y"
+frames = 8
+
+[[step]]
+do = "wait"
+frames = 45
 
 # Push off: tap A (push) four times while holding the stick forward.
 [[step]]

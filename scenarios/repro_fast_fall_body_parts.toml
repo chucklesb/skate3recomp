@@ -1,0 +1,43 @@
+# Reproduce: feet and other body parts fly off the skater at high speed.
+#
+# Start at the University Clock Tower, then teleport through the lower-level
+# sequencer path (path = "sequencer") to Downtown's Core Plaza. That path
+# doesn't wait for the destination's collision, so the skater falls through the
+# world while the city is still drawn around him. The fall speeds up past
+# 100 m/s within seconds, and the detached parts show, with no hand-driven
+# input. (Into Industrial the screen stays on "Loading…", so nothing shows.)
+name = "repro_fast_fall_body_parts"
+timeout_s = 600
+boot = "demo"
+state_every_frames = 5
+start_spot = "Z_UN_ClockTower"
+
+[cvars]
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "teleport"
+location = "Z_DT_CorePlaza"
+path = "sequencer"
+settle = false
+tolerance = 8
+
+[[step]]
+do = "screenshot"
+tag = "fall"
+count = 16
+every_frames = 20
+
+[[step]]
+do = "expect"
+speed_gt = 20.0

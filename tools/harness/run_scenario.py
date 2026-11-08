@@ -427,6 +427,15 @@ def win_launch(config: str, backend: str, game_args: list[str],
         die(f"no game dump in {game} (build.sh stage copies it once)")
     if win_game_running():
         die("skate3.exe is already running on Windows; close it first")
+    # A command left in the inbox (e.g. an `exit` sent after the last game had
+    # already closed) would run as soon as the new game starts.
+    inbox = stage / WIN_HARNESS_OUT / "inbox"
+    if inbox.is_dir():
+        stale = [p for p in inbox.iterdir() if p.is_file()]
+        for p in stale:
+            p.unlink(missing_ok=True)
+        if stale:
+            log(f"cleared {len(stale)} stale inbox command(s)")
     game_argv = [f"--gpu_backend={backend}", f"--game_data_root={win_path(game)}",
                  f"--skate3_harness_out={WIN_HARNESS_OUT}", *game_args]
     log(f"windows {config}/{backend}: " + " ".join(shlex.quote(x) for x in game_argv))
