@@ -218,9 +218,16 @@ RenderDoc attached, the step fails with a clear message.
   `$SKATE3_WINDOWS_RENDERDOC`, a RenderDoc folder; the portable zip works).
   It also sets `VK_ADD_IMPLICIT_LAYER_PATH` to that folder, because a
   portable RenderDoc's Vulkan layer isn't registered. Captures land in the run
-  folder as usual. Use `--backend d3d12`: on an NVIDIA RTX 4070 with RenderDoc
-  1.46, a Vulkan frame capture loses the device the moment it starts
-  (`ErrorDeviceLost`), while RenderDoc injection itself works until then.
+  folder as usual. Both backends work. Vulkan captures carry the native
+  renderer's labels and object names; D3D12 captures have neither.
+- **Harness behaviour under RenderDoc:**
+  - RenderDoc's explicit start and end calls submit work on the app's queues
+    from the calling thread. The SDK therefore holds every Vulkan queue across
+    them (`rex::ui::renderdoc::SetQueueGuard`). Without that, captures lost the
+    device about half the time on an RTX 4070.
+  - A finished run closes the game normally instead of exiting at once,
+    because a hard exit right after a capture could leave the process stuck in
+    the GPU driver. `result.json` is written first either way.
 - **DroidDeck handheld:** RenderDoc has no arm64 Linux release, so build one:
 
   ```sh

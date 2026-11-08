@@ -34,9 +34,15 @@ using CaptureFn = std::function<bool(std::vector<uint8_t>& rgba, uint32_t& width
 // when the scenario file does not parse.
 void Prepare();
 
+// Asks the app to shut down normally (any thread; returns at once).
+using CloseFn = std::function<void()>;
+
 // OnPostSetup, after the guest hooks are installed: starts the run, the
-// live channel and the log tap.
-void Start(CaptureFn capture);
+// live channel and the log tap. With RenderDoc attached, a finished run
+// shuts the game down through `close` instead of exiting the process at
+// once (a hard exit right after a capture can hang in the GPU driver);
+// result.json is written first either way.
+void Start(CaptureFn capture, CloseFn close = {});
 
 // OnShutdown.
 void Shutdown();

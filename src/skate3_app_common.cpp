@@ -871,7 +871,9 @@ void Skate3BaseApp::OnPostSetup() {
       }
     }
     return true;
-  });
+  },
+                         // A finished run under RenderDoc shuts down normally.
+                         [this] { CloseGame(); });
   // User-facing intro-movie skip (independent of the demo path): the movie
   // completion override polls the merged UI pad state through this provider.
   skate3::demo_path::SetUiInputProvider(

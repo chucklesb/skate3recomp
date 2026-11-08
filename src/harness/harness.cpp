@@ -186,6 +186,7 @@ struct Run {
   fs::path dir;
   Clock::time_point t0 = Clock::now();
   CaptureFn capture;
+  CloseFn close;
 
   // Frame/poll clock and game state (guarded by mu).
   std::mutex mu;
@@ -472,6 +473,24 @@ void DrainShots(Run& r, std::chrono::milliseconds limit) {
     r.log_out.flush();
   }
   std::fflush(nullptr);
+  if (r.close && rex::ui::renderdoc::Attached()) {
+    // Under RenderDoc, a hard exit right after a capture left skate3.exe stuck
+    // in the GPU driver, unkillable until a reboot (Windows, RTX 4070, RenderDoc
+    // 1.46). Shut down normally, so the device and RenderDoc are torn down in
+    // order. The process exit code is then the app's; result.json has the real
+    // one. A stuck shutdown still ends with the hard exit.
+    REXLOG_INFO("harness: RenderDoc attached, closing the game normally");
+    rex::FlushLogging();
+    std::thread([code] {
+      std::this_thread::sleep_for(std::chrono::seconds(30));
+      std::_Exit(code);
+    }).detach();
+    r.close();
+    // This thread stays parked; Shutdown() detaches it instead of joining.
+    for (;;) {
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+  }
   std::_Exit(code);
 }
 
@@ -958,7 +977,9 @@ Outcome Execute(Run& r, const Step& st) {
         return Fail("game stopped presenting frames during the capture");
       }
       if (!written) {
-        return Fail("RenderDoc did not write the capture (see its log in /tmp/RenderDoc)");
+        return Fail(
+            "RenderDoc did not write the capture (see its log in /tmp/RenderDoc, or "
+            "%TEMP%\\RenderDoc on Windows)");
       }
       // Writing the file can take a few seconds on a handheld.
       const auto deadline = Clock::now() + std::chrono::seconds(60);
@@ -1277,12 +1298,13 @@ void Prepare() {
         "\"scenario\":\"" + JsonEscape(r->scenario ? r->scenario->path : "") + "\"");
 }
 
-void Start(CaptureFn capture) {
+void Start(CaptureFn capture, CloseFn close) {
   Run* r = g_run;
   if (!r) {
     return;
   }
   r->capture = std::move(capture);
+  r->close = std::move(close);
   r->encoder = std::thread([r] { EncoderLoop(*r); });
   r->inbox = std::thread([r] { InboxLoop(*r); });
   if (r->scenario) {
@@ -1305,10 +1327,18 @@ void Shutdown() {
   }
   r->cv.notify_all();
   r->shot_cv.notify_all();
+  // After FinishAndExit asked for a normal close, the thread that called it
+  // (runner or watchdog) never returns: detach instead of joining. Run is
+  // never freed, so a detached thread can't touch freed memory.
+  const bool finished = r->finished.load();
   for (std::thread* t : {&r->runner, &r->inbox, &r->watchdog, &r->encoder}) {
     if (t->joinable()) {
       // The runner may sit in a long wait; it checks stop every 50 ms.
-      t->join();
+      if (finished && (t == &r->runner || t == &r->watchdog)) {
+        t->detach();
+      } else {
+        t->join();
+      }
     }
   }
   if (g_tap) {
