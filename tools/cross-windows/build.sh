@@ -9,19 +9,21 @@
 #            skipped when generated/ exists unless SKATE3_FORCE_CODEGEN=1, so
 #            a Windows build and a linux-aarch64 build share the same sources
 #   build    cross-configure and build                   (nix develop .#windows)
-#   stage    copy the exe, DLLs, PDBs and TU3 patches to the stage directory
+#   stage    copy the exe, DLLs and PDBs to <stage root>/<config>, and the
+#            TU3 patches (plus, once, the game dump) to <stage root>/game
 #
 # The result is for local A/B testing against the linux-aarch64 build, not
 # for release (the upstream release path is tools/package_windows.ps1).
+# tools/harness/run_scenario.py `windows` runs scenarios against the stage,
+# passing --game_data_root=<stage root>/game.
 #
 # Environment:
-#   SKATE3_GAME_DATA_ROOT     game dump (default <repo>/game)
-#   SKATE3_WINDOWS_STAGE_DIR  stage directory (default
-#                             out/stage/windows-x64-<config>). Running from
-#                             \\wsl.localhost works but is slow; for this PC
-#                             use a /mnt/c/... folder.
-#   SKATE3_STAGE_GAME=0       don't copy the game dump into <stage>/game when
-#                             <stage>/game/default.xex is missing
+#   SKATE3_GAME_DATA_ROOT      game dump (default <repo>/game)
+#   SKATE3_WINDOWS_STAGE_ROOT  stage root (default out/stage/windows-x64).
+#                              Running from \\wsl.localhost works but is
+#                              slow; for this PC use a /mnt/c/... folder.
+#   SKATE3_STAGE_GAME=0        don't copy the game dump into <root>/game when
+#                              <root>/game/default.xex is missing
 #   SKATE3_JOBS, SKATE3_CMAKE_FRESH  as in tools/cross-aarch64/build.sh
 
 set -euo pipefail
@@ -43,7 +45,9 @@ game_root=${SKATE3_GAME_DATA_ROOT:-$repo/game}
 jobs=${SKATE3_JOBS:-$(nproc)}
 preset=windows-x64-$config
 build_dir=out/build/$preset
-stage=${SKATE3_WINDOWS_STAGE_DIR:-$repo/out/stage/$preset}
+stage_root=${SKATE3_WINDOWS_STAGE_ROOT:-$repo/out/stage/windows-x64}
+stage=$stage_root/$config
+stage_game=$stage_root/game
 # The SDK names RelWithDebInfo libraries with an "rd" postfix; the GPU plugin
 # loader looks for the matching name.
 postfix=
@@ -92,28 +96,28 @@ for step in "${steps[@]}"; do
             for f in "${bins[@]}"; do
                 [ -f "$build_dir/$f" ] || { echo "build.sh: $build_dir/$f is missing; run the build step" >&2; exit 1; }
             done
-            mkdir -p "$stage/game/data/webkit"
+            mkdir -p "$stage" "$stage_game/data/webkit"
             for f in "${bins[@]}"; do cp -f "$build_dir/$f" "$stage/"; done
             # skate3.pdb sits in the build dir; the SDK links its DLLs (and
             # their PDBs) into its own out/win-amd64 and only copies the DLLs.
             sdk_out=third_party/rexglue-sdk/out/win-amd64
             for f in "$build_dir/skate3.pdb" "$sdk_out/rexruntime$postfix.pdb" "$sdk_out/rexgpu-xenos$postfix.pdb"; do
-                [ -f "$f" ] && cp -f "$f" "$stage/"
+                if [ -f "$f" ]; then cp -f "$f" "$stage/"; fi
             done
             # The build stages the TU3 patches next to the exe; the runtime
-            # refuses to boot without them.
+            # refuses to boot without them. They are the same for every config.
             for f in default.xexp data/webkit/EAWebkit.xexp; do
-                [ -f "$build_dir/game/$f" ] && cp -f "$build_dir/game/$f" "$stage/game/$f"
+                if [ -f "$build_dir/game/$f" ]; then cp -f "$build_dir/game/$f" "$stage_game/$f"; fi
             done
-            if [ ! -f "$stage/game/default.xex" ] && [ "${SKATE3_STAGE_GAME:-1}" != 0 ]; then
+            if [ ! -f "$stage_game/default.xex" ] && [ "${SKATE3_STAGE_GAME:-1}" != 0 ]; then
                 if [ -f "$game_root/default.xex" ]; then
-                    echo "build.sh: copying the game dump ($(du -sh "$game_root" | cut -f1)) into $stage/game"
-                    cp -r --no-preserve=mode,ownership --update=none"$game_root/." "$stage/game/"
+                    echo "build.sh: copying the game dump ($(du -sh "$game_root" | cut -f1)) into $stage_game"
+                    cp -r --no-preserve=mode,ownership --update=none "$game_root/." "$stage_game/"
                 else
-                    echo "build.sh: $game_root/default.xex not found; put the game dump in $stage/game yourself" >&2
+                    echo "build.sh: $game_root/default.xex not found; put the game dump in $stage_game yourself" >&2
                 fi
             fi
-            echo "build.sh: staged $preset in $stage"
+            echo "build.sh: staged $preset in $stage (game data: $stage_game)"
             ls -la "$stage"
             ;;
         *)

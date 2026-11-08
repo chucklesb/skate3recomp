@@ -4,6 +4,10 @@
     run_scenario.py local  <scenario.toml> --exe <skate3 or AppImage> [-- args...]
     run_scenario.py odin2  <scenario.toml> [--config release|relwithdebinfo] [--no-deploy] [-- args...]
     run_scenario.py live   [--config ...] [--no-deploy] [-- args...]  # live mode (inbox + recording)
+    run_scenario.py windows <scenario.toml> [--config ...] [--backend d3d12|vulkan] [--no-build] [-- args...]
+    run_scenario.py ab     <scenario.toml> [--config ...] [--backends d3d12,vulkan] [--fps-cap 30]
+                           [--no-build] [--no-deploy] [--no-odin2]   # Odin 2 vs Windows, compared
+    run_scenario.py live --target windows [--config ...] [--backend ...]; send --target windows ...
     run_scenario.py symbolize [--target odin2|windows] [--config ...] <module+0xoff | 0xaddr>...
     run_scenario.py send   <verb> [key=value ...]          # one live command, prints the reply
     run_scenario.py fetch                                  # copy the device's latest run folder
@@ -30,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import struct
@@ -37,7 +42,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 REPO = Path(__file__).resolve().parents[2]
 GUEST_APP_DIR = "/root/skate3-harness"
@@ -331,6 +336,203 @@ def command_toml(verb: str, pairs: list[str], cid: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ------------------------------------------------------------------ builds
+
+
+def build_step(script: str, config: str, steps: list[str], log_name: str,
+               env: dict | None = None) -> None:
+    """Run tools/cross-*/build.sh <config> <steps> with nix on PATH; log to out/harness/."""
+    log_path = REPO / "out/harness" / log_name
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = (". ~/.nix-profile/etc/profile.d/nix.sh 2>/dev/null; exec "
+           + " ".join(shlex.quote(x) for x in [script, config, *steps]))
+    log(f"{script} {config} {' '.join(steps)} (log: {log_path.relative_to(REPO)})")
+    with log_path.open("w") as f:
+        code = subprocess.run(["bash", "-c", cmd], cwd=REPO, stdout=f, stderr=subprocess.STDOUT,
+                              env={**os.environ, **(env or {})}).returncode
+    if code != 0:
+        tail = log_path.read_text(errors="replace").splitlines()[-15:]
+        die(f"{script} failed ({code}):\n" + "\n".join(tail))
+
+
+def build_aarch64(config: str) -> None:
+    # build.sh reconfigures, so the version string matches HEAD.
+    build_step("tools/cross-aarch64/build.sh", config, ["build"], f"aarch64-{config}-build.log")
+
+
+# ------------------------------------------------------------------ windows
+
+
+WIN_STAGE_ROOT = Path(os.environ.get("SKATE3_WINDOWS_STAGE_ROOT",
+                                     str(REPO / "out/stage/windows-x64")))
+WIN_HARNESS_OUT = "harness"  # relative to the stage dir (the game's working directory)
+BACKENDS = ("d3d12", "vulkan")
+WIN_LIVE_CONFIG = REPO / "out/harness/windows-live-config"
+
+
+def win_stage(config: str) -> Path:
+    return WIN_STAGE_ROOT / config
+
+
+def win_path(path: Path) -> str:
+    out = subprocess.run(["wslpath", "-w", str(path)], capture_output=True, text=True, check=True)
+    return out.stdout.strip()
+
+
+def win_game_running() -> bool:
+    out = subprocess.run(["tasklist.exe", "/FI", "IMAGENAME eq skate3.exe", "/NH"],
+                         capture_output=True, text=True)
+    return "skate3.exe" in out.stdout.lower()
+
+
+def build_windows(config: str) -> None:
+    build_step("tools/cross-windows/build.sh", config, ["build", "stage"],
+               f"windows-{config}-build.log",
+               env={"SKATE3_WINDOWS_STAGE_ROOT": str(WIN_STAGE_ROOT)})
+
+
+def win_launch(config: str, backend: str, game_args: list[str]) -> subprocess.Popen:
+    stage = win_stage(config)
+    exe = stage / "skate3.exe"
+    if not exe.exists():
+        die(f"{exe} is missing; run tools/cross-windows/build.sh {config} build stage "
+            f"(SKATE3_WINDOWS_STAGE_ROOT={WIN_STAGE_ROOT})")
+    game = WIN_STAGE_ROOT / "game"
+    if not (game / "default.xex").exists():
+        die(f"no game dump in {game} (build.sh stage copies it once)")
+    if win_game_running():
+        die("skate3.exe is already running on Windows; close it first")
+    args = [str(exe), f"--gpu_backend={backend}", f"--game_data_root={win_path(game)}",
+            f"--skate3_harness_out={WIN_HARNESS_OUT}", *game_args]
+    log(f"windows {config}/{backend}: " + " ".join(shlex.quote(x) for x in args[1:]))
+    # A /mnt/c working directory becomes the Windows process's working directory.
+    # Own session: `live` returns at once and the game must outlive this script.
+    return subprocess.Popen(args, cwd=stage, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            start_new_session=True)
+
+
+def run_windows(scenario: Path, config: str, backend: str, extra: list[str],
+                out_root: Path, timeout_s: float | None = None) -> Path | None:
+    """Run a scenario on this PC; return the run folder moved under out_root."""
+    stage = win_stage(config)
+    (stage / "scenarios").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(scenario, stage / "scenarios" / scenario.name)
+    current = stage / WIN_HARNESS_OUT / "current_run.txt"
+    current.unlink(missing_ok=True)
+    proc = win_launch(config, backend, [f"--skate3_harness_scenario=scenarios/{scenario.name}",
+                                        *scenario_flags(scenario), *extra])
+    log(f"running {scenario.name}")
+    try:
+        code = proc.wait(timeout=timeout_s or scenario_timeout(scenario) + 120)
+        log(f"game exited ({code})")
+    except subprocess.TimeoutExpired:
+        log("timeout: killing skate3.exe")
+        subprocess.run(["taskkill.exe", "/F", "/IM", "skate3.exe"], capture_output=True)
+        proc.wait(timeout=30)
+    if not current.exists():
+        log("the game wrote no current_run.txt (it failed before the harness started)")
+        return None
+    name = PureWindowsPath(current.read_text().strip()).name
+    src = stage / WIN_HARNESS_OUT / name
+    out_root.mkdir(parents=True, exist_ok=True)
+    dst = out_root / name
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.move(str(src), str(dst))
+    return dst
+
+
+# ------------------------------------------------------------------ odin2 / A-B
+
+
+def run_odin2(dev: Device, scenario: Path, extra: list[str], env: list[str],
+              out_root: Path) -> Path:
+    dev.adb_push(scenario.resolve(), f"{SHARED}/scenarios/{scenario.name}")
+    launch(dev, [f"--skate3_harness_scenario={SHARED}/scenarios/{scenario.name}",
+                 *scenario_flags(scenario), *extra], env=env)
+    log(f"running {scenario.name}")
+    wait_for_exit(dev, scenario_timeout(scenario) + 120)
+    run = fetch(dev, out_root)
+    log(f"run folder: {run}")
+    return run
+
+
+SHOT_RE = re.compile(r"^f\d+_(.+)_(\d+)\.png$")
+
+
+def run_record(label: str, run: Path | None) -> dict:
+    rec: dict = {"target": label, "dir": str(run) if run else None}
+    result = run / "result.json" if run else None
+    if not result or not result.exists():
+        rec.update(status="no-result", code=4)
+        return rec
+    r = json.loads(result.read_text())
+    last = r.get("last_state") or {}
+    rec.update({k: r.get(k) for k in ("status", "code", "reason", "version", "platform",
+                                      "build_config", "frames", "seconds", "warnings",
+                                      "errors", "screenshots", "validation_messages",
+                                      "failures")})
+    rec["fps"] = last.get("fps")
+    tags = {}
+    state = run / "state.jsonl"
+    if state.exists():
+        for line in state.read_text().splitlines():
+            if '"tag"' in line:
+                s = json.loads(line)
+                tags[s["tag"]] = {k: s.get(k) for k in ("frame", "t", "fps", "fe", "skater", "cam")}
+    rec["tags"] = tags
+    return rec
+
+
+def ab_compare(scenario: Path, runs: list[tuple[str, Path | None]], ab_dir: Path) -> int:
+    ab_dir.mkdir(parents=True, exist_ok=True)
+    recs = [run_record(label, run) for label, run in runs]
+    # Screenshots side by side: shots/<tag>/<target>_<n>.png
+    for label, run in runs:
+        shots = run / "shots" if run else None
+        if not shots or not shots.is_dir():
+            continue
+        for png in sorted(shots.glob("*.png")):
+            m = SHOT_RE.match(png.name)
+            if m:
+                dst = ab_dir / "shots" / m.group(1)
+                dst.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(png, dst / f"{label.replace('/', '-')}_{m.group(2)}.png")
+    (ab_dir / "compare.json").write_text(
+        json.dumps({"scenario": scenario.name, "runs": recs}, indent=2) + "\n")
+
+    print(f"\nA/B {scenario.name}  ->  {ab_dir.relative_to(REPO)}")
+    print(f"{'target':<18} {'status':<10} {'build':<16} {'frames':>6} {'sec':>6} {'fps':>6} "
+          f"{'warn':>5} {'err':>4}")
+    for rec in recs:
+        fps = f"{rec['fps']:.0f}" if isinstance(rec.get("fps"), (int, float)) else "-"
+        sec = f"{rec['seconds']:.1f}" if isinstance(rec.get("seconds"), (int, float)) else "-"
+        print(f"{rec['target']:<18} {rec.get('status', '?'):<10} "
+              f"{(rec.get('build_config') or '-'):<16} {rec.get('frames', '-')!s:>6} {sec:>6} "
+              f"{fps:>6} {rec.get('warnings', '-')!s:>5} {rec.get('errors', '-')!s:>4}")
+        for f in rec.get("failures") or []:
+            print(f"{'':<18} FAIL {f}")
+    tags = sorted({t for rec in recs for t in rec.get("tags", {})},
+                  key=lambda t: min(rec["tags"][t]["frame"] for rec in recs if t in rec.get("tags", {})))
+    for tag in tags:
+        print(f"  [{tag}]")
+        for rec in recs:
+            s = rec.get("tags", {}).get(tag)
+            if not s:
+                print(f"    {rec['target']:<16} -")
+                continue
+            sk = s.get("skater")
+            sk_s = f"pos {sk['pos']} speed {sk['speed']:.2f}" if sk else "no skater"
+            print(f"    {rec['target']:<16} frame {s['frame']:>5} fe {s.get('fe')} {sk_s}")
+    versions = {rec.get("version") for rec in recs if rec.get("version")}
+    if len(versions) > 1:
+        print(f"  WARNING: the targets ran different versions: {', '.join(sorted(versions))}")
+    if (ab_dir / "shots").is_dir():
+        print(f"  paired screenshots: {(ab_dir / 'shots').relative_to(REPO)}/<tag>/")
+    return 0 if all(rec.get("code") == 0 for rec in recs) else 1
+
+
 # ------------------------------------------------------------------ symbolize
 
 
@@ -453,9 +655,38 @@ def main() -> int:
     p_odin.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
                         help="session environment for this run (repeatable), e.g. "
                              "LD_PRELOAD=/root/renderdoc/librenderdoc.so")
+    p_win = sub.add_parser("windows", help="run a scenario on this PC (Windows x64 build)")
+    p_win.add_argument("scenario", type=Path)
+    p_win.add_argument("--config", choices=CONFIGS, default="release")
+    p_win.add_argument("--backend", choices=BACKENDS, default="d3d12")
+    p_win.add_argument("--no-build", action="store_true",
+                       help="run the staged build as is (default: build.sh <config> build stage)")
+    p_win.add_argument("--out", type=Path, default=REPO / "out/harness-runs")
+    p_win.add_argument("--timeout", type=float,
+                       help="kill the game after this many seconds "
+                            "(default: the scenario's timeout_s + 120)")
+    p_ab = sub.add_parser("ab", help="run a scenario on the Odin 2 and on Windows, then compare")
+    p_ab.add_argument("scenario", type=Path)
+    p_ab.add_argument("--config", choices=CONFIGS, default="release")
+    p_ab.add_argument("--backends", default="d3d12,vulkan",
+                      help="Windows backends to run, comma-separated (default d3d12,vulkan)")
+    p_ab.add_argument("--no-build", action="store_true",
+                      help="skip both builds (the version check still warns on mismatches)")
+    p_ab.add_argument("--no-deploy", action="store_true", help="reuse the build on the Odin 2")
+    p_ab.add_argument("--no-odin2", action="store_true", help="Windows targets only")
+    p_ab.add_argument("--fps-cap", type=float, default=30.0,
+                      help="guest frame cap on every target (default 30; 0 = leave uncapped). "
+                           "Scenario frame counts (input holds, waits) only compare at equal "
+                           "frame rates; this PC runs ~150 fps, the Odin 2 ~30")
+    p_ab.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
+                      help="Odin 2 session environment (repeatable)")
+    p_ab.add_argument("--out", type=Path, default=REPO / "out/harness-runs")
     p_live = sub.add_parser("live")
-    p_live.add_argument("--no-deploy", action="store_true")
+    p_live.add_argument("--target", choices=("odin2", "windows"), default="odin2")
+    p_live.add_argument("--no-deploy", action="store_true",
+                        help="odin2: reuse the deployed build; windows: skip the build")
     p_live.add_argument("--config", choices=CONFIGS, default="release")
+    p_live.add_argument("--backend", choices=BACKENDS, default="d3d12", help="windows only")
     p_live.add_argument("--env", action="append", default=[], metavar="KEY=VALUE")
     p_sym = sub.add_parser("symbolize",
                            help="function and file:line for module+offset or bare skate3 addresses")
@@ -469,6 +700,9 @@ def main() -> int:
     p_send.add_argument("verb")
     p_send.add_argument("pairs", nargs="*")
     p_send.add_argument("--wait", type=float, default=120)
+    p_send.add_argument("--target", choices=("odin2", "windows"), default="odin2")
+    p_send.add_argument("--config", choices=CONFIGS,
+                        help="windows: whose stage to talk to (default: the last `live`)")
     p_rd = sub.add_parser("install-renderdoc",
                           help="copy tools/harness/build-renderdoc-aarch64.sh output to the device")
     p_rd.add_argument("--from", dest="rd_from", type=Path, default=REPO / "out/renderdoc-aarch64")
@@ -478,7 +712,7 @@ def main() -> int:
     p_sum.add_argument("run", type=Path)
     a, unknown = ap.parse_known_args()
     extra = [x for x in unknown if x != "--"]
-    if extra and a.cmd not in ("local", "odin2", "live"):
+    if extra and a.cmd not in ("local", "odin2", "live", "windows", "ab"):
         ap.error(f"unrecognized arguments: {' '.join(extra)}")
 
     if a.cmd == "summary":
@@ -503,6 +737,75 @@ def main() -> int:
             summary(Path(current.read_text().strip()))
         return code
 
+    if a.cmd == "windows":
+        if not a.no_build:
+            build_windows(a.config)
+        run = run_windows(a.scenario.resolve(), a.config, a.backend, extra, a.out.resolve(),
+                          timeout_s=a.timeout)
+        if run is None:
+            return 4
+        log(f"run folder: {run}")
+        return summary(run)
+
+    if a.cmd == "live" and a.target == "windows":
+        if not a.no_deploy:
+            build_windows(a.config)
+        WIN_LIVE_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+        WIN_LIVE_CONFIG.write_text(a.config + "\n")
+        win_launch(a.config, a.backend, ["--skate3_harness=true", *extra])
+        log("live mode running on Windows; use `send --target windows`, Ctrl+Shift+R to record")
+        return 0
+
+    if a.cmd == "send" and a.target == "windows":
+        config = a.config or (WIN_LIVE_CONFIG.read_text().strip()
+                              if WIN_LIVE_CONFIG.exists() else "release")
+        box = win_stage(config) / WIN_HARNESS_OUT
+        cid = f"cli{int(time.time() * 1000)}"
+        (box / "inbox").mkdir(parents=True, exist_ok=True)
+        part = box / "inbox" / f"{cid}.toml.part"
+        part.write_text(command_toml(a.verb, a.pairs, cid))
+        part.rename(box / "inbox" / f"{cid}.toml")
+        reply_path = box / "outbox" / f"{cid}.json"
+        deadline = time.time() + a.wait
+        while time.time() < deadline:
+            if reply_path.exists() and (reply := reply_path.read_text().strip()):
+                print(reply)
+                return 0 if json.loads(reply).get("ok") else 1
+            if a.verb == "exit" and not win_game_running():
+                # The game exits before it writes a reply.
+                log("the game exited")
+                return 0
+            time.sleep(0.5)
+        die(f"no reply within {a.wait:.0f} s (is the game running in live mode on Windows, "
+            f"{config} stage?)")
+
+    if a.cmd == "ab":
+        backends = [b for b in a.backends.split(",") if b]
+        bad = [b for b in backends if b not in BACKENDS]
+        if bad:
+            die(f"unknown backend(s) {', '.join(bad)} (choose from {', '.join(BACKENDS)})")
+        scenario, out = a.scenario.resolve(), a.out.resolve()
+        if a.fps_cap > 0:
+            # Before the user's own flags, so an explicit flag after `--` wins.
+            extra = [f"--skate3_guest_fps_cap={a.fps_cap:g}",
+                     "--skate3_guest_fps_cap_auto=false", *extra]
+        if not a.no_build:
+            # Both through build.sh, which reconfigures: the same commit and
+            # version string on both sides.
+            if not a.no_odin2 and not a.no_deploy:
+                build_aarch64(a.config)
+            build_windows(a.config)
+        runs: list[tuple[str, Path | None]] = []
+        if not a.no_odin2:
+            dev = Device()
+            if not a.no_deploy:
+                deploy(dev, a.config)
+            runs.append(("odin2/vulkan", run_odin2(dev, scenario, extra, a.env, out)))
+        for b in backends:
+            runs.append((f"win/{b}", run_windows(scenario, a.config, b, extra, out)))
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        return ab_compare(scenario, runs, out / f"ab-{stamp}_{scenario.stem}")
+
     dev = Device()
     if a.cmd in ("odin2", "live"):
         if not a.no_deploy:
@@ -512,14 +815,7 @@ def main() -> int:
                 f"not {a.config}")
 
     if a.cmd == "odin2":
-        dev.adb_push(a.scenario.resolve(), f"{SHARED}/scenarios/{a.scenario.name}")
-        launch(dev, [f"--skate3_harness_scenario={SHARED}/scenarios/{a.scenario.name}",
-                     *scenario_flags(a.scenario), *extra], env=a.env)
-        log(f"running {a.scenario.name}")
-        wait_for_exit(dev, scenario_timeout(a.scenario) + 120)
-        run = fetch(dev, a.out.resolve())
-        log(f"run folder: {run}")
-        return summary(run)
+        return summary(run_odin2(dev, a.scenario, extra, a.env, a.out.resolve()))
 
     if a.cmd == "live":
         launch(dev, ["--skate3_harness=true", *extra], env=a.env)

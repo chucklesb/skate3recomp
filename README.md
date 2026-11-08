@@ -408,12 +408,16 @@ Steps (run them one at a time with `build.sh release <step>...`):
    so the Windows and aarch64 builds share the same recompiled sources.
 3. `build`: configures and builds the `windows-x64-release` preset in
    `nix develop .#windows` (`cmake/toolchains/windows-x64.cmake`).
-4. `stage`: copies `skate3.exe`, the runtime and GPU plugin DLLs, any PDBs and
-   the TU3 patches to `out/stage/windows-x64-<config>`. The first time, it
-   also copies the game dump into `<stage>/game`. Set
-   `SKATE3_WINDOWS_STAGE_DIR` to stage elsewhere. To run the build on the WSL
-   host, use a `/mnt/c/...` folder, because starting the game from
+4. `stage`: copies `skate3.exe`, the runtime and GPU plugin DLLs and any PDBs
+   to `<stage root>/<config>`. The TU3 patches go to one shared
+   `<stage root>/game`, which the first stage also fills with the game dump.
+   The stage root defaults to `out/stage/windows-x64`; set
+   `SKATE3_WINDOWS_STAGE_ROOT` to stage elsewhere. To run the build on the
+   WSL host, use a `/mnt/c/...` folder, because starting the game from
    `\\wsl.localhost` is slow.
+   `tools/harness/run_scenario.py windows` runs scenarios against the stage, and
+   `run_scenario.py ab` compares them with the linux-aarch64 build (see
+   `scenarios/README.md`).
 
 `relwithdebinfo` builds with `-O2 -g` and writes PDBs next to the binaries
 (`skate3.pdb`, `rexruntimerd.pdb`, `rexgpu-xenosrd.pdb`). The SDK adds an `rd`

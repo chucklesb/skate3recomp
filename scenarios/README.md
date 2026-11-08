@@ -33,7 +33,46 @@ python3 -I tools/harness/run_scenario.py send query what=state
 
 python3 -I tools/harness/run_scenario.py fetch          # latest run folder from the device
 python3 -I tools/harness/run_scenario.py summary <run>  # print a run's result
+
+# Windows x64 build on the WSL host (tools/cross-windows/build.sh; builds
+# and stages first unless --no-build)
+python3 -I tools/harness/run_scenario.py windows scenarios/boot_to_plaza.toml --backend vulkan
+python3 -I tools/harness/run_scenario.py live --target windows
+python3 -I tools/harness/run_scenario.py send --target windows query what=state
+
+# A/B: the same scenario on the handheld and on Windows (both backends), compared
+python3 -I tools/harness/run_scenario.py ab scenarios/boot_to_plaza.toml
+
+# Function and file:line for addresses (RelWithDebInfo gives line info)
+python3 -I tools/harness/run_scenario.py symbolize --target odin2 --config relwithdebinfo skate3+0x1de040c
 ```
+
+`--config release|relwithdebinfo` picks the build for `odin2`, `live`,
+`windows` and `ab`. Every run's `result.json` names the `version`,
+`platform` and `build_config` it came from.
+
+**Windows from WSL.** `windows` runs `skate3.exe` from the stage
+(`SKATE3_WINDOWS_STAGE_ROOT/<config>`, default `out/stage/windows-x64`) with
+the stage as the working directory and `--game_data_root=<stage root>/game`.
+It moves the run folder into `--out` like `fetch` does. `--backend` picks
+`d3d12` (default) or `vulkan`. `--timeout` overrides the deadline, after which
+the game is killed (`taskkill`). A second `skate3.exe` is refused.
+
+**A/B runs.** `ab` builds both targets through their `build.sh`, which
+reconfigures, so both report the same version. It then runs the scenario on
+the Odin 2 and on each Windows backend in turn and writes
+`<out>/ab-<stamp>_<scenario>/`:
+- `compare.json`: status, build, frames, fps, counts, failures and the tagged
+  `state` rows for each target.
+- `shots/<tag>/<target>_<n>.png`: the screenshots side by side.
+
+It prints a table and exits non-zero if any target failed. `--fps-cap 30`
+(the default) caps every target's guest frame rate: input holds and waits
+count frames, so they only compare at equal frame rates (this PC runs about
+150 fps uncapped, the Odin 2 about 30). The skater spawns where the save last
+left them, and each target has its own save, so spawn positions (and
+anything that depends on them, like rolling speed) differ between targets
+for now.
 
 For `odin2` and `live`, `DROIDDECK_DIR` points at a DroidDeck checkout
 (default `~/dev/DroidDeck`), and `ADB` / `ANDROID_ADB_SERVER_PORT` select
@@ -42,7 +81,8 @@ the adb to use. `--no-deploy` reuses the build already on the device.
 session only. Game arguments go after `--`.
 
 Exit codes: 0 pass, 1 a step or expectation failed, 2 the scenario timed
-out, 3 the scenario file did not parse.
+out, 3 the scenario file did not parse, 4 no `result.json` (killed or
+crashed).
 
 ## Run folder
 
