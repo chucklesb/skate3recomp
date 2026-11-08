@@ -17,10 +17,19 @@
 #include <rex/system/xmemory.h>
 
 #include <cstdio>
+#include <cstdlib>
 
 REXCVAR_DEFINE_INT32(skate3_harness_re_load_reel, 0, "Skate 3",
                      "Harness RE experiment: load saved replay N (REPLY_N) the way My Replays "
                      "does; reset to 0 once issued")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_STRING(skate3_harness_re_dump, "", "Skate 3",
+                      "Harness RE: log guest words once, 'ADDR:COUNT[,ADDR:COUNT...]' (hex addr, "
+                      "or *ADDR+OFF to follow a pointer); cleared once logged")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_INT32(skate3_harness_re_pause_sim, 0, "Skate 3",
+                     "Harness RE experiment: post cMsgPauseSim (1 = pause, 2 = resume) the way "
+                     "the pause menu does; reset to 0 once posted")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_INT32(skate3_harness_re_view_reel, 0, "Skate 3",
                      "Harness RE experiment: run My Replays' own view-replay action for slot N "
@@ -33,6 +42,9 @@ REXCVAR_DEFINE_INT32(skate3_harness_re_view_reel, 0, "Skate 3",
 REX_EXTERN(sub_82910CE8);  // registry find(map*, u32 key) -> entry* (node + 20) or 0
 REX_EXTERN(sub_82706F50);  // teleport sequencer(teleporter, matrix*, id, flag, b, b, b) -> bool
 REX_EXTERN(sub_8271A828);  // memcard owner event handler(owner, ref<event>*) -> 1 handled / 2 not
+REX_EXTERN(sub_82B938D8);  // post message(msg*, recipient*, priority) (queued)
+REX_EXTERN(__imp__RtlEnterCriticalSection);  // 0x82F9CB44
+REX_EXTERN(__imp__RtlLeaveCriticalSection);  // 0x82F9CB54
 REX_EXTERN(sub_824AD240);  // FE manager singleton getter
 REX_EXTERN(sub_82627128);  // My Replays "view replay" action(this)
 REX_EXTERN(sub_82720B50);  // state transition(component, target state fn, param)
@@ -374,6 +386,39 @@ void DoLoadReelExperiment(PPCContext& ctx, uint8_t* base, int n) {
   REXLOG_INFO("harness: reel load {}: request sent to owner {:08X} (content {:08X}) -> {}", n,
               owner, content, r);
 }
+// Posts a message to the simulation, the way the presentation side posts
+// cMsgPauseSim (sub_82477A68): queue = *(world+144)+24, its lock at +16, the
+// recipient word at +4; sub_82B938D8(&msg, &recipient, 1). A message is
+// {type, 0, size, 0, payload words...}.
+uint32_t g_msg_block = 0;
+
+bool PostSimMessage(PPCContext& ctx, uint8_t* base, uint32_t type,
+                    std::initializer_list<uint32_t> payload) {
+  uint32_t world = 0, q = 0, recipient = 0;
+  if (!Read32(base, kWorldPtr, &world) || !Read32(base, world + 144, &q) || !q) {
+    return false;
+  }
+  q += 24;
+  if (!g_msg_block) {
+    g_msg_block = rex::system::kernel_memory()->SystemHeapAlloc(128);
+  }
+  const uint32_t msg = g_msg_block, recip = g_msg_block + 96;
+  std::memset(base + msg, 0, 128);
+  Write32(base, msg + 0, type);
+  Write32(base, msg + 8, 16 + 4 * static_cast<uint32_t>(payload.size()));
+  uint32_t off = 16;
+  for (uint32_t w : payload) {
+    Write32(base, msg + off, w);
+    off += 4;
+  }
+  CallGuest(ctx, base, __imp__RtlEnterCriticalSection, {q + 16});
+  Read32(base, q + 4, &recipient);
+  Write32(base, recip, recipient);
+  CallGuest(ctx, base, sub_82B938D8, {msg, recip, 1});
+  CallGuest(ctx, base, __imp__RtlLeaveCriticalSection, {q + 16});
+  return true;
+}
+
 // The game's own "view replay" action (My Replays, FE 59): sub_82627128(this)
 // reads the selected index from browser+80, browser = *(*(sub_824AD240()+8)
 // + 236), sets the save manager's current replay, queues op type 8 for entry
@@ -455,10 +500,50 @@ void MaybeRestoreViewHandler(uint8_t* base) {
 }
 }  // namespace
 
+void DoReDump(uint8_t* base, const std::string& spec) {
+  size_t pos = 0;
+  while (pos < spec.size()) {
+    size_t end = spec.find(',', pos);
+    if (end == std::string::npos) end = spec.size();
+    std::string item = spec.substr(pos, end - pos);
+    pos = end + 1;
+    const size_t colon = item.find(':');
+    const int count = colon == std::string::npos ? 16 : std::atoi(item.c_str() + colon + 1);
+    std::string a = item.substr(0, colon);
+    uint32_t addr = 0;
+    if (!a.empty() && a[0] == '*') {  // *PTR+OFF: follow PTR, add OFF
+      const size_t plus = a.find('+');
+      uint32_t p = static_cast<uint32_t>(std::strtoul(a.substr(1, plus - 1).c_str(), nullptr, 16));
+      Read32(base, p, &addr);
+      if (plus != std::string::npos) addr += static_cast<uint32_t>(std::strtoul(a.c_str() + plus + 1, nullptr, 16));
+    } else {
+      addr = static_cast<uint32_t>(std::strtoul(a.c_str(), nullptr, 16));
+    }
+    std::string words;
+    char buf[12];
+    for (int i = 0; i < count && i < 256; ++i) {
+      uint32_t v = 0xDEADDEAD;
+      Read32(base, addr + 4 * i, &v);
+      std::snprintf(buf, sizeof(buf), "%s%08X", (i % 8) ? " " : (i ? " | " : ""), v);
+      words += buf;
+    }
+    REXLOG_INFO("harness: re dump {} @{:08X}: {}", item, addr, words);
+  }
+}
+
 void OnGuestFrame(PPCContext& ctx, uint8_t* base) {  // main (simulation) thread
+  if (const std::string d = REXCVAR_GET(skate3_harness_re_dump); !d.empty()) {
+    rex::cvar::SetFlagByName("skate3_harness_re_dump", "");
+    DoReDump(base, d);
+  }
   if (const int n = REXCVAR_GET(skate3_harness_re_load_reel); n > 0) {
     rex::cvar::SetFlagByName("skate3_harness_re_load_reel", "0");
     DoLoadReelExperiment(ctx, base, n);
+  }
+  if (const int p = REXCVAR_GET(skate3_harness_re_pause_sim); p > 0) {
+    rex::cvar::SetFlagByName("skate3_harness_re_pause_sim", "0");
+    const bool ok = PostSimMessage(ctx, base, 0xDDC8C41A, {p == 1 ? 1u : 0u, 11u});
+    REXLOG_INFO("harness: cMsgPauseSim({}) {}", p == 1 ? 1 : 0, ok ? "posted" : "failed");
   }
   if (const int n = REXCVAR_GET(skate3_harness_re_view_reel); n > 0) {
     rex::cvar::SetFlagByName("skate3_harness_re_view_reel", "0");

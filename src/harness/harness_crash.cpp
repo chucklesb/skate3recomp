@@ -18,6 +18,17 @@
 #include <rex/exception_handler.h>
 #endif
 
+#if defined(_WIN32)
+#include <algorithm>
+#include <utility>
+#include <vector>
+
+#include <rex/ppc/func.h>
+
+// The recompiled image's guest -> host function table (generated/skate3_init.cpp).
+extern PPCFuncMapping skate3_PPCFuncMappings[];
+#endif
+
 namespace skate3::harness::crash {
 namespace {
 
@@ -37,6 +48,9 @@ using MiniDumpWriteDumpFn = BOOL(WINAPI*)(HANDLE, DWORD, HANDLE, MINIDUMP_TYPE,
                                           PMINIDUMP_CALLBACK_INFORMATION);
 MiniDumpWriteDumpFn g_write_dump = nullptr;
 std::atomic<bool> g_crashed{false};
+// Host entry point -> guest address of every recompiled function, sorted by
+// host address (built at Install: a crash is no time to allocate).
+std::vector<std::pair<uint64_t, uint32_t>> g_host_to_guest;
 
 void Put(HANDLE f, const char* s) {
   DWORD written = 0;
@@ -60,6 +74,21 @@ void FormatPc(char* out, size_t n, uint64_t pc) {
     }
     _snprintf_s(out, n, _TRUNCATE, "%s+0x%llx", len ? name : "?",
                 static_cast<unsigned long long>(pc - reinterpret_cast<uint64_t>(mod)));
+    // In the game image: name the recompiled guest function the frame is in
+    // (exact match on the host function's start, from the unwind tables).
+    if (mod == GetModuleHandleW(nullptr) && !g_host_to_guest.empty()) {
+      DWORD64 image_base = 0;
+      if (PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(pc, &image_base, nullptr)) {
+        const uint64_t begin = image_base + fn->BeginAddress;
+        auto it = std::lower_bound(g_host_to_guest.begin(), g_host_to_guest.end(),
+                                   std::make_pair(begin, uint32_t{0}));
+        if (it != g_host_to_guest.end() && it->first == begin) {
+          const size_t used = std::strlen(out);
+          _snprintf_s(out + used, n - used, _TRUNCATE, " (guest sub_%08X, host +0x%llx)",
+                      it->second, static_cast<unsigned long long>(pc - begin));
+        }
+      }
+    }
   } else {
     _snprintf_s(out, n, _TRUNCATE, "0x%llx", static_cast<unsigned long long>(pc));
   }
@@ -272,6 +301,10 @@ void Install(const std::filesystem::path& run_dir) {
   const std::wstring dmp = (run_dir / "crash.dmp").wstring();
   wcsncpy_s(g_txt_path, txt.c_str(), _TRUNCATE);
   wcsncpy_s(g_dmp_path, dmp.c_str(), _TRUNCATE);
+  for (const PPCFuncMapping* m = skate3_PPCFuncMappings; m->host; ++m) {
+    g_host_to_guest.emplace_back(reinterpret_cast<uint64_t>(m->host), static_cast<uint32_t>(m->guest));
+  }
+  std::sort(g_host_to_guest.begin(), g_host_to_guest.end());
   // Loaded now: a crash is a bad time to load libraries.
   if (HMODULE dbghelp = LoadLibraryW(L"dbghelp.dll")) {
     g_write_dump =
