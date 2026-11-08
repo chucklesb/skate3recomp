@@ -1112,6 +1112,83 @@ Outcome Execute(Run& r, const Step& st) {
       return o;
     }
 
+    case Verb::kPlayReel: {
+      // Free skate first (the reel loads from there and returns there).
+      if (!WaitUntil(r, 30.0, [&] { return r.state.presence == 1 && r.state.skater_valid; })) {
+        return Fail("play_reel needs gameplay (free skate with the skater in the world)");
+      }
+      std::string err;
+      if (!game::StartReel(static_cast<int>(st.clip), &err)) {
+        return Fail("play_reel: " + err);
+      }
+      const std::string clip = "\"clip\":" + std::to_string(st.clip);
+      Event(r, "reel_load", clip);
+      const auto deadline = Clock::now() + std::chrono::duration_cast<Clock::duration>(
+                                               std::chrono::duration<double>(st.timeout_s));
+      auto left = [&] {
+        return std::max(0.5, std::chrono::duration<double>(deadline - Clock::now()).count());
+      };
+      auto phase = [] { return game::GetReelStatus().phase; };
+      using game::ReelPhase;
+      WaitUntil(r, left(), [&] { return phase() != ReelPhase::kIdle && phase() != ReelPhase::kLoading; });
+      game::ReelStatus s = game::GetReelStatus();
+      if (s.phase == ReelPhase::kFailed || s.phase == ReelPhase::kIdle ||
+          s.phase == ReelPhase::kLoading) {
+        return Fail("play_reel clip " + std::to_string(st.clip) + ": " +
+                    (s.error.empty() ? "did not start before timeout_s" : s.error));
+      }
+      char buf[160];
+      std::snprintf(buf, sizeof(buf), ",\"duration_s\":%.3f", s.duration_s);
+      Event(r, "reel_start", clip + buf);
+      const uint64_t start_frame = r.state.frame;
+      const auto start_time = Clock::now();
+      // Optional screenshots during playback: every_frames = N (tag defaults
+      // to "reel<clip>").
+      std::vector<std::string> shots;
+      if (st.every_frames_given && st.every_frames > 0) {
+        const std::string tag = st.tag.empty() ? "reel" + std::to_string(st.clip) : st.tag;
+        uint64_t next = start_frame + static_cast<uint64_t>(st.every_frames);
+        while (phase() == ReelPhase::kPlaying && Clock::now() < deadline && !r.stop.load()) {
+          if (r.state.frame >= next) {
+            std::string shot_err;
+            std::vector<std::string> names;
+            if (TakeScreenshots(r, tag, 1, 1, &names, &shot_err)) {
+              shots.insert(shots.end(), names.begin(), names.end());
+            }
+            next = r.state.frame + static_cast<uint64_t>(st.every_frames);
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+      }
+      WaitUntil(r, left(), [&] { return phase() != ReelPhase::kPlaying; });
+      s = game::GetReelStatus();
+      const double wall = std::chrono::duration<double>(Clock::now() - start_time).count();
+      std::snprintf(buf, sizeof(buf),
+                    ",\"duration_s\":%.3f,\"played_s\":%.3f,\"editor_frames\":%llu,"
+                    "\"frames\":%llu,\"wall_s\":%.3f",
+                    s.duration_s, s.t_s, static_cast<unsigned long long>(s.frames),
+                    static_cast<unsigned long long>(r.state.frame - start_frame), wall);
+      const std::string played = buf;
+      Event(r, "reel_stop", clip + played);
+      if (s.phase == ReelPhase::kPlaying) {
+        return Fail("play_reel clip " + std::to_string(st.clip) + ": still playing at timeout_s");
+      }
+      WaitUntil(r, left(), [&] { return phase() == ReelPhase::kDone || phase() == ReelPhase::kFailed; });
+      s = game::GetReelStatus();
+      if (s.phase != ReelPhase::kDone) {
+        return Fail("play_reel clip " + std::to_string(st.clip) + ": " +
+                    (s.error.empty() ? "did not return to free skate" : s.error));
+      }
+      Event(r, "reel_exit", clip);
+      Outcome o;
+      o.result_json = clip + played + ",\"shots\":[";
+      for (size_t i = 0; i < shots.size(); ++i) {
+        o.result_json += (i ? ",\"" : "\"") + JsonEscape(shots[i]) + "\"";
+      }
+      o.result_json += "]";
+      return o;
+    }
+
     case Verb::kQuery: {
       Outcome o;
       std::lock_guard lk(r.mu);

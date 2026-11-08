@@ -146,6 +146,7 @@ Steps run in order. A failing step ends the run with code 1.
 | `capture` | `tag`, `frames = 1`: RenderDoc capture of the next N frames (see below). |
 | `crash` | `where = "runner"` (default; the harness thread) or `"guest"` (the next controller poll, inside a guest call): fault on purpose to test crash capture. Refused unless the scenario sets `allow_crash = true`. |
 | `teleport` | `location = "Z_DT_Tresoutta"` (a named world locator), optional `tolerance` (metres, default 5) and `timeout_s` (default 60). It uses the game's own teleport, the pause map's path, then waits until the skater settles near the locator: within `tolerance` horizontally, between 15 m below and `tolerance` above it (many locators float above the ground), and slower than 2 m/s for 30 frames. Before issuing, it waits up to 20 s for free skate, so the previous teleport or a respawn can finish. A fall through a not-yet-loaded floor (more than 15 m below) re-issues the teleport, up to `retries` times (default 3). `settle = false` returns as soon as the skater reaches the locator. `path = "sequencer"` uses the lower-level teleport instead of the pause map's: it doesn't load another map, so into an unloaded district the skater falls through the world (that's what `repro_fast_fall_body_parts.toml` relies on). `map_key = "<hex>"` overrides the district's map key. Free skate only. See "Teleport locations" below. |
+| `play_reel` | `clip = N`: plays saved skate.Reel replay N (1-based, as listed in My Replays, oldest first) from start to end at 1×, with no editor or HUD on screen, then returns to free skate. Optional `every_frames = N` takes a screenshot every N frames during playback (`tag` defaults to `reel<N>`), and `timeout_s` (default 600). It loads the reel the game's own way, from free skate, with no menu input, and drives the replay clock itself (see "skate.Reel playback" below). Events `reel_load`, `reel_start` (`duration_s`), `reel_stop` (`played_s`, `editor_frames`, `frames`, `wall_s`) and `reel_exit`. Needs the signed-in profile's saves: `boot = "demo"` with `skate3_demo_path_signed_in = true`, run against the test user data. Example: `reel_regression.toml`. |
 
 Button names: `a b x y lb rb l3 r3 start back up down left right guide`.
 
@@ -328,27 +329,26 @@ How the harness teleport works (TU3 addresses). Implemented in `src/harness/harn
 - **How the menu does it:** `sub_8270B3D0` on the mode component handles the event-driven variant (hash the name, sequencer, teleporting state). The pause map itself calls `sub_82864628` with the destination district's key (captured with the RE probe's teleport-start hooks).
 - **Finding these again:** the harness RE probe (`--skate3_harness_re_probe=true`, `src/harness/harness_re.cpp`) logs every new game message type with its sender. That's how the teleport message showed up. `tools/re/xrefs.py` (callers, callees, address references and disassembly from the generated code) and `tools/re/gsnap.py` (snapshot search and diff) are the static side.
 
-## Notes for later work: skate.Reel playback
+## skate.Reel playback (`play_reel`)
 
-Found with the harness, kept here for a future reverse-engineering pass that
-would play the Reel directly instead of by menu input.
+How `play_reel` works (TU3 addresses; RE with the probe in `harness_re.cpp`):
 
-- **Frontend screens:**
+- **Reels:** all saved replays are in one save file, `rmcsave/REPLY_SKATER` (`1..5.B` bodies, `.H` headers). A reel can't be trimmed: the editor's marker only bookmarks a point, a reel opens on its last frame, and Play runs the whole reel at 1×. The game never leaves the player on its own.
+- **Frontend screens:** 59 = My Replays, 52 = loading screen, 12 = replay editor (it opens by itself once a reel has loaded, paused on the last frame).
+- **Game-mode context:** `gctx = *(*(0x83083BCC) + 156)` is a table of the game-mode state objects (`+0x28` mode owner, whose current state is at `+8`; `0x8270C890` = free skate).
+- **Threading:** game logic must run on the main (simulation) thread. The harness runs its requests from a hook on the game-state tick `sub_826D34B8`, never from the render thread: the game's allocators pick heaps per thread.
+- **Load:**
+  1. `cMsgPauseSim{1, 11}`, as the pause menu does (`PostSimMessage`: queue `*(world+144)+24`, lock at `+16`). A reel loaded from live free skate hangs or crashes on playback.
+  2. My Replays' own "view replay" action, `sub_82627128(this)`:
+     - it reads the slot from `browser+80`, with `browser = *(*(sub_824AD240()+8)+236)`;
+     - it queues a body load of entry [slot] of the content manager `*(0x830670A0)` (entries `+384`, count `+392`, filled from the headers at boot);
+     - its completion calls `*(browser+5352)` slot 13/14, which is My Replays' handler and null while the screen is closed. A no-op stand-in goes there (`sub_82B61BB8` = `blr`).
+  3. The loaded body becomes a type-27 game event. That starts StateReplay, then FE 52, then FE 12.
+- **Clock:** the replay editor's time object is `E = **(0x8303740C)`. It has a state at `E+10696` (8 = paused, 5 = playing) and a normalized position at `E+4`. While paused, the editor update `sub_82C7EA50(this, dt)` (render thread) pins the replay's time track (time controller `SetTime`, `sub_82833748`) to `E+4 × duration`, where duration = `*(*E + 0xC)` seconds. `play_reel` keeps the editor paused and sets `E+4 = t / duration` before each editor update, with `t += dt`: the harness is the clock, at exactly 1×. The timeline `*(*(0x83083C38)+0x70)` reports the displayed frame (60 Hz ticks) at `+0x28`, as output only.
+- **No UI:** `FrontEndManager::Render2D` (`sub_825D9168`) is skipped while a reel is active (`game::SuppressUi`).
+- **Exit:** the editor's Finished → Exit action:
+  - sets `x+52 = 1` and the byte `x+140 = 1` on `x = *(*(sub_824AD240()+8)+48)`, and clears the byte at `*(0x83067060+36)+12`;
+  - posts a type-145 game event through `sub_824FCAD8(gctx, ref*)`.
 
-  | Id | Screen |
-  |---|---|
-  | 0 | gameplay root |
-  | 5 | press-start |
-  | 12 | replay editor (also the Reel's playback) |
-  | 17 | pause map |
-  | 22 | startup flow |
-  | 24 | movie |
-  | 47 | language select |
-  | 52 | Reel clip panel |
-  | 56 | pause |
-  | 59 | Reel browser |
-
-- **Boot path:** `[0,47] → [0] → [0,5] → [0,24] → [0,22] → [0]`.
-- **Reel playback path:** `[0,56] → [0,56,59] → [0,56,59,52] → [0,56,59,12]`.
-- **Where saved replays live:** all saved replays are in one save file, `rmcsave` / `REPLY_SKATER` (content type 1), next to `ALIAS_SKATER` and `CFOTO_SKATER`.
-- **Detection:** Reel playback ticks neither `PhotoReplayController::Update` nor `MovieDecoder::Decode`. Detect it by screen 12 sitting on top of 59.
+  StateReplay then restreams free skate, and the harness sends `cMsgPauseSim{0, 11}`.
+- **RE helpers:** `--skate3_harness_re_dump="ADDR:N[,*PTR+OFF:N]"` and `--skate3_harness_re_poke="ADDR=VALUE"` read and write guest words live (`cvar` command). crash.txt names the guest function of each game frame.

@@ -25,6 +25,7 @@ constexpr VerbEntry kVerbs[] = {
     {"expect", Verb::kExpect},     {"exit", Verb::kExit},
     {"query", Verb::kQuery},       {"capture", Verb::kCapture},
     {"crash", Verb::kCrash},       {"teleport", Verb::kTeleport},
+    {"play_reel", Verb::kPlayReel},
 };
 
 // TOML scalar -> the string form rex::cvar::SetFlagByName takes.
@@ -165,8 +166,19 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
     }
   }
 
+  s.clip = Integer(t, "clip").value_or(0);
+
   // Per-verb requirements.
   switch (s.verb) {
+    case Verb::kPlayReel:
+      if (s.clip < 1) {
+        *error = "play_reel needs clip = N (1-based saved replay, as listed in My Replays)";
+        return false;
+      }
+      if (!t.get("timeout_s")) {
+        s.timeout_s = 600.0;
+      }
+      break;
     case Verb::kTeleport:
       if (s.location.empty()) {
         *error = "teleport needs location = \"<locator name>\" (e.g. \"Z_UN_ClockTower\")";

@@ -51,6 +51,8 @@ enum class Verb {
   kCrash,       // where="runner"|"guest": fault on purpose (needs allow_crash = true)
   kTeleport,    // location="Z_UN_ClockTower" (a registry locator) tolerance=5 timeout_s=60
                 // settle=true (false: return on arrival, e.g. a floorless locator)
+  kPlayReel,    // clip=N (a saved skate.Reel replay, 1-based as listed in My Replays):
+                // plays it start to end at 1x with no UI, then returns to free skate
 };
 
 struct Step {
@@ -108,6 +110,9 @@ struct Step {
   int retries = 3;         // re-issues after falling through an unloaded floor
   uint64_t map_key = 0;    // override of the destination's map key (hex string in TOML)
   bool via_sequencer = false;  // path = "sequencer": the lower-level teleport (no map load)
+
+  // play_reel
+  int64_t clip = 0;  // 1-based saved replay slot
 };
 
 struct Scenario {

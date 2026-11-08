@@ -973,6 +973,9 @@ extern "C" REX_FUNC(sub_82B7A970) {
 // Sk8::FE::FrontEndManager::Render2D(unsigned int): the game's whole 2D
 // pass (FE movies + HUD).
 extern "C" REX_FUNC(sub_825D9168) {
+  if (skate3::harness::game::SuppressUi()) {
+    return;  // harness: no FE/HUD (e.g. skate.Reel playback)
+  }
   const bool enabled = skate3::native_render::Enabled();
   if (enabled) skate3::native_scene::On2dPhase(0, true);
   __imp__sub_825D9168(ctx, base);

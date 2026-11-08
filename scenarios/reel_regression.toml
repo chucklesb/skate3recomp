@@ -1,0 +1,48 @@
+# Play saved skate.Reel replays back to back through the game's own replay
+# code (`play_reel`): each reel loads the way My Replays loads it, plays from
+# start to end at 1x on the harness's clock with no editor UI, and the game
+# returns to free skate. Screenshots every 150 frames (5 s at 30 fps).
+#
+# Needs the signed-in profile's saves: run it against the test user data
+# (SKATE3_WINDOWS_USER_DATA, set by the harness skill's rs.sh) holding
+# rmcsave/REPLY_SKATER with at least two replays. Clip numbers are the
+# replays' positions in My Replays (oldest first).
+name = "reel_regression"
+timeout_s = 900
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 90
+
+[[step]]
+do = "play_reel"
+clip = 2
+every_frames = 150
+
+[[step]]
+do = "wait"
+frames = 90
+
+[[step]]
+do = "play_reel"
+clip = 1
+every_frames = 150
+
+[[step]]
+do = "wait"
+frames = 90
+
+[[step]]
+do = "state"
+tag = "after_reels"

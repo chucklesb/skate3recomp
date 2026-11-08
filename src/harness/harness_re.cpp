@@ -33,6 +33,9 @@ REXCVAR_DEFINE_STRING(skate3_harness_re_watch_msgs, "", "Skate 3",
                       "Harness RE probe: comma-separated message types to log on every post, "
                       "not just the first time: hex ids or name prefixes (cMsgReplay)")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skate3_harness_re_trace, false, "Skate 3",
+                    "Harness RE probe: log the save manager's method calls with backtraces")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_BOOL(skate3_harness_re_probe, false, "Skate 3",
                     "Harness RE probes: log the script-binding context, session-marker and "
                     "highlight-reel calls (reverse-engineering aid; noisy)")
@@ -409,6 +412,7 @@ std::string Backtrace(PPCContext& ctx, uint8_t* base, int depth = 14) {
   uint32_t sp = ctx.r1.u32;
   for (int i = 0; i < depth; ++i) {
     uint32_t prev = 0, lr = 0;
+    if ((sp & 0xFFFF) == 0) break;  // the end of the guest stack (unmapped above)
     if (!Read32(base, sp, &prev) || prev <= sp || prev - sp > 0x10000) break;
     if (!Read32(base, prev - 8, &lr)) break;
     std::snprintf(buf, sizeof(buf), " %08X", lr);
@@ -470,6 +474,24 @@ extern "C" REX_FUNC(sub_8271A828) {
   __imp__sub_8271A828(ctx, base);
 }
 
+// Time controller SetTime(container, track id, f1 time) (container
+// 0x43A74B30, vtable 0x82312CF8; the replay track id is 0xAF8D963D, its time
+// at track+0x1C). Logs the caller every 30th call, to find the replay clock's
+// owner.
+namespace {
+int g_settime_calls = 0;
+}
+extern "C" REX_FUNC(sub_82833748) {
+  if (REXCVAR_GET(skate3_harness_re_probe) && (g_settime_calls++ % 30) == 0) {
+    REXLOG_INFO("re-probe: SetTime #{} tc={:08X} id={:08X} t={} stack: {}", g_settime_calls - 1,
+                ctx.r3.u32, ctx.r4.u32, ctx.f1.f64, Backtrace(ctx, base, 10));
+  }
+  __imp__sub_82833748(ctx, base);
+}
+
+// (The replay editor time update sub_82C7EA50 is hooked by play_reel in
+// harness_game.cpp.)
+
 // Game-mode event post sub_824FCAD8(gctx, ref<event>*) (queues on the world's
 // event deque). Logs memcard requests (type 36) with the poster's backtrace
 // and the request's param object.
@@ -480,7 +502,7 @@ extern "C" REX_FUNC(sub_824FCAD8) {
     Read32(base, ev + 8, &type);
     Read32(base, ev + 12, &id);
     Read32(base, ev + 16, &param);
-    if (type == 36 || type == 27) {
+    if (type == 36 || type == 27 || REXCVAR_GET(skate3_harness_re_trace)) {
       REXLOG_INFO("re-probe: post event type={} id={} param={:08X} ev={:08X} stack: {}", type, id,
                   param, ev, Backtrace(ctx, base, 20));
     }
@@ -491,9 +513,6 @@ extern "C" REX_FUNC(sub_824FCAD8) {
 // Game save/memcard manager *(0x83084690) (vtable 0x82321AE0): every method,
 // logged with a backtrace only while --skate3_harness_re_trace is on (set it
 // live around one menu action; most slots are per-frame getters).
-REXCVAR_DEFINE_BOOL(skate3_harness_re_trace, false, "Skate 3",
-                    "Harness RE probe: log the save manager's method calls with backtraces")
-    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 #define RE_TRACE_SLOT(slot, addr)                                                                 \
   extern "C" REX_FUNC(sub_##addr) {                                                               \
     if (REXCVAR_GET(skate3_harness_re_trace)) {                                                   \

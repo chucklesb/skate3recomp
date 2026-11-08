@@ -1296,7 +1296,7 @@ extern "C" REX_FUNC(sub_82EDE718) {
     std::snprintf(buf, sizeof(buf), "%08X", static_cast<uint32_t>(ctx.lr));
     stack = buf;
     uint32_t sp = ctx.r1.u32;
-    for (int i = 0; i < 12 && sp >= 0x10000; ++i) {
+    for (int i = 0; i < 12 && sp >= 0x10000 && (sp & 0xFFFF) != 0; ++i) {
       uint32_t raw = 0, prev = 0, lr = 0;
       if (!skate3::native_scene::GuestTryCopy(&raw, base + sp, 4)) break;
       prev = __builtin_bswap32(raw);

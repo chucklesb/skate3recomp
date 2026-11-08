@@ -3,6 +3,7 @@
 #include "generated/skate3_init.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <iterator>
 #include <condition_variable>
@@ -19,21 +20,13 @@
 #include <cstdio>
 #include <cstdlib>
 
-REXCVAR_DEFINE_INT32(skate3_harness_re_load_reel, 0, "Skate 3",
-                     "Harness RE experiment: load saved replay N (REPLY_N) the way My Replays "
-                     "does; reset to 0 once issued")
-    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_STRING(skate3_harness_re_dump, "", "Skate 3",
                       "Harness RE: log guest words once, 'ADDR:COUNT[,ADDR:COUNT...]' (hex addr, "
                       "or *ADDR+OFF to follow a pointer); cleared once logged")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
-REXCVAR_DEFINE_INT32(skate3_harness_re_pause_sim, 0, "Skate 3",
-                     "Harness RE experiment: post cMsgPauseSim (1 = pause, 2 = resume) the way "
-                     "the pause menu does; reset to 0 once posted")
-    .lifecycle(rex::cvar::Lifecycle::kHotReload);
-REXCVAR_DEFINE_INT32(skate3_harness_re_view_reel, 0, "Skate 3",
-                     "Harness RE experiment: run My Replays' own view-replay action for slot N "
-                     "(needs the replay list; reset to 0 once issued)")
+REXCVAR_DEFINE_STRING(skate3_harness_re_poke, "", "Skate 3",
+                      "Harness RE: write guest words once, 'ADDR=VALUE[,ADDR=VALUE...]' (hex); "
+                      "cleared once written")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
 #include "native/skate3_native_guest_read.h"
@@ -45,6 +38,7 @@ REX_EXTERN(sub_8271A828);  // memcard owner event handler(owner, ref<event>*) ->
 REX_EXTERN(sub_82B938D8);  // post message(msg*, recipient*, priority) (queued)
 REX_EXTERN(__imp__RtlEnterCriticalSection);  // 0x82F9CB44
 REX_EXTERN(__imp__RtlLeaveCriticalSection);  // 0x82F9CB54
+REX_EXTERN(sub_824FCAD8);  // game-mode event post(gctx, ref<event>*)
 REX_EXTERN(sub_824AD240);  // FE manager singleton getter
 REX_EXTERN(sub_82627128);  // My Replays "view replay" action(this)
 REX_EXTERN(sub_82720B50);  // state transition(component, target state fn, param)
@@ -321,71 +315,8 @@ TeleportResult Teleport(const std::string& location, double timeout_s, uint64_t 
   return *req.result;
 }
 
-// ---- skate.Reel load experiment (RE; see scenarios/README.md) ----------------
-// "Load replay N" the way FE 59 (My Replays) does it: the replay save content
-// is named REPLY_N with load type 'B' (body; 'H' = header), then a type-36
-// memcard request {id 14, content} goes to the memcard owner's event handler.
-// The load then deserializes into the type-27 request that starts StateReplay.
-//   gctx    = *(*(0x83083BCC) + 156)   (table of the game-mode state objects)
-//   owner   = *(gctx + 0x11C)          (memcard owner; handler sub_8271A828)
-//   content = *(*(gctx + 0xE4) + 0x38) (replay save content, vtable 0x822FDE48)
-//   request param = content + 0x198 (secondary base, vtable 0x822FDEC0)
 namespace {
-uint32_t g_reel_event = 0;  // persistent type-36 event object (system heap)
-uint32_t g_reel_ref = 0;    // ref cell pointing at it
 
-void DoLoadReelExperiment(PPCContext& ctx, uint8_t* base, int n) {
-  uint32_t world = 0, gctx = 0, owner = 0, holder = 0, content = 0;
-  if (!Read32(base, kWorldPtr, &world) || !Read32(base, world + kWorldModeOwner, &gctx) ||
-      !Read32(base, gctx + 0x11C, &owner) || !Read32(base, gctx + 0xE4, &holder) ||
-      !Read32(base, holder + 0x38, &content) || !owner || !content) {
-    REXLOG_INFO("harness: reel load {}: objects missing (world={:08X} gctx={:08X} owner={:08X} "
-                "content={:08X})", n, world, gctx, owner, content);
-    return;
-  }
-  if (!g_reel_event) {
-    auto* memory = rex::system::kernel_memory();
-    g_reel_event = memory->SystemHeapAlloc(64);
-    g_reel_ref = memory->SystemHeapAlloc(16);
-    if (!g_reel_event || !g_reel_ref) {
-      REXLOG_INFO("harness: reel load: guest alloc failed");
-      return;
-    }
-    std::memset(base + g_reel_event, 0, 64);
-  }
-  // n > 100: header load of replay n-100 ('H', what My Replays does for every
-  // slot before a body load); otherwise a body load ('B').
-  const bool header = n > 100;
-  if (header) {
-    n -= 100;
-  }
-  // Name the content REPLY_N (file) and "N - replay" (display, UTF-16BE at
-  // +0x1FC), as My Replays does.
-  char name[16] = {};
-  std::snprintf(name, sizeof(name), "REPLY_%d", n);
-  std::memcpy(base + content + 0x1BC, name, sizeof(name));
-  char display[32] = {};
-  std::snprintf(display, sizeof(display), "%d - replay", n);
-  for (size_t i = 0; i < 32; ++i) {
-    base[content + 0x1FC + 2 * i] = 0;
-    base[content + 0x1FC + 2 * i + 1] = static_cast<uint8_t>(display[i]);
-    if (!display[i]) {
-      break;
-    }
-  }
-  base[content + 0x1AC] = header ? 'H' : 'B';
-  // Event: generic event vtable, a refcount that never reaches 0, type 36,
-  // memcard event 14, param = the content's secondary base.
-  Write32(base, g_reel_event + 0, 0x8230C738);
-  Write32(base, g_reel_event + 4, 0x10000);
-  Write32(base, g_reel_event + 8, 36);
-  Write32(base, g_reel_event + 12, 14);
-  Write32(base, g_reel_event + 16, content + 0x198);
-  Write32(base, g_reel_ref, g_reel_event);
-  const uint32_t r = CallGuest(ctx, base, sub_8271A828, {owner, g_reel_ref});
-  REXLOG_INFO("harness: reel load {}: request sent to owner {:08X} (content {:08X}) -> {}", n,
-              owner, content, r);
-}
 // Posts a message to the simulation, the way the presentation side posts
 // cMsgPauseSim (sub_82477A68): queue = *(world+144)+24, its lock at +16, the
 // recipient word at +4; sub_82B938D8(&msg, &recipient, 1). A message is
@@ -430,7 +361,7 @@ uint32_t g_view_handler = 0;     // stand-in screen handler object
 uint32_t g_view_handler_vt = 0;  // its vtable (all no-ops)
 uint32_t g_view_browser = 0;     // browser whose handler slot holds the stand-in
 
-void DoViewReelExperiment(PPCContext& ctx, uint8_t* base, int n) {
+void DoViewReel(PPCContext& ctx, uint8_t* base, int n) {
   uint32_t mgr = 0, count = 0;
   Read32(base, 0x830670A0, &mgr);
   Read32(base, mgr + 392, &count);
@@ -498,7 +429,217 @@ void MaybeRestoreViewHandler(uint8_t* base) {
     g_view_browser = 0;
   }
 }
+
+// ---- play_reel ------------------------------------------------------------
+// Load (main thread):
+//   1. cMsgPauseSim{1, 11}, as the pause menu does (a reel loaded from live
+//      free skate hangs or crashes on playback);
+//   2. My Replays' own view action for the slot (DoViewReel).
+//   StateReplay loads it and opens the replay editor (FE 12), paused on the
+//   last frame.
+// Play (render thread, sub_82C7EA50 hook): the editor's time object
+//   E = **0x8303740C has a state at E+10696 (8 = paused, 5 = playing) and a
+//   normalized position at E+4; while paused it pins the replay track's time
+//   to E+4 * duration (duration = *(*E + 0xC), seconds). We keep it paused and
+//   set E+4 = t / duration each editor frame, t += the frame's dt (f1): our
+//   own 1x clock, no editor input.
+// UI: the whole 2D pass is skipped while a reel is active (SuppressUi).
+// Exit (main thread): the editor's Finished > Exit action: flags on the
+//   editor data x = *(*(sub_824AD240()+8)+48) (x+52 = 1, x+140 = 1, byte
+//   *(*(0x83067060+36)+12) = 0) and a type-145 game event; StateReplay then
+//   restreams free skate. Then cMsgPauseSim{0, 11}.
+constexpr uint32_t kModeStateFreeSkate = 0x8270C890;
+constexpr uint32_t kEditorTimePtr = 0x8303740C;
+
+std::atomic<int> g_reel_phase{static_cast<int>(ReelPhase::kIdle)};
+std::atomic<int> g_reel_request{0};
+std::atomic<uint32_t> g_reel_e{0};
+std::atomic<float> g_reel_t{0.0f};
+std::atomic<float> g_reel_duration{0.0f};
+std::atomic<uint64_t> g_reel_frames{0};
+std::mutex g_reel_mu;
+std::string g_reel_error;
+int g_reel_slot = 0;
+int g_reel_wait = 0;
+int g_reel_ready_frames = 0;
+bool g_reel_exit_posted = false;
+uint32_t g_event_block = 0;
+
+void SetReelPhase(ReelPhase p, const std::string& error = {}) {
+  if (!error.empty()) {
+    std::lock_guard lk(g_reel_mu);
+    g_reel_error = error;
+    REXLOG_INFO("harness: reel {}: {}", g_reel_slot, error);
+  }
+  g_reel_phase.store(static_cast<int>(p));
+}
+
+ReelPhase Phase() { return static_cast<ReelPhase>(g_reel_phase.load()); }
+
+uint32_t GameCtx(uint8_t* base) {
+  uint32_t world = 0, gctx = 0;
+  Read32(base, kWorldPtr, &world);
+  Read32(base, world + kWorldModeOwner, &gctx);
+  return gctx;
+}
+
+uint32_t ModeState(uint8_t* base) {
+  uint32_t owner = 0, state = 0;
+  Read32(base, GameCtx(base) + 0x28, &owner);
+  Read32(base, owner + 8, &state);
+  return state;
+}
+
+// Posts a refcounted game event {vtable, refs, type} through the game-mode
+// event queue (sub_824FCAD8(gctx, ref*)). The block is persistent and its
+// refcount never reaches 0.
+bool PostGameEvent(PPCContext& ctx, uint8_t* base, uint32_t type) {
+  const uint32_t gctx = GameCtx(base);
+  if (!gctx) {
+    return false;
+  }
+  if (!g_event_block) {
+    g_event_block = rex::system::kernel_memory()->SystemHeapAlloc(64);
+  }
+  const uint32_t ev = g_event_block, ref = g_event_block + 32;
+  std::memset(base + ev, 0, 64);
+  Write32(base, ev + 0, 0x8230C738);
+  Write32(base, ev + 4, 0x10000);
+  Write32(base, ev + 8, type);
+  Write32(base, ref, ev);
+  CallGuest(ctx, base, sub_824FCAD8, {gctx, ref});
+  return true;
+}
+
+void PostReelExit(PPCContext& ctx, uint8_t* base) {
+  const uint32_t fe = CallGuest(ctx, base, sub_824AD240, {});
+  uint32_t fe_data = 0, editor = 0, flags_obj = 0;
+  Read32(base, fe + 8, &fe_data);
+  Read32(base, fe_data + 48, &editor);
+  Read32(base, 0x83067060 + 36, &flags_obj);
+  if (flags_obj) {
+    base[flags_obj + 12] = 0;
+  }
+  if (editor) {
+    Write32(base, editor + 52, 1);
+    base[editor + 140] = 1;
+  }
+  PostGameEvent(ctx, base, 145);
+}
+
+void ReelTick(PPCContext& ctx, uint8_t* base) {
+  if (const int slot = g_reel_request.exchange(0); slot > 0) {
+    g_reel_slot = slot;
+    g_reel_wait = 0;
+    g_reel_ready_frames = 0;
+    g_reel_exit_posted = false;
+    g_reel_frames.store(0);
+    g_reel_t.store(0.0f);
+    g_reel_e.store(0);
+    {
+      std::lock_guard lk(g_reel_mu);
+      g_reel_error.clear();
+    }
+    uint32_t mgr = 0, count = 0;
+    Read32(base, 0x830670A0, &mgr);
+    Read32(base, mgr + 392, &count);
+    if (!mgr || static_cast<uint32_t>(slot) > count) {
+      SetReelPhase(ReelPhase::kFailed, "no saved replay " + std::to_string(slot) + " (" +
+                                           std::to_string(count) + " saved)");
+      return;
+    }
+    if (ModeState(base) != kModeStateFreeSkate) {
+      SetReelPhase(ReelPhase::kFailed, "the game is not in free skate");
+      return;
+    }
+    PostSimMessage(ctx, base, 0xDDC8C41A, {1u, 11u});  // cMsgPauseSim(1)
+    DoViewReel(ctx, base, slot);
+    SetReelPhase(ReelPhase::kLoading);
+    return;
+  }
+  switch (Phase()) {
+    case ReelPhase::kLoading: {
+      ++g_reel_wait;
+      uint32_t holder = 0, e = 0, state = 0, scale_obj = 0, pos = 0, dur_bits = 0;
+      Read32(base, kEditorTimePtr, &holder);
+      Read32(base, holder, &e);
+      Read32(base, e + 10696, &state);
+      Read32(base, e + 4, &pos);
+      Read32(base, e, &scale_obj);
+      Read32(base, scale_obj + 0xC, &dur_bits);
+      float dur = 0, p = 0;
+      std::memcpy(&dur, &dur_bits, 4);
+      std::memcpy(&p, &pos, 4);
+      // Ready: out of free skate (the mode owner's current state is a replay
+      // sub-state, not kModeStateReplay itself), the editor paused (state 8) on the last frame
+      // (position 1.0) with a sane duration, for half a second.
+      const bool ready = ModeState(base) != kModeStateFreeSkate && e && state == 8 && p > 0.999f &&
+                         dur > 0.1f && dur < 3600.0f;
+      g_reel_ready_frames = ready ? g_reel_ready_frames + 1 : 0;
+      if (g_reel_ready_frames >= 15) {
+        g_reel_duration.store(dur);
+        g_reel_t.store(0.0f);
+        Write32(base, e + 4, 0);  // rewind to the start
+        g_reel_e.store(e);
+        REXLOG_INFO("harness: reel {}: playing ({:.2f} s, editor time object {:08X})", g_reel_slot,
+                    dur, e);
+        SetReelPhase(ReelPhase::kPlaying);
+      } else if (g_reel_wait > 30 * 90) {
+        SetReelPhase(ReelPhase::kFailed, "the replay did not load within 90 s");
+      }
+      break;
+    }
+    case ReelPhase::kPlaying:
+      if (g_reel_t.load() >= g_reel_duration.load()) {
+        g_reel_e.store(0);  // stop driving
+        g_reel_wait = 0;
+        SetReelPhase(ReelPhase::kExiting);
+      }
+      break;
+    case ReelPhase::kExiting:
+      ++g_reel_wait;
+      if (!g_reel_exit_posted && g_reel_wait > 15) {  // hold the last frame for 0.5 s
+        PostReelExit(ctx, base);
+        g_reel_exit_posted = true;
+        REXLOG_INFO("harness: reel {}: exit posted", g_reel_slot);
+      }
+      if (g_reel_exit_posted && ModeState(base) == kModeStateFreeSkate) {
+        PostSimMessage(ctx, base, 0xDDC8C41A, {0u, 11u});  // cMsgPauseSim(0)
+        REXLOG_INFO("harness: reel {}: back in free skate", g_reel_slot);
+        SetReelPhase(ReelPhase::kDone);
+      } else if (g_reel_wait > 30 * 120) {
+        SetReelPhase(ReelPhase::kFailed, "the game did not return to free skate within 120 s");
+      }
+      break;
+    default:
+      break;
+  }
+}
 }  // namespace
+
+bool StartReel(int slot, std::string* error) {
+  const ReelPhase p = Phase();
+  if (p == ReelPhase::kLoading || p == ReelPhase::kPlaying || p == ReelPhase::kExiting ||
+      g_reel_request.load()) {
+    *error = "a reel is already playing";
+    return false;
+  }
+  g_reel_phase.store(static_cast<int>(ReelPhase::kIdle));
+  g_reel_request.store(slot);
+  return true;
+}
+
+ReelStatus GetReelStatus() {
+  ReelStatus s;
+  s.phase = Phase();
+  s.slot = g_reel_slot;
+  s.duration_s = g_reel_duration.load();
+  s.t_s = g_reel_t.load();
+  s.frames = g_reel_frames.load();
+  std::lock_guard lk(g_reel_mu);
+  s.error = g_reel_error;
+  return s;
+}
 
 void DoReDump(uint8_t* base, const std::string& spec) {
   size_t pos = 0;
@@ -531,26 +672,38 @@ void DoReDump(uint8_t* base, const std::string& spec) {
   }
 }
 
+void DoRePoke(uint8_t* base) {
+  if (const std::string p = REXCVAR_GET(skate3_harness_re_poke); !p.empty()) {
+    rex::cvar::SetFlagByName("skate3_harness_re_poke", "");
+    size_t pos = 0;
+    while (pos < p.size()) {
+      size_t end = p.find(',', pos);
+      if (end == std::string::npos) end = p.size();
+      const std::string item = p.substr(pos, end - pos);
+      pos = end + 1;
+      const size_t eq = item.find('=');
+      if (eq == std::string::npos) continue;
+      const uint32_t a = static_cast<uint32_t>(std::strtoul(item.substr(0, eq).c_str(), nullptr, 16));
+      const uint32_t v = static_cast<uint32_t>(std::strtoul(item.c_str() + eq + 1, nullptr, 16));
+      Write32(base, a, v);
+      REXLOG_INFO("harness: re poke {:08X} = {:08X}", a, v);
+    }
+  }
+}
+
+bool SuppressUi() {
+  const ReelPhase p = Phase();
+  return p == ReelPhase::kLoading || p == ReelPhase::kPlaying || p == ReelPhase::kExiting;
+}
+
 void OnGuestFrame(PPCContext& ctx, uint8_t* base) {  // main (simulation) thread
+  ReelTick(ctx, base);
+  DoRePoke(base);
   if (const std::string d = REXCVAR_GET(skate3_harness_re_dump); !d.empty()) {
     rex::cvar::SetFlagByName("skate3_harness_re_dump", "");
     DoReDump(base, d);
   }
-  if (const int n = REXCVAR_GET(skate3_harness_re_load_reel); n > 0) {
-    rex::cvar::SetFlagByName("skate3_harness_re_load_reel", "0");
-    DoLoadReelExperiment(ctx, base, n);
-  }
-  if (const int p = REXCVAR_GET(skate3_harness_re_pause_sim); p > 0) {
-    rex::cvar::SetFlagByName("skate3_harness_re_pause_sim", "0");
-    const bool ok = PostSimMessage(ctx, base, 0xDDC8C41A, {p == 1 ? 1u : 0u, 11u});
-    REXLOG_INFO("harness: cMsgPauseSim({}) {}", p == 1 ? 1 : 0, ok ? "posted" : "failed");
-  }
-  if (const int n = REXCVAR_GET(skate3_harness_re_view_reel); n > 0) {
-    rex::cvar::SetFlagByName("skate3_harness_re_view_reel", "0");
-    DoViewReelExperiment(ctx, base, n);
-  } else {
-    MaybeRestoreViewHandler(base);
-  }
+  MaybeRestoreViewHandler(base);
   Request* req;
   {
     std::lock_guard lk(g_mu);
@@ -584,4 +737,28 @@ void OnGuestFrame(PPCContext& ctx, uint8_t* base) {  // main (simulation) thread
 extern "C" REX_FUNC(sub_826D34B8) {
   __imp__sub_826D34B8(ctx, base);
   skate3::harness::game::OnGuestFrame(ctx, base);
+}
+
+// Replay editor time update (render thread): sub_82C7EA50(this, f1 = frame
+// dt); E = *this. While play_reel plays, set the editor's normalized position
+// before the original pins the replay time to it (see play_reel above).
+extern "C" REX_FUNC(sub_82C7EA50) {
+  using namespace skate3::harness::game;
+  const uint32_t e_playing = g_reel_e.load();
+  if (e_playing) {
+    uint32_t e = 0;
+    Read32(base, ctx.r3.u32, &e);
+    if (e == e_playing) {
+      const float dur = g_reel_duration.load();
+      const float t = g_reel_t.load();
+      float pos = dur > 0 ? t / dur : 1.0f;
+      pos = pos < 0 ? 0 : (pos > 1 ? 1 : pos);
+      uint32_t bits = 0;
+      std::memcpy(&bits, &pos, 4);
+      Write32(base, e + 4, bits);
+      g_reel_t.store(t + static_cast<float>(ctx.f1.f64));
+      g_reel_frames.fetch_add(1);
+    }
+  }
+  __imp__sub_82C7EA50(ctx, base);
 }

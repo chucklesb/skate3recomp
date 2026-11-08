@@ -52,6 +52,26 @@ constexpr uint64_t kForceSequencer = ~0ull;
 // the key of the locator's district (when known).
 TeleportResult Teleport(const std::string& location, double timeout_s, uint64_t map_key = 0);
 
+// skate.Reel playback (play_reel): load saved replay `slot` (1-based, as
+// listed in My Replays) the game's own way, play it start to end at 1x with
+// our own clock and no UI, then return to free skate. Harness thread: start,
+// then poll the status.
+enum class ReelPhase { kIdle, kLoading, kPlaying, kExiting, kDone, kFailed };
+struct ReelStatus {
+  ReelPhase phase = ReelPhase::kIdle;
+  int slot = 0;
+  float duration_s = 0;  // the reel's length
+  float t_s = 0;         // playback position
+  uint64_t frames = 0;   // editor frames played
+  std::string error;
+};
+bool StartReel(int slot, std::string* error);
+ReelStatus GetReelStatus();
+
+// True while the harness wants the game's whole 2D pass (FE movies + HUD)
+// skipped, e.g. during reel playback (FrontEndManager::Render2D hook).
+bool SuppressUi();
+
 // Main-thread game tick hook, after the original: runs the queued request, if any.
 void OnGuestFrame(PPCContext& ctx, uint8_t* base);
 
