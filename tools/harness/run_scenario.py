@@ -292,8 +292,22 @@ def scenario_flags(path: Path) -> list[str]:
 def summary(run: Path) -> int:
     result_path = run / "result.json"
     if not result_path.exists():
-        print(f"{run}: no result.json (still running, or the game crashed)")
-        return 4
+        crash = parse_crash(run)
+        if crash is None:
+            print(f"{run}: no result.json and no crash.txt (still running, or killed)")
+            return 4
+        build = run_build(run)
+        print(f"{run.name}: crash (code 5) - {crash['what']}")
+        if build:
+            print(f"  build {build[0]} {build[1]}")
+        if crash["address"]:
+            print(f"  address {crash['address']}")
+        for line in crash_frames(run, crash):
+            print(f"  at {line}")
+        if crash["dump"]:
+            print(f"  minidump: {run / 'crash.dmp'} (open in WinDbg or Visual Studio with "
+                  f"the staged PDBs)")
+        return 5
     r = json.loads(result_path.read_text())
     print(f"{run.name}: {r['status']} (code {r['code']}) - {r['reason']}")
     if "build_config" in r:
@@ -465,7 +479,13 @@ def run_record(label: str, run: Path | None) -> dict:
     rec: dict = {"target": label, "dir": str(run) if run else None}
     result = run / "result.json" if run else None
     if not result or not result.exists():
-        rec.update(status="no-result", code=4)
+        crash = parse_crash(run) if run else None
+        if crash is None:
+            rec.update(status="no-result", code=4)
+        else:
+            frames = crash_frames(run, crash, limit=6)
+            rec.update(status="crash", code=5, reason=crash["what"], crash_frames=frames,
+                       failures=[f"crash: {crash['what']}"] + [f"  at {f}" for f in frames[:3]])
         return rec
     r = json.loads(result.read_text())
     last = r.get("last_state") or {}
@@ -584,10 +604,12 @@ def image_base(path: Path) -> int:
     die(f"{path}: neither ELF nor PE")
 
 
-def symbolize(target: str, config: str, addrs: list[str]) -> int:
-    """Print function and file:line for module+offset or bare skate3 addresses."""
+def resolve(target: str, config: str, addrs: list[str]) -> tuple[dict[str, list[str]], list[str]]:
+    """Map each address spec to its frames ("function  file:line", innermost
+    first, inlined frames included). Returns (resolved, error messages)."""
     files = module_files(target, config)
-    status = 0
+    resolved: dict[str, list[str]] = {}
+    errors: list[str] = []
     # (spec, value, value_is_offset_from_module_base)
     by_module: dict[str, list[tuple[str, int, bool]]] = {}
     for spec in addrs:
@@ -595,8 +617,7 @@ def symbolize(target: str, config: str, addrs: list[str]) -> int:
             mod, off = spec.rsplit("+", 1)
             key = module_key(mod, files)
             if key is None:
-                print(f"{spec}: unknown module (one of {', '.join(files)})")
-                status = 1
+                errors.append(f"{spec}: unknown module (one of {', '.join(files)})")
                 continue
             by_module.setdefault(key, []).append((spec, int(off, 16), True))
         else:
@@ -606,8 +627,7 @@ def symbolize(target: str, config: str, addrs: list[str]) -> int:
     for key, items in by_module.items():
         obj = files[key]
         if not obj.exists():
-            print(f"{obj.relative_to(REPO)} is missing; build {target} {config} first")
-            status = 1
+            errors.append(f"{obj.relative_to(REPO)} is missing; build {target} {config} first")
             continue
         base = image_base(obj)
         vas = [base + v if is_off else v for _, v, is_off in items]
@@ -617,21 +637,131 @@ def symbolize(target: str, config: str, addrs: list[str]) -> int:
         try:
             results = json.loads(proc.stdout)
         except json.JSONDecodeError:
-            print(f"llvm-symbolizer failed for {obj.name}: {proc.stderr.strip()[-300:]}")
-            status = 1
+            errors.append(f"llvm-symbolizer failed for {obj.name}: {proc.stderr.strip()[-300:]}")
             continue
         for (spec, _, _), res in zip(items, results):
-            frames = res.get("Symbol") or []
-            if not frames or not frames[0].get("FunctionName"):
-                print(f"{spec}: ??")
-                continue
-            for i, fr in enumerate(frames):
-                path = fr.get("FileName") or "??"
-                path = path.removeprefix(str(REPO) + "/")
-                where = f"{path}:{fr.get('Line', 0)}"
-                print(f"{spec if i == 0 else ' ' * len(spec)}  {'(inlined) ' if i else ''}"
-                      f"{fr['FunctionName']}  {where}")
-    return status
+            out = []
+            for fr in res.get("Symbol") or []:
+                if not fr.get("FunctionName"):
+                    continue
+                path = (fr.get("FileName") or "").removeprefix(str(REPO) + "/")
+                line = fr.get("Line", 0)
+                # Release builds: a symbol name but no line table.
+                where = f"{path}:{line}" if path and line else (path or "")
+                out.append(f"{fr['FunctionName']}  {where}".rstrip())
+            resolved[spec] = out
+    return resolved, errors
+
+
+def symbolize(target: str, config: str, addrs: list[str]) -> int:
+    """Print function and file:line for module+offset or bare skate3 addresses."""
+    resolved, errors = resolve(target, config, addrs)
+    for e in errors:
+        print(e)
+    for spec in addrs:
+        if spec not in resolved:
+            continue
+        frames = resolved[spec] or ["??"]
+        for i, fr in enumerate(frames):
+            print(f"{spec if i == 0 else ' ' * len(spec)}  {'(inlined) ' if i else ''}{fr}")
+    return 1 if errors else 0
+
+
+# ------------------------------------------------------------------ crashes
+
+
+def parse_crash(run: Path) -> dict | None:
+    """crash.txt (written by src/harness/harness_crash.cpp), or None."""
+    path = run / "crash.txt"
+    if not path.exists():
+        return None
+    crash: dict = {"what": "", "address": None, "frames": [], "maps": [], "dump": None}
+    in_maps = False
+    for line in path.read_text(errors="replace").splitlines():
+        if in_maps:
+            crash["maps"].append(line)
+        elif line == "maps:":
+            in_maps = True
+        elif line.startswith("crash: "):
+            crash["what"] = line[7:]
+        elif line.startswith("address: "):
+            crash["address"] = line[9:]
+        elif line.startswith("frame: "):
+            crash["frames"].append(line[7:].strip())
+        elif line.startswith("dump: "):
+            crash["dump"] = line[6:]
+    return crash
+
+
+def frame_specs(frames: list[str], maps: list[str]) -> list[str]:
+    """Absolute PCs to module+offset through a /proc/self/maps copy; the load
+    base is the start of a module's offset-0 mapping. Drops repeats (the
+    aarch64 link register often duplicates the first frame-record return)."""
+    bases: dict[str, int] = {}
+    ranges: list[tuple[int, int, str]] = []
+    for line in maps:
+        parts = line.split(maxsplit=5)
+        if len(parts) < 6 or not parts[5].startswith("/"):
+            continue
+        start, end = (int(x, 16) for x in parts[0].split("-"))
+        name = parts[5].strip()
+        ranges.append((start, end, name))
+        if int(parts[2], 16) == 0:
+            bases.setdefault(name, start)
+    out: list[str] = []
+    for f in frames:
+        spec = f
+        if f.startswith("0x"):
+            pc = int(f, 16)
+            for start, end, name in ranges:
+                if start <= pc < end and name in bases:
+                    spec = f"{Path(name).name}+{pc - bases[name]:#x}"
+                    break
+            else:
+                if ranges:
+                    # The frame-pointer walk ran past the thread's entry
+                    # into data that isn't code; nothing after it is real.
+                    break
+        if not out or out[-1] != spec:
+            out.append(spec)
+    return out
+
+
+def run_build(run: Path) -> tuple[str, str] | None:
+    """(target, config) from the run's build.json, for symbolizing."""
+    try:
+        b = json.loads((run / "build.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    target = {"linux-arm64": "odin2", "win-amd64": "windows"}.get(b.get("platform", ""))
+    config = (b.get("build_config") or "").lower()
+    return (target, config) if target and config in CONFIGS else None
+
+
+def crash_frames(run: Path, crash: dict, limit: int = 12) -> list[str]:
+    """`spec  function  file:line` lines for the innermost frames."""
+    specs = frame_specs(crash["frames"], crash["maps"])[:limit]
+    build = run_build(run)
+    resolved: dict[str, list[str]] = {}
+    if build:
+        target, config = build
+        files = module_files(target, config)
+        ours = [s for s in specs if "+" in s and module_key(s.rsplit("+", 1)[0], files)]
+        if ours:
+            resolved, _ = resolve(target, config, ours)
+    lines = []
+    for s in specs:
+        frs = resolved.get(s)
+        if not frs:
+            lines.append(s)
+            continue
+        # frs runs innermost-inlined first; the last entry is the function
+        # that really owns the frame.
+        text = frs[-1]
+        if len(frs) > 1:
+            text += f"  [inlined: {frs[0].split('  ')[0]} {frs[0].split('  ')[-1]}]"
+        lines.append(f"{s}  {text}")
+    return lines
 
 
 # ------------------------------------------------------------------ main

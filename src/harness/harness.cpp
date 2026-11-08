@@ -32,6 +32,7 @@
 #include <rex/ui/renderdoc_capture.h>
 #include <spdlog/sinks/base_sink.h>
 
+#include "harness/harness_crash.h"
 #include "harness/harness_pad.h"
 #include "harness/harness_png.h"
 #include "harness/harness_script.h"
@@ -897,6 +898,30 @@ Outcome Execute(Run& r, const Step& st) {
     case Verb::kExit:
       FinishAndExit(r, st.code, st.code == 0 ? "pass" : "fail", "exit step");
 
+    case Verb::kCrash: {
+      if (!r.scenario || !r.scenario->allow_crash) {
+        return Fail("crash is refused unless the scenario sets allow_crash = true");
+      }
+      Event(r, "crash", "\"where\":\"" + JsonEscape(st.where) + "\"");
+      REXLOG_WARN("harness: crashing on purpose ({})", st.where);
+      rex::FlushLogging();
+      {
+        std::lock_guard lk(r.file_mu);
+        r.events.flush();
+        r.state_out.flush();
+        r.log_out.flush();
+      }
+      if (st.where == "guest") {
+        crash::ArmGuestFault();
+        // The next pad poll faults on a guest thread; if the game stops
+        // polling the pad, that never happens.
+        WaitFrames(r, 300, 30.0);
+        return Fail("the guest fault did not trigger within 300 frames (pad not polled?)");
+      }
+      crash::FaultNow();
+      return Fail("the fault did not crash the process");
+    }
+
     case Verb::kCapture: {
       if (!rex::ui::renderdoc::Attached()) {
         return Fail("RenderDoc is not attached (launch the game from RenderDoc, or preload it)");
@@ -1099,6 +1124,7 @@ void OnPadPoll(uint8_t* base, uint32_t user, uint32_t state_addr, uint32_t resul
   if (!r || !g_enabled.load(std::memory_order_relaxed)) {
     return;
   }
+  crash::MaybeGuestFault();  // `crash where = "guest"`: fault inside the guest's call
   if ((user & 0xFF) != 0 && (user & 0xFF) != 0xFF) {
     return;  // player one only
   }
@@ -1214,6 +1240,12 @@ void Prepare() {
   r->log_out.open(r->dir / "log.txt", std::ios::binary | std::ios::trunc);
   std::ofstream(r->out_root / "current_run.txt", std::ios::trunc) << r->dir.generic_string()
                                                                    << "\n";
+  // Which build this is, written now: a crashed run never gets a result.json,
+  // and run_scenario.py needs the platform and config to symbolize its frames.
+  std::ofstream(r->dir / "build.json", std::ios::trunc)
+      << "{\"version\": \"" << SKATE3_VERSION_STRING << "\", \"platform\": \""
+      << SKATE3_BUILD_PLATFORM << "\", \"build_config\": \"" << SKATE3_BUILD_CONFIG << "\"}\n";
+  crash::Install(r->dir);
   g_run = r;
   g_tap = std::make_shared<LogTap>(r);
   rex::AddSink(g_tap);

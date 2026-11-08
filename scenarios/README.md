@@ -81,8 +81,8 @@ the adb to use. `--no-deploy` reuses the build already on the device.
 session only. Game arguments go after `--`.
 
 Exit codes: 0 pass, 1 a step or expectation failed, 2 the scenario timed
-out, 3 the scenario file did not parse, 4 no `result.json` (killed or
-crashed).
+out, 3 the scenario file did not parse, 4 no `result.json` and no crash
+report (killed, or still running), 5 the game crashed (see "Crashes").
 
 ## Run folder
 
@@ -90,7 +90,9 @@ Each run writes `<out>/<YYYYMMDD-HHMMSS>_<name>/`:
 
 | File | Contents |
 |---|---|
-| `result.json` | Status, code, reason, failures, frame count, warning/error counts, last state. |
+| `result.json` | Status, code, reason, failures, frame count, warning/error counts, last state, and the build (`version`, `platform`, `build_config`). Missing when the game crashed. |
+| `build.json` | The build, written at start (a crashed run has no `result.json`). |
+| `crash.txt`, `crash.dmp` | Only after a crash (see "Crashes" below); `crash.dmp` on Windows only. |
 | `events.jsonl` | Every step and command, frontend screen changes (`fe`), replay/movie playback starts and stops, save content opens, recording start/stop. |
 | `state.jsonl` | Game state every `state_every_frames` frames and at every `state` step (see below). |
 | `log.txt` | The run's log lines. |
@@ -141,6 +143,7 @@ Steps run in order. A failing step ends the run with code 1.
 | `expect` | `log = "regex"` (seen in this run's log), `no_log = "regex"`, `speed_gt`, `speed_lt`, `presence`. |
 | `exit` | `code = 0`. |
 | `capture` | `tag`, `frames = 1`: RenderDoc capture of the next N frames (see below). |
+| `crash` | `where = "runner"` (default; the harness thread) or `"guest"` (the next controller poll, inside a guest call): fault on purpose to test crash capture. Refused unless the scenario sets `allow_crash = true`. |
 
 Button names: `a b x y lb rb l3 r3 start back up down left right guide`.
 
@@ -219,6 +222,38 @@ Known noise on DroidDeck: every present reports
 `VUID-VkSwapchainPresentModeInfoKHR-swapchainCount-07760`. The game presents
 with no `pNext`, so a layer in DroidDeck's stack adds that structure,
 probably gamescope's WSI layer.
+
+## Crashes
+
+While the harness is on, a fault that nothing else handles is written to the
+run folder before the process dies (`src/harness/harness_crash.cpp`):
+
+- **Windows:** an unhandled-exception filter writes `crash.txt` (exception code,
+  faulting address, and the stack unwound from the faulting context as
+  `module+0xRVA`) and `crash.dmp`, a minidump with thread info and
+  indirectly referenced memory. The SDK's vectored handler still sees every
+  exception first (guest MMIO, memory watches), so only faults it doesn't
+  claim reach the filter.
+- **Linux/aarch64:** the SDK's signal handler calls the harness's last-chance
+  callback (`rex::arch::ExceptionHandler::SetUnhandled`) for a fault no
+  handler claims, then restores the original disposition so the process
+  dies. Before that change, an unclaimed fault re-executed forever and looked
+  like a timeout. The callback writes `crash.txt` with `write(2)` only:
+  the signal, the faulting address, pc/lr/sp/fp, a frame-pointer walk, and a
+  copy of `/proc/self/maps`.
+
+`run_scenario.py` reports such a run as `crash` (exit code 5). It maps the
+frames to `module+offset` and resolves them against the unstripped build
+named in `build.json`, as `symbolize` does. RelWithDebInfo gives `file:line`,
+including recompiled `sub_8xxxxxxx` functions to their `generated/*.cpp`
+lines. Release gives function names on aarch64 (ELF symbols), and only
+exported names on Windows (no PDB). `ab` lists a crash's top frames per
+target. On Windows, open `crash.dmp` in WinDbg or Visual Studio with the
+staged PDBs (`<stage root>/relwithdebinfo/*.pdb`) for locals and every
+thread.
+
+`scenarios/crash_smoke.toml` (runner thread) and `scenarios/crash_guest.toml`
+(inside a guest call, after gameplay starts) crash on purpose to test this.
 
 ## How it hooks the game (TU3 addresses)
 

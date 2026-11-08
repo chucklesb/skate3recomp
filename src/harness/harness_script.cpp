@@ -22,6 +22,7 @@ constexpr VerbEntry kVerbs[] = {
     {"step", Verb::kStep},         {"resume", Verb::kResume},
     {"expect", Verb::kExpect},     {"exit", Verb::kExit},
     {"query", Verb::kQuery},       {"capture", Verb::kCapture},
+    {"crash", Verb::kCrash},
 };
 
 // TOML scalar -> the string form rex::cvar::SetFlagByName takes.
@@ -142,9 +143,16 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
   s.text = t["text"].value_or(std::string());
   s.code = static_cast<int>(Integer(t, "code").value_or(0));
   s.what = t["what"].value_or(std::string("state"));
+  s.where = t["where"].value_or(std::string("runner"));
 
   // Per-verb requirements.
   switch (s.verb) {
+    case Verb::kCrash:
+      if (s.where != "runner" && s.where != "guest") {
+        *error = "crash needs where = \"runner\" or \"guest\"";
+        return false;
+      }
+      break;
     case Verb::kWait:
       if (!s.gameplay && !s.frames && !s.ms && !s.fe_screen && !s.presence && s.log.empty() &&
           !s.speed_gt && !s.speed_lt) {
@@ -230,6 +238,7 @@ std::optional<Scenario> LoadScenario(const std::string& path, std::string* error
   sc.boot_demo = boot == "demo";
   sc.state_every_frames = std::max<int64_t>(0, Integer(root, "state_every_frames").value_or(10));
   sc.vulkan_validation = root["vulkan_validation"].value_or(false);
+  sc.allow_crash = root["allow_crash"].value_or(false);
   if (const toml::table* cv = root["cvars"].as_table()) {
     for (const auto& [k, v] : *cv) {
       auto str = ScalarString(v);

@@ -1,0 +1,21 @@
+# Crash on purpose inside a guest call (the next controller poll, on a guest
+# thread), to test that crash capture walks through recompiled code: with a
+# RelWithDebInfo build the stack shows sub_8xxxxxxx frames resolved to
+# generated/*.cpp lines.
+#
+#   tools/harness/run_scenario.py windows scenarios/crash_guest.toml --config relwithdebinfo
+#   tools/harness/run_scenario.py odin2 scenarios/crash_guest.toml --config relwithdebinfo
+
+name = "crash_guest"
+timeout_s = 300
+boot = "demo"
+allow_crash = true
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 240
+
+[[step]]
+do = "crash"
+where = "guest"

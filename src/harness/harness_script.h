@@ -48,6 +48,7 @@ enum class Verb {
   kExit,        // code=0
   kQuery,       // live channel only: what="state"|"status"
   kCapture,     // tag="x" frames=1: RenderDoc capture of the next N frames (RenderDoc attached)
+  kCrash,       // where="runner"|"guest": fault on purpose (needs allow_crash = true)
 };
 
 struct Step {
@@ -94,6 +95,9 @@ struct Step {
 
   // query
   std::string what = "state";
+
+  // crash
+  std::string where = "runner";
 };
 
 struct Scenario {
@@ -106,6 +110,8 @@ struct Scenario {
   // starts, so run_scenario.py passes --vulkan_validation_enabled and
   // --vulkan_log_debug_messages; the harness only checks and reports.
   bool vulkan_validation = false;
+  // The `crash` verb only runs in a scenario that opts in.
+  bool allow_crash = false;
   std::vector<std::pair<std::string, std::string>> cvars;
   std::vector<Step> steps;
 };

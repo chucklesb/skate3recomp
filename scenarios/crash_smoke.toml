@@ -1,0 +1,20 @@
+# Crash on purpose on the harness runner thread, to test crash capture:
+# the run should end with status "crash" (exit code 5), a crash.txt with a
+# symbolizable stack (top frame in harness_crash.cpp / harness.cpp) and, on
+# Windows, a crash.dmp.
+#
+#   tools/harness/run_scenario.py windows scenarios/crash_smoke.toml
+#   tools/harness/run_scenario.py odin2 scenarios/crash_smoke.toml
+
+name = "crash_smoke"
+timeout_s = 120
+boot = "demo"
+allow_crash = true
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "crash"
+where = "runner"
