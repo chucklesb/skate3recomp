@@ -378,6 +378,43 @@ release app, and shares its game files, settings and saves.
 The `cross-tooling` workflow exercises the toolchain, sysroot and AppImage
 pipeline (both variants) with stub binaries on every change to these tools.
 
+## Windows x64 Cross Build from Linux (Experimental)
+
+The same Nix setup can cross-compile a Windows x64 build. This is for testing
+one commit on both Windows and linux-aarch64, not for releases (those use the
+native Windows build and `tools/package_windows.ps1`). It uses the compiler mode
+upstream uses on Windows: clang's GNU-style driver targeting the MSVC ABI,
+linked with lld-link against the static MSVC runtime. Both the DirectX 12 and
+Vulkan backends are built.
+
+```sh
+tools/cross-windows/build.sh            # release; or: build.sh relwithdebinfo
+```
+
+Steps (run them one at a time with `build.sh release <step>...`):
+
+1. `winsdk`: `tools/cross-windows/make-winsdk.sh` uses
+   [xwin](https://github.com/Jake-Shadle/xwin) to download the pinned MSVC CRT
+   and Windows SDK into `out/sysroot/xwin`. **Running it accepts the Microsoft
+   license terms for those packages.**
+2. `codegen`: the same step as the aarch64 build. It is skipped when
+   `generated/` already exists (set `SKATE3_FORCE_CODEGEN=1` to regenerate),
+   so the Windows and aarch64 builds share the same recompiled sources.
+3. `build`: configures and builds the `windows-x64-release` preset in
+   `nix develop .#windows` (`cmake/toolchains/windows-x64.cmake`).
+4. `stage`: copies `skate3.exe`, the runtime and GPU plugin DLLs, any PDBs and
+   the TU3 patches to `out/stage/windows-x64-<config>`. The first time, it
+   also copies the game dump into `<stage>/game`. Set
+   `SKATE3_WINDOWS_STAGE_DIR` to stage elsewhere. To run the build on the WSL
+   host, use a `/mnt/c/...` folder, because starting the game from
+   `\\wsl.localhost` is slow.
+
+`relwithdebinfo` builds with `-O2 -g` and writes PDBs next to the binaries
+(`skate3.pdb`, `rexruntimerd.pdb`, `rexgpu-xenosrd.pdb`). The SDK adds an `rd`
+suffix to its DLLs in that configuration. WinDbg or Visual Studio can then
+show symbolized stacks for crashes, including the recompiled `sub_8xxxxxxx`
+guest functions.
+
 ## macOS Build (Apple Silicon)
 
 macOS builds use Homebrew LLVM - the `macos-*` presets expect the toolchain at

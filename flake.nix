@@ -1,5 +1,5 @@
 {
-  description = "skate3recomp build environments (host codegen + linux-aarch64 cross build)";
+  description = "skate3recomp build environments (host codegen + linux-aarch64 and windows-x64 cross builds)";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -93,6 +93,29 @@
 
           shellHook = ''
             export SKATE3_AARCH64_SYSROOT=''${SKATE3_AARCH64_SYSROOT:-$PWD/out/sysroot/ubuntu-26.04-arm64}
+          '';
+        };
+
+        # windows-x64 cross build (clang targeting the MSVC ABI, lld-link)
+        # against the MSVC CRT/STL and Windows SDK that
+        # tools/cross-windows/make-winsdk.sh splats with xwin. Used for A/B
+        # testing the same commit on Windows and linux-aarch64.
+        windows = pkgs.mkShellNoCC {
+          packages = commonTools ++ (with pkgs; [
+            llvm.clang-unwrapped
+            llvm.lld
+            llvm.llvm
+            xwin
+          ]);
+
+          SKATE3_CROSS_CLANG = "${llvm.clang-unwrapped}/bin/clang";
+          SKATE3_CROSS_CLANGXX = "${llvm.clang-unwrapped}/bin/clang++";
+          SKATE3_CROSS_RESOURCE_DIR = "${llvm.clang}/resource-root";
+          SKATE3_CROSS_LLVM_BIN = "${llvm.llvm}/bin";
+          SKATE3_CROSS_LLD_LINK = "${llvm.lld}/bin/lld-link";
+
+          shellHook = ''
+            export SKATE3_XWIN_ROOT=''${SKATE3_XWIN_ROOT:-$PWD/out/sysroot/xwin}
           '';
         };
 

@@ -10,6 +10,7 @@
 !/tools/package_macos.sh
 !/tools/package_windows.ps1
 !/tools/cross-aarch64/
+!/tools/cross-windows/
 !/tools/appimage/
 !/tools/release/
 !/tools/harness/

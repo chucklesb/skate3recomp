@@ -132,6 +132,33 @@
       }
     },
     {
+      "name": "windows-x64-base",
+      "hidden": true,
+      "inherits": "base",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/windows-x64.cmake",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "windows-x64-relwithdebinfo",
+      "displayName": "Windows x64 RelWithDebInfo (cross, nix develop .#windows)",
+      "inherits": "windows-x64-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "windows-x64-release",
+      "displayName": "Windows x64 Release (cross, nix develop .#windows)",
+      "inherits": "windows-x64-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
       "name": "macos-relwithdebinfo",
       "displayName": "macOS RelWithDebInfo",
       "inherits": "macos-base",
@@ -180,6 +207,14 @@
     {
       "name": "linux-aarch64-release",
       "configurePreset": "linux-aarch64-release"
+    },
+    {
+      "name": "windows-x64-relwithdebinfo",
+      "configurePreset": "windows-x64-relwithdebinfo"
+    },
+    {
+      "name": "windows-x64-release",
+      "configurePreset": "windows-x64-release"
     },
     {
       "name": "macos-relwithdebinfo",
