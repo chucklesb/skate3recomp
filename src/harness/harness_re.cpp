@@ -470,6 +470,24 @@ extern "C" REX_FUNC(sub_8271A828) {
   __imp__sub_8271A828(ctx, base);
 }
 
+// Game-mode event post sub_824FCAD8(gctx, ref<event>*) (queues on the world's
+// event deque). Logs memcard requests (type 36) with the poster's backtrace
+// and the request's param object.
+extern "C" REX_FUNC(sub_824FCAD8) {
+  if (REXCVAR_GET(skate3_harness_re_probe)) {
+    uint32_t ev = 0, type = 0, id = 0, param = 0;
+    Read32(base, ctx.r4.u32, &ev);
+    Read32(base, ev + 8, &type);
+    Read32(base, ev + 12, &id);
+    Read32(base, ev + 16, &param);
+    if (type == 36 || type == 27) {
+      REXLOG_INFO("re-probe: post event type={} id={} param={:08X} ev={:08X} stack: {}", type, id,
+                  param, ev, Backtrace(ctx, base, 20));
+    }
+  }
+  __imp__sub_824FCAD8(ctx, base);
+}
+
 // Game save/memcard manager *(0x83084690) (vtable 0x82321AE0): every method,
 // logged with a backtrace only while --skate3_harness_re_trace is on (set it
 // live around one menu action; most slots are per-frame getters).

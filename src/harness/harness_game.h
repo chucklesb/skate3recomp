@@ -2,8 +2,9 @@
 // Scenario harness: calls into the game's own functions (TU3 addresses).
 //
 // Guest functions can only run on a guest thread, with a PPCContext. The
-// harness queues a request here; the guest D3D Swap hook (frame boundary)
-// runs it through OnGuestFrame and wakes the waiting harness thread.
+// harness queues a request here; the main thread's per-frame game-state tick
+// (sub_826D34B8 hook) runs it through OnGuestFrame and wakes the waiting
+// harness thread. Never the render thread: allocators are per thread.
 //
 // Teleport: the same call the pause map's "teleport to location" event makes
 // (README "Notes for later work: game teleport").
@@ -51,7 +52,7 @@ constexpr uint64_t kForceSequencer = ~0ull;
 // the key of the locator's district (when known).
 TeleportResult Teleport(const std::string& location, double timeout_s, uint64_t map_key = 0);
 
-// Guest D3D Swap hook, before the original: runs the queued request, if any.
+// Main-thread game tick hook, after the original: runs the queued request, if any.
 void OnGuestFrame(PPCContext& ctx, uint8_t* base);
 
 }  // namespace skate3::harness::game

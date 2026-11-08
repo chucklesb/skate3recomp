@@ -22,6 +22,10 @@ REXCVAR_DEFINE_INT32(skate3_harness_re_load_reel, 0, "Skate 3",
                      "Harness RE experiment: load saved replay N (REPLY_N) the way My Replays "
                      "does; reset to 0 once issued")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_INT32(skate3_harness_re_view_reel, 0, "Skate 3",
+                     "Harness RE experiment: run My Replays' own view-replay action for slot N "
+                     "(needs the replay list; reset to 0 once issued)")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
 #include "native/skate3_native_guest_read.h"
 
@@ -29,6 +33,8 @@ REXCVAR_DEFINE_INT32(skate3_harness_re_load_reel, 0, "Skate 3",
 REX_EXTERN(sub_82910CE8);  // registry find(map*, u32 key) -> entry* (node + 20) or 0
 REX_EXTERN(sub_82706F50);  // teleport sequencer(teleporter, matrix*, id, flag, b, b, b) -> bool
 REX_EXTERN(sub_8271A828);  // memcard owner event handler(owner, ref<event>*) -> 1 handled / 2 not
+REX_EXTERN(sub_824AD240);  // FE manager singleton getter
+REX_EXTERN(sub_82627128);  // My Replays "view replay" action(this)
 REX_EXTERN(sub_82720B50);  // state transition(component, target state fn, param)
 // The pause map's entry point: TeleportToLocation(service, u64* map key,
 // const char** name, a, b) (the menu passes a = 0, b = 1). It loads the
@@ -335,11 +341,27 @@ void DoLoadReelExperiment(PPCContext& ctx, uint8_t* base, int n) {
     }
     std::memset(base + g_reel_event, 0, 64);
   }
-  // Name the content REPLY_N, body load.
+  // n > 100: header load of replay n-100 ('H', what My Replays does for every
+  // slot before a body load); otherwise a body load ('B').
+  const bool header = n > 100;
+  if (header) {
+    n -= 100;
+  }
+  // Name the content REPLY_N (file) and "N - replay" (display, UTF-16BE at
+  // +0x1FC), as My Replays does.
   char name[16] = {};
   std::snprintf(name, sizeof(name), "REPLY_%d", n);
   std::memcpy(base + content + 0x1BC, name, sizeof(name));
-  base[content + 0x1AC] = 'B';
+  char display[32] = {};
+  std::snprintf(display, sizeof(display), "%d - replay", n);
+  for (size_t i = 0; i < 32; ++i) {
+    base[content + 0x1FC + 2 * i] = 0;
+    base[content + 0x1FC + 2 * i + 1] = static_cast<uint8_t>(display[i]);
+    if (!display[i]) {
+      break;
+    }
+  }
+  base[content + 0x1AC] = header ? 'H' : 'B';
   // Event: generic event vtable, a refcount that never reaches 0, type 36,
   // memcard event 14, param = the content's secondary base.
   Write32(base, g_reel_event + 0, 0x8230C738);
@@ -352,12 +374,97 @@ void DoLoadReelExperiment(PPCContext& ctx, uint8_t* base, int n) {
   REXLOG_INFO("harness: reel load {}: request sent to owner {:08X} (content {:08X}) -> {}", n,
               owner, content, r);
 }
+// The game's own "view replay" action (My Replays, FE 59): sub_82627128(this)
+// reads the selected index from browser+80, browser = *(*(sub_824AD240()+8)
+// + 236), sets the save manager's current replay, queues op type 8 for entry
+// [index] of the content manager *(0x830670A0) (list +384, count +392, filled
+// from the replay headers) and kicks its op queue. `this` only receives the
+// op id at +8, so a scratch block stands in for the FE screen.
+uint32_t g_view_this = 0;
+uint32_t g_view_handler = 0;     // stand-in screen handler object
+uint32_t g_view_handler_vt = 0;  // its vtable (all no-ops)
+uint32_t g_view_browser = 0;     // browser whose handler slot holds the stand-in
+
+void DoViewReelExperiment(PPCContext& ctx, uint8_t* base, int n) {
+  uint32_t mgr = 0, count = 0;
+  Read32(base, 0x830670A0, &mgr);
+  Read32(base, mgr + 392, &count);
+  const uint32_t fe = CallGuest(ctx, base, sub_824AD240, {});
+  uint32_t fe_data = 0, browser = 0;
+  Read32(base, fe + 8, &fe_data);
+  Read32(base, fe_data + 236, &browser);
+  REXLOG_INFO("harness: view reel {}: content mgr {:08X} entries {} browser {:08X}", n, mgr, count,
+              browser);
+  if (!mgr || !browser || n < 1 || static_cast<uint32_t>(n) > count) {
+    REXLOG_INFO("harness: view reel {}: not possible (no list / browser, or slot out of range)", n);
+    return;
+  }
+  if (!g_view_this) {
+    auto* memory = rex::system::kernel_memory();
+    g_view_this = memory->SystemHeapAlloc(64);
+    std::memset(base + g_view_this, 0, 64);
+    // Stand-in for the My Replays screen handler: the load's completion
+    // listener (sub_82620A98 / sub_82620AF0) calls *(browser+5352) slot 13
+    // (done) / 14 (failed). Every slot is a bare blr (sub_82B61BB8).
+    g_view_handler_vt = memory->SystemHeapAlloc(4 * 64);
+    for (int i = 0; i < 64; ++i) {
+      Write32(base, g_view_handler_vt + 4 * i, 0x82B61BB8);
+    }
+    g_view_handler = memory->SystemHeapAlloc(16);
+    std::memset(base + g_view_handler, 0, 16);
+    Write32(base, g_view_handler, g_view_handler_vt);
+  }
+  uint32_t handler = 0;
+  Read32(base, browser + 5352, &handler);
+  if (!handler) {
+    Write32(base, browser + 5352, g_view_handler);
+    g_view_browser = browser;
+  }
+  Write32(base, browser + 80, static_cast<uint32_t>(n - 1));
+  CallGuest(ctx, base, sub_82627128, {g_view_this});
+  uint32_t op = 0;
+  Read32(base, g_view_this + 8, &op);
+  REXLOG_INFO("harness: view reel {}: queued op {} (screen handler {})", n, op,
+              handler ? "live" : "stand-in");
+}
+
+// Remove the stand-in handler once the load has completed (the listener
+// clears browser+126, the busy flag).
+int g_view_frames = 0;
+bool g_view_seen_busy = false;
+
+void MaybeRestoreViewHandler(uint8_t* base) {
+  if (!g_view_browser) {
+    g_view_frames = 0;
+    g_view_seen_busy = false;
+    return;
+  }
+  uint8_t busy = 0;
+  uint32_t handler = 0;
+  Read8(base, g_view_browser + 126, &busy);
+  Read32(base, g_view_browser + 5352, &handler);
+  g_view_seen_busy |= busy != 0;
+  ++g_view_frames;
+  if ((g_view_seen_busy && !busy) || g_view_frames > 600 || handler != g_view_handler) {
+    if (handler == g_view_handler) {
+      Write32(base, g_view_browser + 5352, 0);
+    }
+    REXLOG_INFO("harness: view reel: stand-in screen handler removed");
+    g_view_browser = 0;
+  }
+}
 }  // namespace
 
-void OnGuestFrame(PPCContext& ctx, uint8_t* base) {
+void OnGuestFrame(PPCContext& ctx, uint8_t* base) {  // main (simulation) thread
   if (const int n = REXCVAR_GET(skate3_harness_re_load_reel); n > 0) {
     rex::cvar::SetFlagByName("skate3_harness_re_load_reel", "0");
     DoLoadReelExperiment(ctx, base, n);
+  }
+  if (const int n = REXCVAR_GET(skate3_harness_re_view_reel); n > 0) {
+    rex::cvar::SetFlagByName("skate3_harness_re_view_reel", "0");
+    DoViewReelExperiment(ctx, base, n);
+  } else {
+    MaybeRestoreViewHandler(base);
   }
   Request* req;
   {
@@ -383,3 +490,13 @@ void OnGuestFrame(PPCContext& ctx, uint8_t* base) {
 }
 
 }  // namespace skate3::harness::game
+
+// The simulation loop's per-frame game-state tick (main thread; called from
+// sub_82965C90). Harness game requests run here, after the tick: game logic
+// must not run on the render thread (the D3D Swap hook), because the game's
+// allocators pick heaps per thread (a reel loaded from the render thread
+// allocated from RenderHeap and later hung or crashed on playback).
+extern "C" REX_FUNC(sub_826D34B8) {
+  __imp__sub_826D34B8(ctx, base);
+  skate3::harness::game::OnGuestFrame(ctx, base);
+}

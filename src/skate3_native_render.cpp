@@ -473,7 +473,6 @@ extern "C" REX_FUNC(sub_82B82E08) {
     skate3::native_render::OnFrameEnd(base);
   }
   skate3::harness::OnFrame(base);
-  skate3::harness::game::OnGuestFrame(ctx, base);
   __imp__sub_82B82E08(ctx, base);
 }
 
