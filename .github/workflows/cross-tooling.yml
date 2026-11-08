@@ -106,6 +106,23 @@ jobs:
             cmp tools/appimage/skate3recomp-testing.png "$root/.DirIcon"
           '
 
+      - name: RelWithDebInfo (rd-suffixed) stub AppImage and validation
+        run: |
+          nix develop .#cross --command bash -euo pipefail -c '
+            SKATE3_STUB_POSTFIX=rd tools/appimage/stub-build.sh out/build/stub-rd 0.0.0-aarch64.0
+            SKATE3_APPIMAGE_STUB=1 SKATE3_SOURCE_URL=https://github.com/${{ github.repository }} \
+              tools/appimage/build-appimage.sh out/build/stub-rd out/stub-rd
+            image=$PWD/out/stub-rd/Skate3Recomp-0.0.0-aarch64.0-aarch64.AppImage
+            mkdir extract-rd
+            (cd extract-rd && qemu-aarch64 "$image" --appimage-extract >/dev/null)
+            bin=extract-rd/squashfs-root/usr/bin
+            test -f "$bin/librexruntimerd.so" && test -f "$bin/librexgpu-xenosrd.so"
+            if llvm-readelf -S "$bin/skate3" | grep -q "\.debug_info"; then
+              echo "::error::the packed skate3 still has .debug_info"; exit 1
+            fi
+            llvm-readelf -S out/build/stub-rd/skate3 | grep -q "\.debug_info"
+          '
+
       - name: Downloaded (non-executable) image must still validate
         run: |
           image=out/stub-release/Skate3Recomp-0.0.0-aarch64.0-aarch64.AppImage

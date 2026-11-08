@@ -12,7 +12,10 @@
 set -eu
 
 build_dir=${1:-out/build/linux-release}
-files="skate3 librexruntime.so librexgpu-xenos.so"
+# RelWithDebInfo builds name the SDK libraries with an "rd" postfix.
+postfix=
+[ -f "$build_dir/librexruntimerd.so" ] && postfix=rd
+files="skate3 librexruntime$postfix.so librexgpu-xenos$postfix.so"
 
 for f in $files; do
     if [ ! -f "$build_dir/$f" ]; then

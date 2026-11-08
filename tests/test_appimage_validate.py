@@ -78,7 +78,10 @@ class PayloadRulesTest(unittest.TestCase):
 
     def test_allowlist_covers_game_libraries(self):
         allowed = VALIDATE.load_allowlist(SCRIPT.parent / "allowed-libs.txt")
-        for lib in ("librexruntime.so", "librexgpu-xenos.so", "libgtk-3.so.0", "libc.so.6",
+        for lib in ("librexruntime.so", "librexgpu-xenos.so",
+                    # RelWithDebInfo builds (SDK "rd" postfix)
+                    "librexruntimerd.so", "librexgpu-xenosrd.so",
+                    "libgtk-3.so.0", "libc.so.6",
                     "libstdc++.so.6", "libX11.so.6", "libwayland-client.so.0"):
             self.assertIn(lib, allowed)
         self.assertNotIn("libvulkan.so.1", allowed)

@@ -2,8 +2,9 @@
 """Run scenario-harness scenarios locally or on a DroidDeck handheld.
 
     run_scenario.py local  <scenario.toml> --exe <skate3 or AppImage> [-- args...]
-    run_scenario.py odin2  <scenario.toml> [--no-deploy] [-- args...]
-    run_scenario.py live   [--no-deploy] [-- args...]     # live mode (inbox + recording)
+    run_scenario.py odin2  <scenario.toml> [--config release|relwithdebinfo] [--no-deploy] [-- args...]
+    run_scenario.py live   [--config ...] [--no-deploy] [-- args...]  # live mode (inbox + recording)
+    run_scenario.py symbolize [--target odin2|windows] [--config ...] <module+0xoff | 0xaddr>...
     run_scenario.py send   <verb> [key=value ...]          # one live command, prints the reply
     run_scenario.py fetch                                  # copy the device's latest run folder
     run_scenario.py install-renderdoc                      # push an arm64 RenderDoc to the device
@@ -31,6 +32,7 @@ import json
 import os
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -146,26 +148,43 @@ class Device:
                        stdout=subprocess.DEVNULL)
 
 
-def build_testing_appimage() -> Path:
+CONFIGS = ("release", "relwithdebinfo")
+DEPLOYED_CONFIG = REPO / "out/harness/deployed-config"
+
+
+def nix_cmd(shell: str, argv: list[str], **kw) -> subprocess.CompletedProcess:
+    """Run argv inside `nix develop .#<shell>` from the repository root."""
+    script = (". ~/.nix-profile/etc/profile.d/nix.sh 2>/dev/null; "
+              f"exec nix develop .#{shell} --command " + " ".join(shlex.quote(x) for x in argv))
+    return subprocess.run(["bash", "-c", script], cwd=REPO, **kw)
+
+
+def build_testing_appimage(config: str) -> Path:
+    build_dir = f"out/build/linux-aarch64-{config}"
+    if not (REPO / build_dir / "skate3").exists():
+        die(f"{build_dir}/skate3 is missing; run tools/cross-aarch64/build.sh {config} build")
     out = REPO / "out/harness"
     for old in out.glob("*.AppImage*"):
         old.unlink()
-    script = (
-        ". ~/.nix-profile/etc/profile.d/nix.sh 2>/dev/null; "
-        "nix develop .#cross --command bash -c "
-        "'SKATE3_APPIMAGE_SKIP_VALIDATE=1 SKATE3_APPIMAGE_VARIANT=testing "
-        "tools/appimage/build-appimage.sh out/build/linux-aarch64-release out/harness'"
-    )
-    subprocess.run(["bash", "-c", script], cwd=REPO, check=True, stdout=subprocess.DEVNULL)
+    nix_cmd("cross", ["env", "SKATE3_APPIMAGE_SKIP_VALIDATE=1", "SKATE3_APPIMAGE_VARIANT=testing",
+                      "tools/appimage/build-appimage.sh", build_dir, "out/harness"],
+            check=True, stdout=subprocess.DEVNULL)
     images = sorted(out.glob("skate3recomp-testing-*-aarch64.AppImage"))
     if not images:
         die("build-appimage.sh produced no testing AppImage")
     return images[-1]
 
 
-def deploy(dev: Device) -> None:
-    image = build_testing_appimage()
-    log(f"deploying {image.name}")
+def deployed_config() -> str:
+    try:
+        return DEPLOYED_CONFIG.read_text().strip() or "unknown"
+    except OSError:
+        return "unknown"
+
+
+def deploy(dev: Device, config: str) -> None:
+    image = build_testing_appimage(config)
+    log(f"deploying {image.name} ({config})")
     if dev.phase()[1]:
         dev.stop()
     dev.adb_push(image, f"{SHARED}/skate3-harness.AppImage")
@@ -179,6 +198,7 @@ def deploy(dev: Device) -> None:
     if "extracted" not in out:
         die(f"extraction failed: {out}")
     dev.stop()
+    DEPLOYED_CONFIG.write_text(config + "\n")
 
 
 def launch(dev: Device, args: list[str], env: list[str] | None = None) -> None:
@@ -271,6 +291,8 @@ def summary(run: Path) -> int:
         return 4
     r = json.loads(result_path.read_text())
     print(f"{run.name}: {r['status']} (code {r['code']}) - {r['reason']}")
+    if "build_config" in r:
+        print(f"  build v{r['version']} {r['platform']} {r['build_config']}")
     print(f"  {r['frames']} frames, {r['seconds']:.1f} s, {r['screenshots']} screenshots, "
           f"{r['warnings']} warnings, {r['errors']} errors")
     if r.get("validation_enabled"):
@@ -309,6 +331,107 @@ def command_toml(verb: str, pairs: list[str], cid: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ------------------------------------------------------------------ symbolize
+
+
+def module_files(target: str, config: str) -> dict[str, Path]:
+    """Unstripped binaries per module key (no lib prefix, extension or rd postfix)."""
+    p = "rd" if config == "relwithdebinfo" else ""
+    if target == "odin2":
+        b = REPO / f"out/build/linux-aarch64-{config}"
+        return {"skate3": b / "skate3", "rexruntime": b / f"librexruntime{p}.so",
+                "rexgpu-xenos": b / f"librexgpu-xenos{p}.so"}
+    # The SDK links its DLLs (and their PDBs) into its own output folder.
+    b = REPO / f"out/build/windows-x64-{config}"
+    sdk = REPO / "third_party/rexglue-sdk/out/win-amd64"
+    return {"skate3": b / "skate3.exe", "rexruntime": sdk / f"rexruntime{p}.dll",
+            "rexgpu-xenos": sdk / f"rexgpu-xenos{p}.dll"}
+
+
+def module_key(name: str, files: dict[str, Path]) -> str | None:
+    key = Path(name.replace("\\", "/")).name.lower()
+    for ext in (".so", ".dll", ".exe"):
+        key = key.removesuffix(ext)
+    key = key.removeprefix("lib")
+    if key not in files and key.endswith("rd") and key[:-2] in files:
+        key = key[:-2]
+    return key if key in files else None
+
+
+def image_base(path: Path) -> int:
+    """Address a module offset is relative to: the lowest PT_LOAD for ELF, ImageBase for PE."""
+    with path.open("rb") as f:
+        head = f.read(1 << 16)
+    if head[:4] == b"\x7fELF":
+        phoff, = struct.unpack_from("<Q", head, 0x20)
+        phentsize, phnum = struct.unpack_from("<HH", head, 0x36)
+        loads = []
+        for i in range(phnum):
+            off = phoff + i * phentsize
+            p_type, = struct.unpack_from("<I", head, off)
+            if p_type == 1:  # PT_LOAD
+                loads.append(struct.unpack_from("<Q", head, off + 16)[0] & ~0xFFF)
+        return min(loads) if loads else 0
+    if head[:2] == b"MZ":
+        pe, = struct.unpack_from("<I", head, 0x3C)
+        opt = pe + 24
+        magic, = struct.unpack_from("<H", head, opt)
+        if magic != 0x20B:
+            die(f"{path}: not a PE32+ image")
+        return struct.unpack_from("<Q", head, opt + 24)[0]
+    die(f"{path}: neither ELF nor PE")
+
+
+def symbolize(target: str, config: str, addrs: list[str]) -> int:
+    """Print function and file:line for module+offset or bare skate3 addresses."""
+    files = module_files(target, config)
+    status = 0
+    # (spec, value, value_is_offset_from_module_base)
+    by_module: dict[str, list[tuple[str, int, bool]]] = {}
+    for spec in addrs:
+        if "+" in spec:
+            mod, off = spec.rsplit("+", 1)
+            key = module_key(mod, files)
+            if key is None:
+                print(f"{spec}: unknown module (one of {', '.join(files)})")
+                status = 1
+                continue
+            by_module.setdefault(key, []).append((spec, int(off, 16), True))
+        else:
+            # A bare address is already in skate3's own address space.
+            by_module.setdefault("skate3", []).append((spec, int(spec, 16), False))
+    shell = "cross" if target == "odin2" else "windows"
+    for key, items in by_module.items():
+        obj = files[key]
+        if not obj.exists():
+            print(f"{obj.relative_to(REPO)} is missing; build {target} {config} first")
+            status = 1
+            continue
+        base = image_base(obj)
+        vas = [base + v if is_off else v for _, v, is_off in items]
+        proc = nix_cmd(shell, ["llvm-symbolizer", "--output-style=JSON", f"--obj={obj}",
+                               *(hex(v) for v in vas)],
+                       capture_output=True, text=True)
+        try:
+            results = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            print(f"llvm-symbolizer failed for {obj.name}: {proc.stderr.strip()[-300:]}")
+            status = 1
+            continue
+        for (spec, _, _), res in zip(items, results):
+            frames = res.get("Symbol") or []
+            if not frames or not frames[0].get("FunctionName"):
+                print(f"{spec}: ??")
+                continue
+            for i, fr in enumerate(frames):
+                path = fr.get("FileName") or "??"
+                path = path.removeprefix(str(REPO) + "/")
+                where = f"{path}:{fr.get('Line', 0)}"
+                print(f"{spec if i == 0 else ' ' * len(spec)}  {'(inlined) ' if i else ''}"
+                      f"{fr['FunctionName']}  {where}")
+    return status
+
+
 # ------------------------------------------------------------------ main
 
 
@@ -324,13 +447,24 @@ def main() -> int:
     p_odin = sub.add_parser("odin2")
     p_odin.add_argument("scenario", type=Path)
     p_odin.add_argument("--no-deploy", action="store_true")
+    p_odin.add_argument("--config", choices=CONFIGS, default="release",
+                        help="which linux-aarch64 build to deploy (default release)")
     p_odin.add_argument("--out", type=Path, default=REPO / "out/harness-runs")
     p_odin.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
                         help="session environment for this run (repeatable), e.g. "
                              "LD_PRELOAD=/root/renderdoc/librenderdoc.so")
     p_live = sub.add_parser("live")
     p_live.add_argument("--no-deploy", action="store_true")
+    p_live.add_argument("--config", choices=CONFIGS, default="release")
     p_live.add_argument("--env", action="append", default=[], metavar="KEY=VALUE")
+    p_sym = sub.add_parser("symbolize",
+                           help="function and file:line for module+offset or bare skate3 addresses")
+    p_sym.add_argument("addrs", nargs="+", metavar="ADDR",
+                       help="module+0xOFFSET (offset from the module's load base / RVA) "
+                            "or 0xADDRESS in skate3's own address space")
+    p_sym.add_argument("--target", choices=("odin2", "windows"), default="odin2")
+    p_sym.add_argument("--config", choices=CONFIGS,
+                       help="default: the deployed config for odin2, release for windows")
     p_send = sub.add_parser("send")
     p_send.add_argument("verb")
     p_send.add_argument("pairs", nargs="*")
@@ -350,6 +484,13 @@ def main() -> int:
     if a.cmd == "summary":
         return summary(a.run)
 
+    if a.cmd == "symbolize":
+        config = a.config
+        if config is None:
+            deployed = deployed_config() if a.target == "odin2" else "release"
+            config = deployed if deployed in CONFIGS else "release"
+        return symbolize(a.target, config, a.addrs)
+
     if a.cmd == "local":
         out = a.out.resolve()
         out.mkdir(parents=True, exist_ok=True)
@@ -363,8 +504,12 @@ def main() -> int:
         return code
 
     dev = Device()
-    if a.cmd in ("odin2", "live") and not a.no_deploy:
-        deploy(dev)
+    if a.cmd in ("odin2", "live"):
+        if not a.no_deploy:
+            deploy(dev, a.config)
+        elif a.config != deployed_config():
+            log(f"note: --no-deploy reuses the deployed build ({deployed_config()}), "
+                f"not {a.config}")
 
     if a.cmd == "odin2":
         dev.adb_push(a.scenario.resolve(), f"{SHARED}/scenarios/{a.scenario.name}")

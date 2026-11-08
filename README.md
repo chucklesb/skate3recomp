@@ -307,6 +307,12 @@ The script runs five steps, which can also be run one at a time with
 5. `appimage`: writes `out/release/Skate3Recomp-<version>-aarch64.AppImage`
    (see below) and validates it.
 
+`build.sh relwithdebinfo` builds with `-O2 -g`. The SDK libraries are then
+named `librexruntimerd.so` and `librexgpu-xenosrd.so`, which the packaging
+scripts pick up. The AppImage ships stripped copies, while the unstripped
+files in `out/build/linux-aarch64-relwithdebinfo` symbolize addresses from the
+device (`tools/harness/run_scenario.py symbolize`).
+
 The game dump and Title Update 3 requirements are the same as for a native
 build. On the device, the runtime needs `libgtk-3-0`, a Vulkan driver with
 geometry shader and BC texture support (Turnip on Adreno), and a writable

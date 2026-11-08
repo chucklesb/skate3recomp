@@ -9,6 +9,8 @@
 # bundled in the AppImage
 librexruntime.so
 librexgpu-xenos.so
+librexruntimerd.so
+librexgpu-xenosrd.so
 
 # glibc / toolchain runtime
 ld-linux-aarch64.so.1

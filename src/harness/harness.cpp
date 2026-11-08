@@ -36,6 +36,7 @@
 #include "harness/harness_png.h"
 #include "harness/harness_script.h"
 #include "native/skate3_native_guest_read.h"
+#include "skate3_version.h"
 
 static_assert(SKATE3_HAS_TITLE_UPDATE,
               "the harness hooks (XInputGetState wrapper, FE manager) are TU3 addresses");
@@ -382,6 +383,10 @@ std::string ResultJson(Run& r, int code, std::string_view status, std::string_vi
   os << "{\n  \"status\": \"" << JsonEscape(status) << "\",\n  \"code\": " << code
      << ",\n  \"reason\": \"" << JsonEscape(reason) << "\",\n  \"scenario\": \""
      << JsonEscape(r.scenario ? r.scenario->name : std::string("live")) << "\",\n";
+  // Which build produced the run (A/B comparisons, run_scenario.py symbolize).
+  os << "  \"version\": \"" << SKATE3_VERSION_STRING << "\",\n  \"platform\": \""
+     << SKATE3_BUILD_PLATFORM << "\",\n  \"build_config\": \"" << SKATE3_BUILD_CONFIG
+     << "\",\n";
   {
     std::lock_guard lk(r.mu);
     os << "  \"frames\": " << r.frame << ",\n  \"polls\": " << r.poll << ",\n";

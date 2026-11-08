@@ -44,10 +44,15 @@ EOF
 # shellcheck disable=SC2016 # a literal $ORIGIN for the dynamic linker
 rpath='-Wl,-rpath,$ORIGIN'
 
-"${cc[@]}" -shared -fPIC -o "$out/librexruntime.so" "$work/runtime.c"
-"${cc[@]}" -shared -fPIC -o "$out/librexgpu-xenos.so" "$work/gpu.c" \
-    -L"$out" -lrexruntime "$rpath"
-"${cc[@]}" -o "$out/skate3" "$work/main.c" -L"$out" -lrexgpu-xenos -lrexruntime \
+# SKATE3_STUB_POSTFIX=rd mimics a RelWithDebInfo build: rd-suffixed libraries
+# and DWARF debug info, as the SDK's CMAKE_RELWITHDEBINFO_POSTFIX produces.
+p=${SKATE3_STUB_POSTFIX:-}
+[ -n "$p" ] && cc+=(-g)
+
+"${cc[@]}" -shared -fPIC -o "$out/librexruntime$p.so" "$work/runtime.c"
+"${cc[@]}" -shared -fPIC -o "$out/librexgpu-xenos$p.so" "$work/gpu.c" \
+    -L"$out" "-lrexruntime$p" "$rpath"
+"${cc[@]}" -o "$out/skate3" "$work/main.c" -L"$out" "-lrexgpu-xenos$p" "-lrexruntime$p" \
     "$rpath" -Wl,--dynamic-linker=/lib/ld-linux-aarch64.so.1
 
 cat > "$out/include/skate3_version.h" <<EOF

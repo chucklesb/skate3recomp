@@ -40,7 +40,15 @@ case "$variant" in
     *) echo "build-appimage: unknown SKATE3_APPIMAGE_VARIANT '$variant' (release|testing)" >&2; exit 1 ;;
 esac
 
-bins=(skate3 librexruntime.so librexgpu-xenos.so)
+# RelWithDebInfo builds name the SDK libraries with an "rd" postfix
+# (librexruntimerd.so); skate3's DT_NEEDED uses those names, so ship them as is.
+if [ -f "$build_dir/librexruntimerd.so" ] && [ -f "$build_dir/librexruntime.so" ]; then
+    echo "build-appimage: $build_dir has both librexruntime.so and librexruntimerd.so; use a clean build dir" >&2
+    exit 1
+fi
+postfix=
+[ -f "$build_dir/librexruntimerd.so" ] && postfix=rd
+bins=(skate3 "librexruntime$postfix.so" "librexgpu-xenos$postfix.so")
 for f in "${bins[@]}"; do
     [ -f "$build_dir/$f" ] || { echo "build-appimage: $build_dir/$f is missing" >&2; exit 1; }
 done
@@ -54,6 +62,16 @@ install -m 755 "$here/AppRun" "$appdir/AppRun"
 for f in "${bins[@]}"; do
     install -m 755 "$build_dir/$f" "$appdir/usr/bin/$f"
 done
+# A RelWithDebInfo build carries its DWARF in the ELFs. The image ships them
+# without it (SKATE3_APPIMAGE_KEEP_DEBUG=1 keeps it); the unstripped files in
+# the build dir have the same build ID and symbolize addresses from a device.
+if [ -n "$postfix" ] && [ -z "${SKATE3_APPIMAGE_KEEP_DEBUG:-}" ]; then
+    strip_tool=${SKATE3_CROSS_LLVM_BIN:+$SKATE3_CROSS_LLVM_BIN/}llvm-strip
+    for f in "${bins[@]}"; do
+        "$strip_tool" --strip-debug "$appdir/usr/bin/$f"
+    done
+    echo "build-appimage: stripped debug info from the packed copies ($(du -ch "${bins[@]/#/$build_dir/}" | tail -1 | cut -f1) unstripped)"
+fi
 
 sed -e "s/@VERSION@/$version/" -e "s/^Name=.*/Name=$app_name/" -e "s/^Icon=.*/Icon=$stem/" \
     "$here/skate3recomp.desktop" > "$appdir/$stem.desktop"
