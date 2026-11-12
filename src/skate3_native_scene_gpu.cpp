@@ -107,6 +107,8 @@ REXCVAR_DECLARE(bool, skate3_native_render_scene_selection_outline);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_shadow_caster_parity);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_shadow_pcss);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_shadow_static_casters);
+REXCVAR_DECLARE(double, skate3_native_render_scene_shadow_static_elevation_offset);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_sun_override);
 REXCVAR_DECLARE(double, skate3_native_render_scene_shadow_pcss_blocker_m);
 REXCVAR_DECLARE(double, skate3_native_render_scene_shadow_pcss_max_m);
 REXCVAR_DECLARE(double, skate3_native_render_scene_shadow_pcss_min_texel);
@@ -6984,6 +6986,25 @@ static void RenderStaticSunMap(const NativeGuestOutputRenderContext& context,
     return;
   }
   s_unusable_run = 0;
+  // KI-119: c6 has the baked sun's azimuth but sits ~15 degrees too low
+  // (the lightmaps fit ~60-65 degrees where c6 says 47); along c6 nearby
+  // buildings shade ground the bake shows in sun. Raise the elevation for
+  // this map only, keeping the azimuth. The lighting-lab override is used
+  // exactly as set.
+  const float captured_elev_deg =
+      std::asin(std::clamp(sun[1], -1.0f, 1.0f)) * 57.29578f;
+  if (!REXCVAR_GET(skate3_native_render_scene_sun_override)) {
+    const float off_deg = float(std::clamp(
+        REXCVAR_GET(skate3_native_render_scene_shadow_static_elevation_offset), 0.0, 40.0));
+    const float hl = std::sqrt(sun[0] * sun[0] + sun[2] * sun[2]);
+    if (off_deg > 0.0f && hl > 1e-4f) {
+      const float el = std::min(captured_elev_deg + off_deg, 88.0f) * 0.01745329252f;
+      const float c = std::cos(el) / hl;
+      sun[0] *= c;
+      sun[2] *= c;
+      sun[1] = std::sin(el);
+    }
+  }
   if (g_r.nsm_built_radius > 0.0f) {
     const float held_dot = sun[0] * g_r.nsm_sun[0] + sun[1] * g_r.nsm_sun[1] +
                            sun[2] * g_r.nsm_sun[2];
@@ -7174,10 +7195,11 @@ static void RenderStaticSunMap(const NativeGuestOutputRenderContext& context,
       }
       REXLOG_INFO(
           "native-scene: static sun rebuild n={} frame={} sun=({:.3f},{:.3f},{:.3f}) "
-          "elev={:.1f} cam_fwd=({:.3f},{:.3f},{:.3f}) casters={} "
+          "elev={:.1f} (captured {:.1f}) cam_fwd=({:.3f},{:.3f},{:.3f}) casters={} "
           "sky_sun={}({:.3f},{:.3f},{:.3f}) dot={:.3f}",
           n + 1, frame_number, sun[0], sun[1], sun[2],
-          std::asin(std::clamp(sun[1], -1.0f, 1.0f)) * 57.29578f, f[0], f[1], f[2],
+          std::asin(std::clamp(sun[1], -1.0f, 1.0f)) * 57.29578f, captured_elev_deg, f[0],
+          f[1], f[2],
           g_r.static_casters.size(), scene.sky_sun_valid ? 1 : 0, scene.sky_sun[0],
           scene.sky_sun[1], scene.sky_sun[2],
           sun[0] * scene.sky_sun[0] + sun[1] * scene.sky_sun[1] + sun[2] * scene.sky_sun[2]);

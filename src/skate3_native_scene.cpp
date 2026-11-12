@@ -701,6 +701,18 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_shadow_static_casters, false,
                     "that follow a moved sun; receivers keep the darker of "
                     "baked and live shade rather than doubling.")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_DOUBLE(skate3_native_render_scene_shadow_static_elevation_offset, 15.0,
+                      "Skate 3",
+                      "Degrees added to the captured sun's elevation for the "
+                      "static sun-shadow map only (the game's lighting, the "
+                      "dynamic shadows and the sky keep the captured sun). The "
+                      "captured material sun sits ~15 degrees below the sun "
+                      "the baked lightmaps were made with, so along it nearby "
+                      "buildings shade ground the bake shows in sun (KI-119). "
+                      "0 = the captured sun. Ignored while the lighting-lab "
+                      "sun override is on.")
+    .range(0.0, 40.0)
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_DOUBLE(skate3_native_render_scene_shadow_static_strength, 1.0,
                       "Skate 3",
                       "How dark static-geometry shadows get (1 = the full "
