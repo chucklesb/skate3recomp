@@ -38,6 +38,7 @@
 #include "harness/harness_game.h"
 #include "harness/harness_pad.h"
 #include "harness/harness_png.h"
+#include "harness/harness_reels.h"
 #include "harness/harness_script.h"
 #include "native/skate3_native_guest_read.h"
 #include "skate3_version.h"
@@ -1146,15 +1147,28 @@ Outcome Execute(Run& r, const Step& st) {
         return Fail("play_reel needs gameplay (free skate with the skater in the world)");
       }
       std::string err;
+      int64_t clip_n = st.clip;
+      if (!st.reel.empty()) {
+        // Stable reel id -> its current position in My Replays.
+        reels::Reel found;
+        clip_n = reels::Resolve(st.reel, &err, &found);
+        if (clip_n < 1) {
+          return Fail("play_reel: " + err);
+        }
+        REXLOG_INFO("harness: reel id {} -> clip {} (slot {})", found.id, clip_n, found.slot);
+        Event(r, "reel_resolved", "\"reel\":\"" + found.id + "\",\"clip\":" +
+                                      std::to_string(clip_n) + ",\"slot\":" +
+                                      std::to_string(found.slot));
+      }
       game::ReelOptions opts;
       opts.from_marker = st.from == "marker";
       for (double v : st.stills) {
         opts.stills_s.push_back(static_cast<float>(v));
       }
-      if (!game::StartReel(static_cast<int>(st.clip), opts, &err)) {
+      if (!game::StartReel(static_cast<int>(clip_n), opts, &err)) {
         return Fail("play_reel: " + err);
       }
-      const std::string clip = "\"clip\":" + std::to_string(st.clip);
+      const std::string clip = "\"clip\":" + std::to_string(clip_n);
       Event(r, "reel_load", clip);
       const auto deadline = Clock::now() + std::chrono::duration_cast<Clock::duration>(
                                                std::chrono::duration<double>(st.timeout_s));
@@ -1167,7 +1181,7 @@ Outcome Execute(Run& r, const Step& st) {
       game::ReelStatus s = game::GetReelStatus();
       if (s.phase == ReelPhase::kFailed || s.phase == ReelPhase::kIdle ||
           s.phase == ReelPhase::kLoading) {
-        return Fail("play_reel clip " + std::to_string(st.clip) + ": " +
+        return Fail("play_reel clip " + std::to_string(clip_n) + ": " +
                     (s.error.empty() ? "did not start before timeout_s" : s.error));
       }
       char buf[200];
@@ -1180,7 +1194,12 @@ Outcome Execute(Run& r, const Step& st) {
       // While playing: screenshots every `every_frames` frames (tag defaults to
       // "reel<clip>"), and at each still (the clock holds there): wait `settle`
       // frames, take "reel<clip>_t<seconds>", release the hold.
-      const std::string tag = st.tag.empty() ? "reel" + std::to_string(st.clip) : st.tag;
+      // By id: the tag names the reel, not its position (which can differ
+      // between machines), so ab pairs the same reel's stills.
+      const std::string tag =
+          !st.tag.empty() ? st.tag
+          : !st.reel.empty() ? "reel_" + st.reel
+                             : "reel" + std::to_string(clip_n);
       const bool periodic = st.every_frames_given && st.every_frames > 0;
       std::vector<std::string> shots;
       std::string stills_json;
@@ -1281,12 +1300,12 @@ Outcome Execute(Run& r, const Step& st) {
       const std::string played = buf;
       Event(r, "reel_stop", clip + played);
       if (s.phase == ReelPhase::kPlaying) {
-        return Fail("play_reel clip " + std::to_string(st.clip) + ": still playing at timeout_s");
+        return Fail("play_reel clip " + std::to_string(clip_n) + ": still playing at timeout_s");
       }
       WaitUntil(r, left(), [&] { return phase() == ReelPhase::kDone || phase() == ReelPhase::kFailed; });
       s = game::GetReelStatus();
       if (s.phase != ReelPhase::kDone) {
-        return Fail("play_reel clip " + std::to_string(st.clip) + ": " +
+        return Fail("play_reel clip " + std::to_string(clip_n) + ": " +
                     (s.error.empty() ? "did not return to free skate" : s.error));
       }
       Event(r, "reel_exit", clip);
@@ -1302,7 +1321,16 @@ Outcome Execute(Run& r, const Step& st) {
     case Verb::kQuery: {
       Outcome o;
       std::lock_guard lk(r.mu);
-      if (st.what == "status") {
+      if (st.what == "reels") {
+        std::vector<reels::Reel> list;
+        fs::path dir;
+        std::string err;
+        if (!reels::List(&list, &dir, &err)) {
+          return Fail(err);
+        }
+        o.result_json = "\"dir\":\"" + JsonEscape(dir.generic_string()) +
+                        "\",\"reels\":" + reels::ListJson(list);
+      } else if (st.what == "status") {
         o.result_json = "\"status\":{\"frame\":" + std::to_string(r.frame) +
                         ",\"poll\":" + std::to_string(r.poll) +
                         ",\"recording\":" + (r.recording ? "true" : "false") +

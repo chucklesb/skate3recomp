@@ -167,6 +167,7 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
   }
 
   s.clip = Integer(t, "clip").value_or(0);
+  s.reel = t["reel"].value_or(std::string());
   s.from = t["from"].value_or(std::string("start"));
   s.settle_frames = std::max<int64_t>(0, Integer(t, "settle_frames").value_or(20));
   s.renderer = t["renderer"].value_or(std::string());
@@ -226,8 +227,10 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
       }
       break;
     case Verb::kPlayReel:
-      if (s.clip < 1) {
-        *error = "play_reel needs clip = N (1-based saved replay, as listed in My Replays)";
+      if ((s.clip < 1) == s.reel.empty()) {
+        *error =
+            "play_reel needs either reel = \"<id>\" (the reel's id; `query what=reels` lists "
+            "them) or clip = N (1-based position in My Replays), not both";
         return false;
       }
       if (s.from != "start" && s.from != "marker") {

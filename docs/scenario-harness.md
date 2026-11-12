@@ -161,7 +161,7 @@ Steps run in order. A failing step ends the run with code 1.
 | `crash` | `where = "runner"` (default; the harness thread) or `"guest"` (the next controller poll, inside a guest call): fault on purpose to test crash capture. Refused unless the scenario sets `allow_crash = true`. |
 | `teleport` | `location = "Z_DT_Tresoutta"` (a named world locator), optional `tolerance` (metres, default 5) and `timeout_s` (default 60). It uses the game's own teleport, the pause map's path, then waits until the skater settles near the locator: within `tolerance` horizontally, between 15 m below and `tolerance` above it (many locators float above the ground), and slower than 2 m/s for 30 frames. Before issuing, it waits up to 20 s for free skate, so the previous teleport or a respawn can finish. A fall through a not-yet-loaded floor (more than 15 m below) re-issues the teleport, up to `retries` times (default 3). `settle = false` returns as soon as the skater reaches the locator. `path = "sequencer"` uses the lower-level teleport instead of the pause map's: it doesn't load another map, so into an unloaded district the skater falls through the world (that's what `repro_fast_fall_body_parts.toml` relies on). `map_key = "<hex>"` overrides the district's map key. Free skate only. See "Teleport locations" below. |
 | `renderer` | `renderer = "native"` or `"emulated"`: the F5 switch between the native scene renderer and the emulated GPU, live, then `frames` (default 30) to settle. Fails if the native layer was not enabled at boot. |
-| `play_reel` | `clip = N`: plays saved skate.Reel replay N (1-based, as listed in My Replays, oldest first) from start to end at 1×, with no editor or HUD on screen, then returns to free skate. Options: `from = "marker"` starts at the reel's marker (the editor's bookmark; the start if it has none); `stills = [seconds, ...]` stops the clock exactly at those reel times, waits `settle_frames` (default 20), takes a screenshot tagged `reel<N>_t<seconds>` and continues (a still shows the same recorded frame on every run and target, which is what the image diffs compare); `stills_renderers = ["native", "emulated"]` shoots each still on both renderers (`reel<N>_t<s>_native` / `_emulated`; run_scenario.py diffs the pairs into `renderer_diffs.json` and heat maps in `diffs/`, example `reel_renderers.toml`); `stills_variants = [{ tag = "a", set = { cvar = value } }, …]` shoots each still once per variant instead: it sets the variant's cvars, waits `settle_frames`, and saves `reel<N>_t<s>_<tag>` (the same recorded frame under different settings; the values stay set, so end with a variant that restores them; not together with `stills_renderers`; example `ki119_static_sun.toml`, the KI-119 static sun map regression); `every_frames = N` takes a screenshot every N frames (`tag` defaults to `reel<N>`); `timeout_s` (default 600). It loads the reel the game's own way, from free skate, with no menu input, and drives the replay clock itself (see "skate.Reel playback" below). Events `reel_load`, `reel_start` (`duration_s`, `from`, `start_s`, `marker_s`), `reel_still` (`t`, `file`), `reel_stop` (`played_s`, `editor_frames`, `frames`, `wall_s`) and `reel_exit`. Needs the signed-in profile's saves: `boot = "demo"` with `skate3_demo_path_signed_in = true`, run against the test user data. Examples: `reel_regression.toml`, `reel_stills.toml`. |
+| `play_reel` | `reel = "<id>"` (preferred; the reel's id, see "Reels as repros" below) or `clip = N` (1-based, as listed in My Replays, oldest first; shifts when reels are saved or deleted): plays that saved skate.Reel replay from start to end at 1×, with no editor or HUD on screen, then returns to free skate. Options: `from = "marker"` starts at the reel's marker (the editor's bookmark; the start if it has none); `stills = [seconds, ...]` stops the clock exactly at those reel times, waits `settle_frames` (default 20), takes a screenshot tagged `reel<N>_t<seconds>` and continues (a still shows the same recorded frame on every run and target, which is what the image diffs compare); `stills_renderers = ["native", "emulated"]` shoots each still on both renderers (`reel<N>_t<s>_native` / `_emulated`; run_scenario.py diffs the pairs into `renderer_diffs.json` and heat maps in `diffs/`, example `reel_renderers.toml`); `stills_variants = [{ tag = "a", set = { cvar = value } }, …]` shoots each still once per variant instead: it sets the variant's cvars, waits `settle_frames`, and saves `reel<N>_t<s>_<tag>` (the same recorded frame under different settings; the values stay set, so end with a variant that restores them; not together with `stills_renderers`; example `ki119_static_sun.toml`, the KI-119 static sun map regression); `every_frames = N` takes a screenshot every N frames (`tag` defaults to `reel<N>`); `timeout_s` (default 600). It loads the reel the game's own way, from free skate, with no menu input, and drives the replay clock itself (see "skate.Reel playback" below). Events `reel_load`, `reel_start` (`duration_s`, `from`, `start_s`, `marker_s`), `reel_still` (`t`, `file`), `reel_stop` (`played_s`, `editor_frames`, `frames`, `wall_s`) and `reel_exit`. Needs the signed-in profile's saves: `boot = "demo"` with `skate3_demo_path_signed_in = true`, run against the test user data. Examples: `reel_regression.toml`, `reel_stills.toml`. |
 
 Button names: `a b x y lb rb l3 r3 start back up down left right guide`.
 
@@ -173,8 +173,9 @@ Skate 3 controls:
 
 Drop a TOML file into `<out>/inbox/`. It uses the same keys as one
 `[[step]]`, plus an optional `id`. The reply appears as
-`<out>/outbox/<id>.json`. `query` is live-only: `what = "state"` or
-`"status"`. `run_scenario.py send` does all of this for you.
+`<out>/outbox/<id>.json`. `query` takes `what = "state"`, `"status"` or
+`"reels"` (the saved reels with their ids; also usable as a scenario step,
+where the result lands in `events.jsonl`). `run_scenario.py send` does all of this for you.
 
 ## Input recording
 
@@ -187,6 +188,48 @@ expecting a pixel-exact path.
 
 `.s3rec` is text: a `# s3rec 1 {json}` header, then one line per input change:
 `<poll> <frame> <buttons hex> <lt> <rt> <lx> <ly> <rx> <ry>`.
+
+## Reels as repros
+
+Input recordings (`.s3rec`) replay the pad, not the game: pedestrians and
+traffic differ between runs, timing differs by machine and frame rate, and a
+replayed run can take another line or bail. A saved skate.Reel replays the
+recorded game itself, frame for frame, on every run and target, so it is the
+better repro for anything you can see in a replay (rendering, animation,
+body parts, shadows).
+
+**Identifying a reel.** Every file in the REPLY_SKATER save is an "MC02"
+container with a content hash at +20. A reel's **id** is the first 16 hex
+digits of its `N.B` hash: it stays the same while other reels are saved or
+deleted (their positions shift), and changes only if that reel is saved
+again. List them with `send query what=reels` (live) or a `query` step with
+`what = "reels"`: clip (current position), slot (`N.B`), id and size, from
+the signed-in profile's save. In scenarios use `play_reel reel = "<id>"` (a
+unique prefix of 6+ digits works); the harness resolves it to the current
+position at run time and logs `harness: reel id ... -> clip N`. With an id,
+screenshot tags default to `reel_<id>` instead of `reel<N>`. Example:
+`scenarios/reel_by_id.toml`. Two byte-identical reels (the same reel saved
+twice: clips 4 and 5 of the test saves) share an id; the harness reports
+the id as ambiguous, so use `clip` for those.
+
+**Recording one (the workflow):**
+1. Start a live session at the spot (`live`, `send wait gameplay=true`,
+   `send teleport location=...`).
+2. The player skates, saves a new Reel in the game's replay editor, and
+   optionally places a marker where the problem starts.
+3. `send query what=reels` shows the new reel (the last clip); note its id.
+4. Write a scenario: `play_reel reel = "<id>" from = "marker"` (from the
+   marker when there is one, else the start), with `stills` or
+   `every_frames` at the moment, and the cvar variants to compare.
+5. Record the reel in the issue's entry in `docs/known-issues.md` ("How to
+   see it": the reel id, the profile it lives in, and the scenario).
+
+A reel lives in the save of the machine it was recorded on. To replay it on
+another target, copy the whole REPLY_SKATER folder (INDEX, DDATA and every
+`N.B`/`N.H`) into that target's profile save: INDEX is hashed too, so
+single reels can't be spliced into another folder. On Windows that's the
+test user data (`C:\Users\user\skate3-ab\userdata\<xuid>\454108E6\00000001\REPLY_SKATER`);
+positions may change, ids don't.
 
 ## Performance
 

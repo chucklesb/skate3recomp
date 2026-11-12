@@ -17,11 +17,15 @@ set(SKATE3_TESTS
     file_stamp_test
     hall_of_meat_test
     harness_pad_test
+    harness_reels_test
     screen_fx_test
 )
 
+# Tests whose logic lives in a standard-library-only .cpp (not a header).
+set(harness_reels_test_SOURCES ${PROJECT_SOURCE_DIR}/src/harness/harness_reels.cpp)
+
 foreach(test_name IN LISTS SKATE3_TESTS)
-    add_executable(${test_name} ${test_name}.cpp test_check.h)
+    add_executable(${test_name} ${test_name}.cpp test_check.h ${${test_name}_SOURCES})
     target_include_directories(${test_name} PRIVATE
         ${PROJECT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}

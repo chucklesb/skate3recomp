@@ -115,6 +115,7 @@ struct Step {
 
   // play_reel
   int64_t clip = 0;            // 1-based saved replay slot
+  std::string reel;            // or: the reel's id (hex prefix; see harness_reels.h)
   std::string from = "start";  // "start" | "marker"
   std::vector<double> stills;  // reel times (s) to hold at for screenshots
   int64_t settle_frames = 20;  // frames to wait at a still before its screenshot

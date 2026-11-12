@@ -338,6 +338,7 @@ set(SKATE3_COMMON_SOURCES
     src/harness/harness_overlay.cpp
     src/harness/harness_png.cpp
     src/harness/harness_re.cpp
+    src/harness/harness_reels.cpp
     src/harness/harness_script.cpp
     src/skate3_app_common.cpp
     src/skate3_demo_path.cpp

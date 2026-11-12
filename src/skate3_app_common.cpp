@@ -2,6 +2,7 @@
 
 #include "harness/harness.h"
 #include "harness/harness_overlay.h"
+#include "harness/harness_reels.h"
 
 #include "skate3_demo_path.h"
 #include "skate3_fov.h"
@@ -773,6 +774,26 @@ void Skate3BaseApp::OnPostSetup() {
   // override ApplySelectedProfileToRuntime applies.
   skate3::harness::Prepare();
   ApplySelectedProfileToRuntime();
+  {
+    // play_reel reel = "<id>" / query what=reels read the profile's replay
+    // index from disk (harness_reels.h): the portable saves folder when it
+    // exists (see the kSavedGame override), else the user data tree.
+    std::vector<std::filesystem::path> roots;
+    const auto portable_saves =
+        rex::filesystem::GetAppRootFolder() / std::string(kSavesDirectoryName);
+    std::error_code ec;
+    if (std::filesystem::is_directory(portable_saves, ec)) {
+      roots.push_back(portable_saves);
+    }
+    if (runtime()) {
+      roots.push_back(runtime()->user_data_root());
+    }
+    const uint64_t xuid = runtime() && runtime()->kernel_state() &&
+                                  runtime()->kernel_state()->user_profile()
+                              ? runtime()->kernel_state()->user_profile()->xuid()
+                              : 0;
+    skate3::harness::reels::SetSaveRoots(std::move(roots), xuid);
+  }
   ApplyGameplayCursorMode();
   if (REXCVAR_GET(skate3_native_debug_open_at_boot)) {
     app_context().CallInUIThreadDeferred([this]() {

@@ -1,0 +1,39 @@
+# Selecting a saved reel by its id instead of its My Replays position.
+#
+# A reel's id is the first 16 hex digits of the content hash in its REPLY_SKATER
+# N.B header; it stays the same while reels are saved or deleted around it
+# (positions shift). `play_reel reel = "<id or 6+ digit prefix>"` resolves it to
+# the current position; `query what = "reels"` (or, live,
+# `send query what=reels`) lists clip / slot / id for the signed-in profile.
+#
+# This plays reel 2 of the test saves (id b5f9930a...) from its marker and holds
+# at 6 s: the still must match reel_stills.toml's reel2_t6.00 (same frame). Its
+# screenshot tag names the id (reel_b5f9930a_t6.00), so A/B pairs the same reel
+# even where positions differ.
+name = "reel_by_id"
+timeout_s = 600
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "query"
+what = "reels"
+
+[[step]]
+do = "play_reel"
+reel = "b5f9930a"
+from = "marker"
+stills = [6.0]
