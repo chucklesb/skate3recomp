@@ -576,9 +576,19 @@ def run_windows(scenario: Path, config: str, backend: str, extra: list[str],
 # ------------------------------------------------------------------ odin2 / A-B
 
 
+def scenario_recordings(scenario: Path) -> list[Path]:
+    """Input recordings a scenario's `play` steps name (file = "x.s3rec"),
+    resolved next to the scenario: the game resolves them relative to the
+    scenario first, so they travel with it."""
+    names = re.findall(r'^\s*file\s*=\s*"([^"]+\.s3rec)"', scenario.read_text(), re.M)
+    return [p for p in (scenario.parent / n for n in names) if p.is_file()]
+
+
 def run_odin2(dev: Device, scenario: Path, extra: list[str], env: list[str],
               out_root: Path) -> Path:
     dev.adb_push(scenario.resolve(), f"{SHARED}/scenarios/{scenario.name}")
+    for rec in scenario_recordings(scenario):
+        dev.adb_push(rec.resolve(), f"{SHARED}/scenarios/{rec.name}")
     launch(dev, [f"--skate3_harness_scenario={SHARED}/scenarios/{scenario.name}",
                  *scenario_flags(scenario), *extra], env=env)
     log(f"running {scenario.name}")

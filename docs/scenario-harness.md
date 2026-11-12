@@ -147,7 +147,7 @@ Steps run in order. A failing step ends the run with code 1.
 |---|---|
 | `wait` | One of `gameplay = true`, `frames = N`, `ms = N`, `fe_screen = N`, `presence = N`, `log = "regex"`, `speed_gt = x`, `speed_lt = x`. Optional `timeout_s` (default 120). |
 | `input` | `buttons = "a+lb+up"`, `lt`/`rt` (0..1), `lx`/`ly`/`rx`/`ry` (-1..1), `frames = N` to hold. `mode = "override"` (default: replaces the real pad) or `"overlay"` (merges with it). `async = true` continues without waiting. |
-| `play` | `file = "x.s3rec"` (relative to the scenario, then the run folder). `mode` and `async` work as for `input`. |
+| `play` | `file = "x.s3rec"` (relative to the scenario, then the run folder). `mode` and `async` work as for `input`. `run_scenario.py odin2` pushes the recordings a scenario's `play` steps name along with it. |
 | `record` | `start = true` / `false`, optional `file`, `note`. |
 | `cvar` | `set = { name = value, ... }`, applied live. |
 | `screenshot` | `tag`, `count = 1`, `every_frames = 1`. |
