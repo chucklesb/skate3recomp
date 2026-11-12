@@ -283,6 +283,14 @@ target. On Windows, open `crash.dmp` in WinDbg or Visual Studio with the
 staged PDBs (`<stage root>/relwithdebinfo/*.pdb`) for locals and every
 thread.
 
+On Windows the frames in `crash.txt` also name the recompiled guest function
+(`guest sub_8XXXXXXX, host +0xN`): the host function's start, from the unwind
+tables, matched against `skate3_PPCFuncMappings`. When the console debugger
+is installed (`SKATE3_WINDOWS_CDB`, or `cdbX64.exe` from the WinDbg app on
+PATH), `run_scenario.py` also runs it on `crash.dmp` and writes
+`crash_analysis.txt` (`.ecxr`, `kv`, `!analyze -v`, symbols from the staged
+build, no network symbol server). The summary lists its frames.
+
 `scenarios/crash_smoke.toml` (runner thread) and `scenarios/crash_guest.toml`
 (inside a guest call, after gameplay starts) crash on purpose to test this.
 
@@ -328,7 +336,7 @@ How the harness teleport works (TU3 addresses). Implemented in `src/harness/harn
 
 - **The fallback sequencer path:** `sub_82864C40` decides whether the area must be streamed in, and the sequencer returns that. When it returns 0, the sequencer moves the player at once, but free skate ignores that instant move, so the harness forces 1 during its own call. That path never loads another map, and in a freshly streamed district the skater can arrive before the collision does.
 - **How the menu does it:** `sub_8270B3D0` on the mode component handles the event-driven variant (hash the name, sequencer, teleporting state). The pause map itself calls `sub_82864628` with the destination district's key (captured with the RE probe's teleport-start hooks).
-- **Finding these again:** the harness RE probe (`--skate3_harness_re_probe=true`, `src/harness/harness_re.cpp`) logs every new game message type with its sender. That's how the teleport message showed up. `tools/re/xrefs.py` (callers, callees, address references and disassembly from the generated code) and `tools/re/gsnap.py` (snapshot search and diff) are the static side.
+- **Finding these again:** the harness RE probe (`--skate3_harness_re_probe=true`, `src/harness/harness_re.cpp`) logs every new game message type with its sender. That's how the teleport message showed up. `tools/re/xrefs.py` (callers, callees, address references and disassembly from the generated code) and `tools/re/gsnap.py` (snapshot search and diff) are the static side. `tools/re/decomp.py ADDR` prints Ghidra's decompiled C of the function at an address. It needs a one-time project from `tools/re/ghidra/setup.py SNAP.gsnap`, which imports the TU3 image straight from a guest snapshot (the XEX on disk is the unpatched base) and names every function `sub_XXXXXXXX` like the recompiler. VMX128 instructions don't decode. Live, `--skate3_harness_re_dump="ADDR:N"` / `--skate3_harness_re_poke="ADDR=VALUE"` (`cvar` command) read and write guest words, and `--skate3_harness_re_trace` logs the traced hooks in `harness_re.cpp`.
 
 ## skate.Reel playback (`play_reel`)
 
