@@ -1198,9 +1198,35 @@ Outcome Execute(Run& r, const Step& st) {
             // One shot per requested renderer (the F5 switch, then settle),
             // or one on the current renderer.
             const bool was_native = REXCVAR_GET(skate3_native_render_scene);
+            for (const Step::StillVariant& var : st.stills_variants) {
+              bool set_ok = true;
+              for (const auto& [name, value] : var.set) {
+                set_ok = rex::cvar::SetFlagByName(name, value) && set_ok;
+              }
+              if (!set_ok) {
+                Event(r, "reel_still_skipped",
+                      clip + ",\"variant\":\"" + JsonEscape(var.tag) + "\",\"why\":\"cvar rejected\"");
+                continue;
+              }
+              const uint64_t f0 = r.state.frame;
+              WaitUntil(r, 10.0, [&] {
+                return r.state.frame >= f0 + static_cast<uint64_t>(st.settle_frames);
+              });
+              char still_tag[160];
+              std::snprintf(still_tag, sizeof(still_tag), "%s_t%.2f_%s", tag.c_str(), cur.t_s,
+                            var.tag.c_str());
+              std::string shot_err;
+              std::vector<std::string> names;
+              TakeScreenshots(r, still_tag, 1, 1, &names, &shot_err);
+              const std::string file = names.empty() ? "" : JsonEscape(names[0]);
+              const std::string fields = "\"t\":" + std::to_string(cur.t_s) + ",\"variant\":\"" +
+                                         JsonEscape(var.tag) + "\",\"file\":\"" + file + "\"";
+              stills_json += std::string(stills_json.empty() ? "" : ",") + "{" + fields + "}";
+              Event(r, "reel_still", clip + "," + fields);
+            }
             std::vector<std::string> renderers = st.stills_renderers;
-            if (renderers.empty()) {
-              renderers.push_back("");
+            if (renderers.empty() && st.stills_variants.empty()) {
+              renderers.push_back("");  // one shot on the current renderer
             }
             for (const std::string& rend : renderers) {
               if (!rend.empty()) {

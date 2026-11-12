@@ -7144,12 +7144,43 @@ static void RenderStaticSunMap(const NativeGuestOutputRenderContext& context,
       for (float& v : f) {
         v = fl > 1e-6f ? v / fl : 0.0f;
       }
+      // The game's own cascade axis: c4 (the depth ramp) points away from
+      // the sun.
+      float g[3] = {-scene.shadow_rows[16], -scene.shadow_rows[17], -scene.shadow_rows[18]};
+      const float gl = std::sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]);
+      for (float& v : g) {
+        v = gl > 1e-9f ? v / gl : 0.0f;
+      }
+      REXLOG_INFO(
+          "native-scene: static sun csm_axis=({:.3f},{:.3f},{:.3f}) elev={:.1f} "
+          "az={:.1f} dot_c6={:.3f}",
+          g[0], g[1], g[2], std::asin(std::clamp(g[1], -1.0f, 1.0f)) * 57.29578f,
+          std::fmod(std::atan2(g[0], g[2]) * 57.29578f + 360.0f, 360.0f),
+          g[0] * sun[0] + g[1] * sun[1] + g[2] * sun[2]);
+      {
+        // The other captured light directions: the dynamicobject sun (PS
+        // c9) and the game's static world-shadow projection depth row.
+        const float* dr = scene.dynobj_rows;
+        float wz[3] = {-scene.dynobj_ws[8], -scene.dynobj_ws[9], -scene.dynobj_ws[10]};
+        const float wl = std::sqrt(wz[0] * wz[0] + wz[1] * wz[1] + wz[2] * wz[2]);
+        for (float& v : wz) {
+          v = wl > 1e-9f ? v / wl : 0.0f;
+        }
+        REXLOG_INFO(
+            "native-scene: static sun dynobj_sun={}({:.3f},{:.3f},{:.3f}) "
+            "world_shadow_axis={}({:.3f},{:.3f},{:.3f}) elev={:.1f}",
+            scene.dynobj_valid ? 1 : 0, dr[0], dr[1], dr[2], scene.dynobj_ws_valid ? 1 : 0,
+            wz[0], wz[1], wz[2], std::asin(std::clamp(wz[1], -1.0f, 1.0f)) * 57.29578f);
+      }
       REXLOG_INFO(
           "native-scene: static sun rebuild n={} frame={} sun=({:.3f},{:.3f},{:.3f}) "
-          "elev={:.1f} cam_fwd=({:.3f},{:.3f},{:.3f}) casters={}",
+          "elev={:.1f} cam_fwd=({:.3f},{:.3f},{:.3f}) casters={} "
+          "sky_sun={}({:.3f},{:.3f},{:.3f}) dot={:.3f}",
           n + 1, frame_number, sun[0], sun[1], sun[2],
           std::asin(std::clamp(sun[1], -1.0f, 1.0f)) * 57.29578f, f[0], f[1], f[2],
-          g_r.static_casters.size());
+          g_r.static_casters.size(), scene.sky_sun_valid ? 1 : 0, scene.sky_sun[0],
+          scene.sky_sun[1], scene.sky_sun[2],
+          sun[0] * scene.sky_sun[0] + sun[1] * scene.sky_sun[1] + sun[2] * scene.sky_sun[2]);
     }
   }
   float o[3] = {cam[0], cam[1], cam[2]};

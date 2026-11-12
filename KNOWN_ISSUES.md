@@ -1104,21 +1104,50 @@ repro steps; the entry says where the problem is and how it would show.
     the pavilion and walkways at the right places, with no oversized or stray
     caster.
 
-  **Conclusion:** the shadows are geometrically right for the axis the map
-  uses, c6 (the "material sun"). That axis disagrees with the sun the game's
-  baked lighting and its own renderer use; the code comments already measure
-  c6 at about 43° off the cascade axis. Spots the game shows in sun (an open
-  plaza, a skater under the pavilion's roof edge) fall in c6 shade from
-  nearby buildings. The option is off by default, so only players who turn it
-  on see this; this is the "odd extra shadows" upstream shelved it for (KI-5).
+  - **Baked sun fit** (2026-11-11, Windows D3D12). A temporary debug view
+    drew, for every lightmapped world pixel, the raw lightmap luminance and
+    the static sun term in one frame. Baked shade (lightmap below an Otsu
+    split) was compared with static shade by IoU while the sun override
+    (`skate3_native_render_scene_sun_override`, azimuth/elevation) stepped
+    over a grid, with 30-40 frames to settle after each change:
+
+    | Location | c6 | Best fit (plateau) | IoU, c6 → best |
+    |---|---|---|---|
+    | Reel 2 plaza, stills at 6/10/14/18 s | az 315°, el 47° | az 308-315°, el 57-62° | 0.71 → 0.81 |
+    | Core Plaza (free skate) | az 298°, el 47° | az 283-298°, el 62-72° | 0.44 → 0.64 |
+
+    At the worst frame (reel 2 at 18 s) c6 shades 100% of the measured
+    pixels where the bake shades 35% (IoU 0.35); at elevation 62° the IoU
+    there is 0.83.
+  - **No runtime source for that direction.** The sky's sun disc and the
+    dynamic-object sun (PS c9) are the same vector as c6, and both of the
+    game's own shadow projections (the cascade depth row c4 and the static
+    world-shadow rows) point straight down (elevation 90°).
+  - Ruled out on the way: stale or oversized casters in the cache (skipping
+    casters over 500 m, or not submitted for 60 frames, changed nothing) and
+    receiver bias (0.08 → 0.5 m changed nothing).
+
+  **Conclusion:** the static map's geometry and transforms are right. Its
+  axis, c6, has the baked sun's azimuth but sits about 15° too low: the
+  lightmaps fit a sun at c6's azimuth and roughly 60-65° elevation (±7°; the
+  fit is a plateau, not a sharp peak). At 47° nearby buildings and canopies
+  shade ground the bake shows in sun. Where everything is in baked shade
+  anyway (the Peterson Pavilion spawn, Clock Tower) c6 fits as well as
+  anything. The option is off by default, so only players who turn it on
+  see this; it is the "odd extra shadows" upstream shelved it for (KI-5).
 - **Emulated (F5):** correct.
 - **Options:**
-  - derive the static map's axis from the sun the baked lightmaps were made
-    with (to find), instead of c6;
+  - raise the static map's axis: keep c6's azimuth and add about 15° of
+    elevation (a tunable offset), for the static map only;
   - only apply static shade where the baked lighting agrees (min with the
     lightmap is already done for world receivers; characters and props have
     no such check);
   - leave the option off by default and document the limit (current state).
+- **Tools:** `play_reel stills_variants` (the same reel frame under several
+  cvar sets) and the per-rebuild log `static sun rebuild … sun=… sky_sun=…`,
+  `static sun csm_axis=…`, `static sun dynobj_sun=…`. The debug view is not
+  in the tree (it changes `scene.hlsl`, which needs the Vulkan SPIR-V
+  regenerated).
 
 ## Resolved
 

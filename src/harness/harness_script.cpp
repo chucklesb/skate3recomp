@@ -180,6 +180,32 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
       s.stills_renderers.push_back(*v);
     }
   }
+  if (const toml::array* arr = t["stills_variants"].as_array()) {
+    for (const toml::node& n : *arr) {
+      const toml::table* vt = n.as_table();
+      const toml::table* set = vt ? (*vt)["set"].as_table() : nullptr;
+      auto vtag = vt ? (*vt)["tag"].value<std::string>() : std::nullopt;
+      if (!vtag || vtag->empty() || !set) {
+        *error = "stills_variants entries need tag = \"...\" and set = { cvar = value }";
+        return false;
+      }
+      Step::StillVariant var;
+      var.tag = *vtag;
+      for (const auto& [k, v] : *set) {
+        auto str = ScalarString(v);
+        if (!str) {
+          *error = "stills_variants cvar '" + std::string(k.str()) + "' must be a scalar";
+          return false;
+        }
+        var.set.emplace_back(std::string(k.str()), *str);
+      }
+      s.stills_variants.push_back(std::move(var));
+    }
+    if (!s.stills_variants.empty() && !s.stills_renderers.empty()) {
+      *error = "use stills_variants or stills_renderers, not both";
+      return false;
+    }
+  }
   if (const toml::array* arr = t["stills"].as_array()) {
     for (const toml::node& n : *arr) {
       if (auto d = n.value<double>()) {

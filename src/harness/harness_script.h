@@ -119,6 +119,13 @@ struct Step {
   std::vector<double> stills;  // reel times (s) to hold at for screenshots
   int64_t settle_frames = 20;  // frames to wait at a still before its screenshot
   std::vector<std::string> stills_renderers;  // shoot each still on these renderers
+  // Shoot each still once per variant: set its cvars, settle, screenshot
+  // tagged _<tag>. Values persist (a last variant can reset them).
+  struct StillVariant {
+    std::string tag;
+    std::vector<std::pair<std::string, std::string>> set;
+  };
+  std::vector<StillVariant> stills_variants;
 
   // renderer
   std::string renderer;  // "native" | "emulated"
