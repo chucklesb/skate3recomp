@@ -90,8 +90,8 @@ Pavilion spawn also showed it on the skater. The harness scenario
 `scenarios/ki119_static_sun.toml` shoots that replay frame with the option
 off, on, and on without the fix.
 
-**Status:** mostly fixed (2026-11-12, Windows); not yet checked on the
-Odin 2 · **Severity:** medium · **Found:** 2026-11-11, by the harness's replay
+**Status:** mostly fixed (2026-11-12, verified on Windows and the Odin 2)
+· **Severity:** medium · **Found:** 2026-11-11, by the harness's replay
 stills.
 
 **What was wrong:** the game has two kinds of building shadows. The
@@ -108,13 +108,17 @@ game's lighting, its own shadows and the sky are unchanged. The amount is a
 setting (`skate3_native_render_scene_shadow_static_elevation_offset`,
 default 15, 0 = the old behaviour).
 
-**Results (Windows):** compared with the option off,
+**Results:** compared with the option off,
 
 | Place | Before the fix | After the fix |
 |---|---|---|
-| Replay 2 at 18 s (the plaza) | 67% of the picture wrongly darkened | under 1% |
-| Replay 2 at 6, 10, 14 s | slightly darker | matches more closely |
-| Peterson Pavilion spawn | skater and ground in shade | looks normal |
+| Replay 2 at 18 s (the plaza), Windows | 67% of the picture wrongly darkened | under 1% |
+| Replay 2 at 18 s, Odin 2 | as dark as on Windows (SSIM 0.85) | SSIM 0.99, closer than Windows |
+| Replay 2 at 6, 10, 14 s, Windows | slightly darker | matches more closely |
+| Peterson Pavilion spawn, Windows | skater and ground in shade | looks normal |
+
+The Odin 2's frames also match the Windows ones for each setting (SSIM
+0.97-0.98).
 
 **What remains:**
 
@@ -126,8 +130,7 @@ default 15, 0 = the old behaviour).
 - **One unexplained D3D12 run (1 of 4):** the plaza showed up dark, but
   unlike the original bug the skater was lit normally, so it looks like a
   separate glitch that only affects world surfaces. It did not come back in
-  three repeats. All Vulkan runs were fine.
-- **Odin 2:** not checked yet.
+  three repeats. All Vulkan runs and the Odin 2 run were fine.
 
 <details>
 <summary>Technical details</summary>
