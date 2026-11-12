@@ -1153,13 +1153,15 @@ repro steps; the entry says where the problem is and how it would show.
   frame fully shaded like offset 0, and it did not come back in three
   repeats, including the same order of variants. Watch for it.
 - **Still open:**
-  - **Core Plaza** improves on the frame-exact debug-view measure (IoU
-    0.44 → 0.63; static shade on baked-lit pixels 55% → 15%), but part of
-    the lit path next to the shelter is now shaded at 62° where it was lit
-    at 47°: one elevation does not fit every place. Only applying static
-    shade where the bake agrees (world receivers already take the darker
-    of the two; characters and props have no such check) would cover the
-    rest.
+  - **Core Plaza spawn, under the giant overhead structure:** Core Plaza as
+    a whole improves (debug-view IoU 0.44 → 0.63; static shade on
+    baked-lit pixels 55% → 15%), and away from the structure's shadow it
+    looks normal (checked in play, 2026-11-12). Right at the spawn the
+    structure's shadow at 62° now covers a path the bake shows lit (at 47°
+    the sun came in under it). Physically plausible, but different from
+    the original game's look there. Only applying static shade where the
+    bake agrees (world receivers already take the darker of the two;
+    characters and props have no such check) would match it.
   - The receiver slope bias (`sh_sun`) and the volumetric shafts
     (`hdr.hlsl`) still use c6; changing them needs HLSL plus regenerated
     SPIR-V.
