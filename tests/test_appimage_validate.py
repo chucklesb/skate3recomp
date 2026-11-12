@@ -124,5 +124,23 @@ class ElfReaderTest(unittest.TestCase):
             self.assertTrue(any(n.startswith("lib") for n in info.needed))
 
 
+
+
+class NixRefTest(unittest.TestCase):
+    # /nix/store strings only matter outside the sections the loader never
+    # reads (a RelWithDebInfo build keeps DWARF naming /nix/store headers).
+    def test_ref_in_debug_section_is_ignored(self):
+        data = b"\0" * 32 + b"/nix/store/abc-gcc/include/x.h" + b"\0" * 32
+        self.assertFalse(VALIDATE.runtime_nix_refs(data, [(16, 80)]))
+
+    def test_ref_outside_debug_sections_counts(self):
+        data = b"\0" * 32 + b"/nix/store/abc-glibc/lib/ld.so" + b"\0" * 32
+        self.assertTrue(VALIDATE.runtime_nix_refs(data, [(70, 90)]))
+        self.assertTrue(VALIDATE.runtime_nix_refs(data, []))
+
+    def test_no_ref(self):
+        self.assertFalse(VALIDATE.runtime_nix_refs(b"\0" * 64, []))
+
+
 if __name__ == "__main__":
     unittest.main()

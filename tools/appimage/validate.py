@@ -50,11 +50,22 @@ class ElfInfo:
         self.needed = []
         self.runpath = None
         self.version_needs = set()
+        self.nonload_ranges = []  # (start, end) offsets of .debug_* / .comment
 
 
 def _cstr(data, off):
     end = data.index(b"\0", off)
     return data[off:end].decode("utf-8", "replace")
+
+
+def runtime_nix_refs(data, nonload_ranges):
+    """True if /nix/store appears outside the debug/comment sections."""
+    pos = data.find(b"/nix/store")
+    while pos != -1:
+        if not any(lo <= pos < hi for lo, hi in nonload_ranges):
+            return True
+        pos = data.find(b"/nix/store", pos + 1)
+    return False
 
 
 def read_elf(data):
@@ -77,11 +88,23 @@ def read_elf(data):
             info.interp = data[p_offset:p_offset + p_filesz].rstrip(b"\0").decode()
 
     sections = []
+    names = []
     for i in range(shnum):
         base = shoff + i * shentsize
-        (_, sh_type, _, _, sh_offset, sh_size, sh_link, sh_info, _, _) = struct.unpack_from(
+        (sh_name, sh_type, _, _, sh_offset, sh_size, sh_link, sh_info, _, _) = struct.unpack_from(
             "<IIQQQQIIQQ", data, base)
         sections.append((sh_type, sh_offset, sh_size, sh_link, sh_info))
+        names.append(sh_name)
+    # Sections the loader never reads: DWARF (.debug_*) and the compiler
+    # .comment. A RelWithDebInfo build keeps its DWARF, whose source paths
+    # name /nix/store headers; those strings don't affect loading.
+    shstrndx = struct.unpack_from("<H", data, 0x3E)[0]
+    if 0 < shstrndx < len(sections):
+        shstr = sections[shstrndx][1]
+        for (sh_type, off, size, _, _), name_off in zip(sections, names):
+            name = _cstr(data, shstr + name_off)
+            if name.startswith(".debug") or name == ".comment":
+                info.nonload_ranges.append((off, off + size))
 
     for sh_type, off, size, link, count in sections:
         if sh_type == SHT_DYNAMIC:
@@ -280,7 +303,8 @@ def validate(args):
                     r.check(False, f"{rel}: readable ELF", str(e))
                     continue
                 r.check(info.machine == EM_AARCH64, f"{rel}: aarch64", f"e_machine {info.machine}")
-                r.check(b"/nix/store" not in data, f"{rel}: no /nix/store references")
+                r.check(not runtime_nix_refs(data, info.nonload_ranges),
+                        f"{rel}: no /nix/store references")
                 if info.interp is not None:
                     r.check(info.interp == "/lib/ld-linux-aarch64.so.1", f"{rel}: interpreter", info.interp)
                 if set(info.needed) & bundled:

@@ -104,6 +104,9 @@ jobs:
             echo "**Testing build.** Skate3Recomp $VERSION for **linux-aarch64**, for trying changes before"
             echo "they reach a release. It may be broken."
             echo
+            echo "It is a RelWithDebInfo build (optimized, with debug info kept), so it is larger than a"
+            echo "release, and crash addresses from it map straight to source lines."
+            echo
             echo "DroidDeck's **Add App → GitHub** install ignores pre-releases, so this build is only"
             echo "installed by hand: download \`$image\` and import it as a local AppImage. It shows up"
             echo "as **Skate3Recomp Testing** with a red icon, next to the normal Skate3Recomp app."
