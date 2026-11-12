@@ -14,6 +14,7 @@ happen. The technical details follow for whoever works on it.
 | [KI-118](#ki-118-the-screen-goes-black-after-spawning-at-some-locations) | Black screen (HUD only) after spawning at some places | Open |
 | [KI-119](#ki-119-enhanced-shadows-put-sunny-places-in-shade) | With Enhanced Shadows on, sunny places go dark and the skater loses their shadow | Mostly fixed |
 | [KI-120](#ki-120-the-skater-jitters-worse-with-speed) | The skater looks jittery, as if falling behind and catching up, worse with speed | Fixed (Odin 2) |
+| [KI-121](#ki-121-on-d3d12-the-scene-is-sometimes-drawn-in-shade) | On D3D12, a sunny scene is sometimes drawn almost all in shade, with no skater shadow | Open |
 
 ---
 
@@ -285,5 +286,36 @@ On Windows at 30 fps (replaying the recording): before 4.2 / 42, after
   `char_jitter.py`. Input replays drift (pedestrians, timing), so compare
   speed groups, and prefer a live session that switches the setting for
   A/B.
+
+</details>
+
+---
+
+## KI-121: On D3D12, the scene is sometimes drawn in shade
+
+**What you see:** with Enhanced Shadows on, a sunny scene is now and then
+drawn almost entirely in shade: cold, bluish light, only a strip of sun
+along one wall, and no shadow under the skater. The same frame on the next
+run (or on Vulkan) has normal sun and the skater's shadow. It looks like the
+old KI-119 over-shadowing, but it comes and goes.
+
+**How to see it:** run `scenarios/reel_stills.toml` on Windows with
+`--backend d3d12` a few times and compare the 18 s still (`reel2_t18.00`).
+It happened in 1 of 3 runs on 2026-11-12, and once during the KI-119 work
+(2026-11-11). Not seen on Vulkan or on the Odin 2.
+
+**Status:** open, not investigated yet · **Severity:** low to medium ·
+**Found:** 2026-11-11, again 2026-11-12.
+
+<details>
+<summary>Technical details</summary>
+
+- Runs (Release, 878a567): shaded `out/harness-runs/20261112-062845_reel_stills`;
+  normal `20261112-063433_reel_stills`, `20261112-063545_reel_stills` (SSIM
+  1.000 against Vulkan `20261112-062953_reel_stills`).
+- The static sun map was built identically on both backends in the shaded
+  run: `static sun rebuild` lines show the corrected sun (elev 62.4,
+  captured 47.4) and ~1600-1660 casters. So the KI-119 offset is applied;
+  what differs is what D3D12 renders or samples from the map that time.
 
 </details>
