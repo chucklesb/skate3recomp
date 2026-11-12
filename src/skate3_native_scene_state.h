@@ -325,6 +325,11 @@ inline bool g_proxy_frame_done = false;
 inline float g_water_rows[17] = {};
 inline bool g_water_have = false;
 inline bool g_water_frame_done = false;
+// wateralpha_defaultPS rows (see FrameScene::wateralpha_rows), captured
+// from a wateralpha PS bank. Guest render thread only.
+inline float g_wateralpha_rows[64] = {};
+inline bool g_wateralpha_have = false;
+inline bool g_wateralpha_frame_done = false;
 // ocean_defaultPS / oceanreflection_defaultPS rows (see
 // FrameScene::ocean_rows / oceanrefl_rows). Guest render thread only.
 inline float g_ocean_rows[40] = {};

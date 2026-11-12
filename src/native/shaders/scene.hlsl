@@ -306,6 +306,9 @@ float4 ShadePixel(VSOut i) {
     if (fam > 31.5 && fam < 32.5) {
       return ShadeOceanReflection(i, dlin, fog_a, fog_rgb, expo);
     }
+    if (fam > 32.5 && fam < 33.5) {
+      return ShadeWaterAlpha(i, fog_a, fog_rgb, expo);
+    }
     if (fam > 8.5 && fam < 12.5) {
       // tree/treeanimate: D^2 * max(lm^2, floor) * scale [* tint mult];
       // proxyworld/incandescent: D^2 * scale. No shadow receive, no kd, no
@@ -911,16 +914,30 @@ float4 ps_refl_gbuf(VSOut i) : SV_Target {
     // cube/baked reflections): zero weight, in-front visibility.
     return float4(OctEncode(float3(0.0, 1.0, 0.0)), i.pos.w, -0.0);
   }
+  if (cam_pos.w < -32.5 && cam_pos.w > -33.5) {
+    // Exact wateralpha (fam 33): its own PCA shading normal; weight from
+    // the thresholded reflection mask (t4.z) like fam 30. In-front
+    // visibility (never writes scene depth).
+    float wmask = overlay.x > 0.0
+                      ? saturate(decal_art.Sample(smp, i.uv).z - wa_c21.y)
+                      : 0.0;
+    return float4(OctEncode(WaterAlphaNormal(i)), i.pos.w,
+                  -saturate(wmask * 2.5));
+  }
   if (cam_pos.w < -29.5 && cam_pos.w > -30.5) {
     // Exact water (fam 30): the branch's own ripple-perturbed normal;
     // weight from the thresholded reflection mask (t4.z), boosted like the
     // glass arm below. Never writes scene depth -> in-front visibility.
-    float t = wat_p3.x;
-    float3 n1 = macro.Sample(smp, i.uv * wat_p2.xy + wat_p1.xy * t).rgb;
-    float3 n2 = macro.Sample(smp, i.uv * wat_p2.zw + wat_p1.zw * t).rgb;
+    float4 p0 = wat_p0;
+    float4 p1 = wat_p1;
+    float4 p2 = wat_p2;
+    float4 p3 = wat_p3;
+    float t = p3.x;
+    float3 n1 = macro.Sample(smp, i.uv * p2.xy + p1.xy * t).rgb;
+    float3 n2 = macro.Sample(smp, i.uv * p2.zw + p1.zw * t).rgb;
     float3 nsum = 2.0 * n1 + 2.0 * n2 - 2.0;
-    float3 vn = normalize(float3(nsum.x * wat_p0.x, nsum.y * wat_p0.z,
-                                 nsum.z * wat_p0.w));
+    float3 vn = normalize(float3(nsum.x * p0.x, nsum.y * p0.z,
+                                 nsum.z * p0.w));
     float3 wn0 = dot(i.nrm, i.nrm) > 0.01
                      ? normalize(i.nrm)
                      : normalize(cross(ddx(i.rpos), ddy(i.rpos)));
@@ -933,7 +950,7 @@ float4 ps_refl_gbuf(VSOut i) : SV_Target {
     }
     float3 wwn = normalize(vn.x * wt + vn.y * wb + vn.z * wn0);
     float wmask = overlay.x > 0.0
-                      ? saturate(decal_art.Sample(smp, i.uv).z - wat_p3.y)
+                      ? saturate(decal_art.Sample(smp, i.uv).z - p3.y)
                       : 0.0;
     return float4(OctEncode(wwn), i.pos.w, -saturate(wmask * 2.5));
   }

@@ -9,15 +9,20 @@
 // lightmap-lit body + phong sun spec + cube reflection, then the
 // standard fog/exposure/tonemap chain; alpha = the spec term's green
 // channel, floored; reflection strength drives opacity over the bed).
-float4 ShadeFlowingWater(VSOut i, float3 dlin, float fog_a,
-                         float3 fog_rgb, float expo) {
-  float t = wat_p3.x;
-  float3 n1 = macro.Sample(smp, i.uv * wat_p2.xy + wat_p1.xy * t).rgb;
-  float3 n2 = macro.Sample(smp, i.uv * wat_p2.zw + wat_p1.zw * t).rgb;
+// The program is shared with wateralpha_defaultPS (the water.alpha canal
+// materials; byte-for-byte the same ucode except that it outputs alpha 1):
+// p0..p3 = the family's own captured m_params rows (wat_* or wa_*),
+// opaque = wateralpha's constant alpha.
+float4 ShadeWaterProgram(VSOut i, float3 dlin, float fog_a, float3 fog_rgb,
+                         float expo, float4 p0, float4 p1, float4 p2,
+                         float4 p3, bool opaque) {
+  float t = p3.x;
+  float3 n1 = macro.Sample(smp, i.uv * p2.xy + p1.xy * t).rgb;
+  float3 n2 = macro.Sample(smp, i.uv * p2.zw + p1.zw * t).rgb;
   float3 nsum = 2.0 * n1 + 2.0 * n2 - 2.0;
   // vNormal = normalize(m_params[0].xzw * (n1 + n2)) in tangent space.
-  float3 vn = normalize(float3(nsum.x * wat_p0.x, nsum.y * wat_p0.z,
-                               nsum.z * wat_p0.w));
+  float3 vn = normalize(float3(nsum.x * p0.x, nsum.y * p0.z,
+                               nsum.z * p0.w));
   float3 wn0 = dot(i.nrm, i.nrm) > 0.01
                    ? normalize(i.nrm)
                    : normalize(cross(ddx(i.rpos), ddy(i.rpos)));
@@ -52,12 +57,12 @@ float4 ShadeFlowingWater(VSOut i, float3 dlin, float fog_a,
   float2 wmask = float2(0.0, 0.0);
   if (overlay.x > 0.0) {
     float4 wm4 = decal_art.Sample(smp, i.uv);
-    wmask = saturate(float2(wm4.x, wm4.z) - wat_p3.y);
+    wmask = saturate(float2(wm4.x, wm4.z) - p3.y);
   }
   // Phong vs the real sun, power m_params[3].z, tint (2.1, 1.8, 1.5),
   // scaled by sat(clamped lightmap green - 0.1).
   float3 wrl = 2.0 * wn * dot(wn, sh_sun.xyz) - sh_sun.xyz;
-  float ks = pow(max(saturate(dot(vd, wrl)), 1e-6), wat_p3.z);
+  float ks = pow(max(saturate(dot(vd, wrl)), 1e-6), p3.z);
   float3 wspec =
       ks * wmask.x * float3(2.1, 1.8, 1.5) * saturate(lml.g - 0.1);
   // Cube reflection, same shape as fams 5/6: reflect(E, wN) with xy
@@ -73,9 +78,135 @@ float4 ShadeFlowingWater(VSOut i, float3 dlin, float fog_a,
   float3 wrefl = wcube * (lml.g + wrlum * (1.0 - lml.g)) * wmask.y * 1.5;
   float3 wspec_term = wspec + wrefl;
   lin += wspec_term;
-  float3 wxe = (lin * (fog_a * wat_p0.y) + fog_rgb) * expo;
-  return ToneOut(wxe, max(wspec_term.g, wat_p3.w), false);
+  float3 wxe = (lin * (fog_a * p0.y) + fog_rgb) * expo;
+  return ToneOut(wxe, opaque ? 1.0 : max(wspec_term.g, p3.w), false);
+}
 
+float4 ShadeFlowingWater(VSOut i, float3 dlin, float fog_a,
+                         float3 fog_rgb, float expo) {
+  return ShadeWaterProgram(i, dlin, fog_a, fog_rgb, expo, wat_p0, wat_p1,
+                           wat_p2, wat_p3, false);
+}
+
+// ---- wateralpha (fam 33): the water.alpha canal materials ----------------
+// Hand-ported from wateralpha_defaultPS (Skate 3 ucode, dumped live; the
+// literal constants c249..c255 read from the shader's own constant block:
+// (-0.99,-2,-2.6,0.99) (0.75,-1,2,2.39562) (0.5,2/3,1/6,0.02) (1,0,2.1,1.8)
+// (1/6,-0.5,0.25,0.3) (0.01,4,0.39,0.5) (0.58,0.62,1.5,0.1)).
+// The normal is a PCA reconstruction from TWO component maps (`normal` at
+// t3, `normal2` at t8), each fetched at two scales:
+//   tap A: uv * c20.zw + c19.zw * t (the shading normal; c19.zw = 0, so
+//          static texels whose per-frame PCA weights c9..c14 animate the
+//          waves),
+//   tap B: uv * c20.xy + c19.xy * t (slow scroll; only displaces the
+//          diffuse / mask lookups, the refraction wobble).
+// component = 2 * (c8 + dot(2a-1, wA) + dot(2b-1, wB)) + (-1, -2, -1),
+// world N = normalize(s * component + (0, 1, 0)), s = c18.z (A) / c18.w (B).
+// Then the same lighting as flowingwateralpha: lightmap (4-tap box at
+// uv2 + 0.01 * N.xz, squared, clamped by shadow + shadow color c15), the
+// fixed-axis tangent light, phong sun spec (power c21.z), cube reflection,
+// fog x c18.y, exposure. Output alpha 1 (the canal hides its bed).
+float3 WaterAlphaPca(float2 uv) {
+  float4 a = macro.Sample(smp, uv) * 2.0 - 1.0;
+  float4 b = detail_map.Sample(smp, uv) * 2.0 - 1.0;
+  float3 p = wa_c8.xyz + float3(dot(a, wa_c9) + dot(b, wa_c10),
+                                dot(a, wa_c11) + dot(b, wa_c12),
+                                dot(a, wa_c13) + dot(b, wa_c14));
+  return 2.0 * p + float3(-1.0, -2.0, -1.0);
+}
+
+// De-tiling (wa_ctl.z > 0, not in the game): the static tap A repeats every
+// UV unit across the canal. Blend it with a second copy of the same field
+// rotated and offset, weighted by smooth low-frequency world-space noise, so
+// no two neighbouring repeats look alike. Every copy is a valid PCA normal
+// field, so the blend stays a plausible surface.
+float WaterHash(float2 p) {
+  return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
+}
+float WaterNoise(float2 p) {
+  float2 c = floor(p);
+  float2 f = frac(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return lerp(lerp(WaterHash(c), WaterHash(c + float2(1, 0)), f.x),
+              lerp(WaterHash(c + float2(0, 1)), WaterHash(c + float2(1, 1)), f.x),
+              f.y);
+}
+float3 WaterAlphaTapA(float2 uvA, float3 wp) {
+  float3 n = WaterAlphaPca(uvA);
+  if (wa_ctl.z > 0.0) {
+    // Second copy: rotated ~37 degrees and shifted; PCA x/z components
+    // rotate with the UVs (the field is authored in uv-aligned axes).
+    const float2x2 rot = float2x2(0.799, -0.602, 0.602, 0.799);
+    float3 n2 = WaterAlphaPca(mul(rot, uvA) + float2(0.37, 0.71));
+    n2.xz = mul(n2.xz, rot);
+    float w = smoothstep(0.25, 0.75, WaterNoise(wp.xz * 0.11)) * saturate(wa_ctl.z);
+    // Two uncorrelated fields averaged lose amplitude (up to 1/sqrt(2) at
+    // w = 0.5, a visibly softer surface); renormalise the deviation.
+    n = lerp(n, n2, w) * rsqrt((1.0 - w) * (1.0 - w) + w * w);
+  }
+  return n;
+}
+
+float4 ShadeWaterAlpha(VSOut i, float fog_a, float3 fog_rgb, float expo) {
+  float t = wa_c22.x;
+  float2 uvs = i.uv * wa_c21.x;
+  float2 uvA = uvs * wa_c20.zw + wa_c19.zw * t;
+  float2 uvB = uvs * wa_c20.xy + wa_c19.xy * t;
+  float3 wp = i.rpos + cam_pos.xyz;
+  float3 cA = WaterAlphaTapA(uvA, wp);
+  float3 cB = WaterAlphaPca(uvB);
+  float3 N = normalize(cA * wa_c18.z + float3(0.0, 1.0, 0.0));
+  float3 nB = normalize(cB * wa_c18.w + float3(0.0, 1.0, 0.0));
+  // Refraction wobble of the diffuse and mask lookups (c251.w = 0.02).
+  float2 uvR = i.uv + 0.02 * nB.xz;
+  float3 dl = diffuse.Sample(smp, uvR).rgb;
+  dl *= dl;
+  float2 wmask = float2(0.0, 0.0);
+  if (overlay.x > 0.0) {
+    float4 m = decal_art.Sample(smp, uvR);
+    wmask = saturate(float2(m.x, m.z) - wa_c21.y);
+  }
+  float3 E = -normalize(i.rpos);
+  float s = min(SampleCsmShadowSoft(wp, 0.0, N, i.pos.xy),
+                SampleStaticSun(wp, N, i.pos.xy));
+  // Lightmap: 4-tap +-0.5 texel box at uv2 + 0.01 * N.xz, then squared.
+  float2 lmuv = i.uv2 + 0.01 * N.xz;
+  float lw, lh;
+  lightmap.GetDimensions(lw, lh);
+  float2 ht = 0.5 / max(float2(lw, lh), 1.0);
+  float3 lm = 0.25 * (lightmap.SampleLevel(smp_clamp, lmuv + float2(ht.x, ht.y), 0.0).rgb +
+                      lightmap.SampleLevel(smp_clamp, lmuv + float2(-ht.x, ht.y), 0.0).rgb +
+                      lightmap.SampleLevel(smp_clamp, lmuv + float2(-ht.x, -ht.y), 0.0).rgb +
+                      lightmap.SampleLevel(smp_clamp, lmuv + float2(ht.x, -ht.y), 0.0).rgb);
+  lm *= lm;
+  float3 lml = tint.r > 0.0 ? min(lm, s + wa_c15.rgb) : lm;
+  float kd = (N.x * 0.58 * sign(wa_sun.x) + N.y * 0.62 * sign(wa_sun.y) +
+              N.z * 0.39) * 2.39562;
+  float3 lin = lml * kd * dl;
+  // Phong sun spec (power c21.z), tint (2.1, 1.8, 1.5), x sat(lml.g - 0.1).
+  float3 Ls = wa_sun.xyz;
+  float ks = pow(max(saturate(dot(E, 2.0 * N * dot(N, Ls) - Ls)), 1e-6), wa_c21.z);
+  float3 spec = ks * wmask.x * float3(2.1, 1.8, 1.5) * saturate(lml.g - 0.1);
+  // Cube reflection: reflect E about N, xy negated (the game's cube space).
+  float3 R = E - 2.0 * N * dot(E, N);
+  float3 cube = overlay.y > 0.0
+                    ? env_cube.SampleBias(smp, float3(-R.x, -R.y, R.z), misc.y).rgb
+                    : float3(0.0, 0.0, 0.0);
+  float rl = 0.3 * saturate(4.0 * wmask.y - 2.6);
+  float3 refl = cube * (lml.g + rl * (1.0 - lml.g)) * wmask.y * 1.5;
+  lin += spec + refl;
+  // Opaque: the canals have no bed geometry under the surface (a black
+  // void; the game's murk hides it), so see-through water has nothing to
+  // show.
+  float3 xe = (lin * (fog_a * wa_c18.y) + fog_rgb) * expo;
+  return ToneOut(xe, 1.0, false);
+}
+
+// The canal shading normal (SSR G-buffer restage).
+float3 WaterAlphaNormal(VSOut i) {
+  float2 uvA = i.uv * wa_c21.x * wa_c20.zw + wa_c19.zw * wa_c22.x;
+  return normalize(WaterAlphaTapA(uvA, i.rpos + cam_pos.xyz) * wa_c18.z +
+                   float3(0.0, 1.0, 0.0));
 }
 
 // Exact ocean surface (fam 31, ocean_defaultPS; verified per-pixel

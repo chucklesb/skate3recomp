@@ -177,6 +177,12 @@ struct DrawItem {
   // captured; other water.* / ocean.* materials keep the legacy water
   // shading until their own shader layouts are verified from a capture.
   bool water_flowing = false;
+  // AttribulatorMaterialName starts "water.alpha": the wateralpha shader
+  // family (the Downtown canals). Its PS is byte-for-byte the
+  // flowingwateralpha program except that it outputs alpha 1 (opaque), so
+  // it takes the same exact branch (cam_pos.w = -33) with its own captured
+  // m_params rows.
+  bool water_alpha = false;
   // ocean materials: 1 = ocean.default (the sea surface, ocean_defaultPS:
   // PCA dual-component normal + ward spec + cube reflection, drawn OPAQUE),
   // 2 = ocean.reflection (the baked horizon reflection sheet, height-ramp
@@ -372,6 +378,17 @@ struct FrameScene {
   // exact water scene PS branch (cam_pos.w = -30).
   bool water_valid = false;
   float water_rows[17] = {};
+  // wateralpha_defaultPS rows (the water.alpha canal materials), captured
+  // once per frame from a wateralpha PS bank: PS c8..c22 verbatim (60
+  // floats). c8 = PCA normal mean, c9..c14 = the six PCA weight rows (two
+  // component maps x two taps), c15 = shadow color, c17.x = exposure,
+  // c18 = (?, fog mult, normal scale xy), c19 = scroll speeds, c20 = tap
+  // UV scales, c21 = (uv mult, mask threshold, spec power, alpha floor),
+  // c22.x = g_fAnimationTime; [60..63] = c6, the shader's own sun
+  // direction (its sign drives the fixed-axis tangent light). Exact branch
+  // cam_pos.w = -33.
+  bool wateralpha_valid = false;
+  float wateralpha_rows[64] = {};
   // ocean_defaultPS material rows, captured once per frame from an ocean PS
   // bank (debug-path classified): [0..3] = PCA mean pre-swizzled for the
   // (R,G,B) channel order (PS c2.x, c2.z, c2.y), [4..27] = the six PCA

@@ -15,7 +15,7 @@ happen. The technical details follow for whoever works on it.
 | [KI-119](#ki-119-enhanced-shadows-put-sunny-places-in-shade) | With Enhanced Shadows on, sunny places go dark and the skater loses their shadow | Mostly fixed |
 | [KI-120](#ki-120-the-skater-jitters-worse-with-speed) | The skater looks jittery, as if falling behind and catching up, worse with speed | Fixed (Odin 2) |
 | [KI-121](#ki-121-on-d3d12-the-scene-is-sometimes-drawn-in-shade) | On D3D12, a sunny scene is sometimes drawn almost all in shade, with no skater shadow | Open |
-| [KI-122](#ki-122-canal-water-reflects-orange-brown-instead-of-blue-sky) | Canal water reflects orange-brown instead of blue sky, depending on the view angle | Fixed (Windows) |
+| [KI-122](#ki-122-canal-water-reflects-orange-brown-instead-of-blue-sky) | Canal water reflects orange-brown instead of blue sky, depending on the view angle; no shadows on the canals | Fixed (Windows) |
 
 ---
 
@@ -337,15 +337,32 @@ native and emulated renderers (`canal_nat`, `canal_emu`).
 **Status:** fixed (Windows, D3D12 and Vulkan) · **Severity:** medium (very
 visible) · **Found:** 2026-11-12 by the user.
 
-**Remaining difference:** with the colour fixed, our canal is a brighter,
-more even blue than the game's, which is mostly dark with blue glints and
-darker under the bridge. That's the reflection's strength and occlusion,
-not its colour; not investigated yet.
+**Follow-up, also fixed:** with the colour fixed, the canal was still a
+bright, even blue with no shadows on it (not the bridge's, not the
+skater's), where the game shows murky water with blue glints, darker under
+the bridge. The canal's shader had never been ported: it fell back to an
+old approximation with no lightmap or shadow term. It now runs a port of
+the game's own `wateralpha_defaultPS` and matches the emulated frame closely
+(slightly brighter). Optional, on by default:
+`skate3_native_render_scene_water_detile` (0..1) breaks up the per-metre
+repeat of the ripple texture; 0 is the game's look.
 
 <details>
 <summary>Technical details</summary>
 
-- The canal's water (`flowingwateralpha`) reflects a 128×128 environment
+- The canal material is `water.alpha` (`wateralpha_defaultPS`), not
+  `water.flowingalpha`; only the latter had an exact branch. The port is
+  fam 33 in `scene_water.hlsli` (`ShadeWaterAlpha`): a PCA normal from the
+  `normal` (t3) and `normal2` (t8) maps at two scales, per-frame PCA weights
+  (PS c9..c14) animating the waves, a refraction wobble on the diffuse and
+  mask lookups, the 4-tap lightmap box clamped by shadow + shadow colour,
+  phong sun spec and the cube reflection. Its constants (PS c8..c22 and its
+  own sun c6) are captured when the canal's pixel bank uploads; the literal
+  constants were read from the shader's constant block in guest memory.
+- The canals have no bed: with the surface hidden there is only black, so a
+  see-through surface has nothing to show (tried: a clarity + volume-fog
+  option, dropped).
+- The canal's water reflects a 128×128 environment
   cube in `k_5_6_5`, the only non-DXT1 cube seen (`native-scene: cube
   408007E0 128x128 fmt=4` with `log_level = "debug"`).
 - `k_5_6_5` maps to the host `B5G6R5` format on the understanding that the
@@ -356,6 +373,7 @@ not its colour; not investigated yet.
   `k_5_6_5` upload path, cubes included.
 - Runs: before `out/harness-runs/20261112-113027_water_probe` (Vulkan);
   after `20261112-113232_water_probe` (Vulkan), `20261112-113338_water_probe`
-  (D3D12).
+  (D3D12); wateralpha port `20261112-160258_water_probe` (Vulkan),
+  `20261112-160347_water_probe` (D3D12).
 
 </details>

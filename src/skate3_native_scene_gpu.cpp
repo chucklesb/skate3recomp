@@ -128,6 +128,7 @@ REXCVAR_DECLARE(bool, skate3_native_render_scene_ssao);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_ssao_debug);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_ssao_full_res);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_ssr);
+REXCVAR_DECLARE(double, skate3_native_render_scene_water_detile);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_tex_mips);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_tex_revalidate);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_tex_confirm);
@@ -9114,6 +9115,15 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       std::memcpy(cb + 132, scene.oceanrefl_rows,
                   sizeof(scene.oceanrefl_rows));
     }
+    // wateralpha_defaultPS rows (wa_c8..wa_c22 at cb[164..223]: the PS
+    // bank's c8..c22 verbatim; wa_sun = its c6 at cb[224..227]) and the
+    // water enhancement controls (wa_ctl at cb[228..231]). Consumed by the
+    // exact branch cam_pos.w = -33.
+    if (scene.wateralpha_valid) {
+      std::memcpy(cb + 164, scene.wateralpha_rows, sizeof(scene.wateralpha_rows));
+    }
+    cb[230] = float(REXCVAR_GET(skate3_native_render_scene_water_detile));
+    static_assert(232 * sizeof(float) <= RendererState::kShadowCbSlice);
     cmd->SetConstantBuffer(6, g_r.shadow_cb, cb_offset);
     // b2 (character lighting) default: point at the ring base so the root
     // CBV is never left unset; character draws re-point it per item.
@@ -10238,7 +10248,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
     // overlay.w == 3 tells the shader the masks are live.
     bool spec_bound = false;
     if (((item.env_family != 0 && !item.decal && item.env_family != 10) ||
-         item.water_flowing) &&
+         item.water_flowing || item.water_alpha) &&
         item.spec_tex != 0) {
       const GuestTexture* spec = resolve_texture(item.spec_tex, 6);
       if (spec != &g_r.white) {
@@ -10400,6 +10410,16 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
     // through the overlay row.
     bool ocean_n2 = false;
     bool ocean_ov = false;
+    // Exact wateralpha (fam 33): the second PCA normal component map
+    // (`normal2`) rides the same free t8 pair slot as the ocean's.
+    if (item.water_alpha && debug_mode == 0 && scene.shadow_valid &&
+        scene.wateralpha_valid && item.water_normal2 != 0) {
+      const GuestTexture* n2 = resolve_texture(item.water_normal2, 7);
+      if (n2 != &g_r.white && n2->valid && n2->srv_mips != 0) {
+        v2_detail = n2;
+        ocean_n2 = true;
+      }
+    }
     if (item.water_ocean == 1 && debug_mode == 0 && scene.shadow_valid &&
         scene.ocean_valid) {
       if (item.water_normal2 != 0) {
@@ -10456,6 +10476,12 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
     const bool water_exact = item.water && item.water_flowing &&
                              debug_mode == 0 && scene.shadow_valid &&
                              scene.water_valid && macro_tex != &g_r.white;
+    // Exact wateralpha branch (cam_pos.w = -33): the same program with
+    // opaque output and its own captured rows (the water.alpha canals).
+    const bool wateralpha_exact = item.water && item.water_alpha &&
+                                  debug_mode == 0 && scene.shadow_valid &&
+                                  scene.wateralpha_valid &&
+                                  macro_tex != &g_r.white && ocean_n2;
     // Exact ocean surface (fam 31): both PCA component maps must resolve
     // (t3 = comp 0 via the water_normal macro-slot bind, t8 = comp 1); the
     // legacy water shading covers every gap. The horizon sheet (fam 32)
@@ -10467,10 +10493,10 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
     const bool oceanrefl_exact = item.water && item.water_ocean == 2 &&
                                  debug_mode == 0 && scene.shadow_valid &&
                                  scene.oceanrefl_valid;
-    if (water_exact) {
+    if (water_exact || wateralpha_exact) {
       // overlay.x = spec/reflection masks bound at t4, overlay.y = real
       // environment cube at t6, overlay.z = ripple resolved (gate above).
-      constants[39] = -30.0f;
+      constants[39] = water_exact ? -30.0f : -33.0f;
       constants[44] = spec_bound ? 1.0f : 0.0f;
       constants[45] = cube_tex != &g_r.white_cube ? 1.0f : 0.0f;
       constants[46] = 1.0f;
@@ -10517,7 +10543,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
     // mat_tint row (color), unused by these items otherwise
     // (root-signature DWORD budget).
     constants[48] = item.water ? 2.0f : (item.transparent ? 1.0f : 0.0f);
-    if (water_exact || ocean_exact || oceanrefl_exact) {
+    if (water_exact || wateralpha_exact || ocean_exact || oceanrefl_exact) {
       // misc.y = cube LOD bias (same 640p-gradient rationale as fams 5/6);
       // fog comes from the shared b1 rows; misc.zw stay free. misc.x keeps
       // the water marker for the SSR G-buffer restage.

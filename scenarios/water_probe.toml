@@ -1,7 +1,7 @@
-# Water colour probe: the Downtown canal by the Villas (Plaza of Solitude),
-# where the native renderer's ripple reflections come out orange-brown and
-# the emulated renderer's are blue sky. Native and emulated shots of the same
-# view, with debug logging on so the canal's texture decodes are logged.
+# Canal water probe: the Downtown canal by the Villas (Plaza of Solitude), a
+# water.alpha surface (wateralpha_defaultPS). Native and emulated shots of the
+# same view, for KI-122 (the orange reflections) and the exact wateralpha
+# port (shadows on the water, the murky body colour, blue sky glints).
 name = "water_probe"
 timeout_s = 600
 boot = "demo"
@@ -9,7 +9,6 @@ boot = "demo"
 [cvars]
 skate3_guest_fps_cap = 30.0
 skate3_guest_fps_cap_auto = false
-log_level = "debug"
 
 [[step]]
 do = "wait"
@@ -31,7 +30,7 @@ yaw = -75
 
 [[step]]
 do = "wait"
-frames = 60
+frames = 90
 
 [[step]]
 do = "state"

@@ -92,4 +92,26 @@ cbuffer S : register(b1) {
   // kRatioInner/kRatioMid constants), w = tile size in pixels (tap
   // clamping).
   float4 nsm_p2;
+  // wateralpha_defaultPS constant rows (the water.alpha canal materials),
+  // the PS bank's c8..c22 verbatim (see FrameScene::wateralpha_rows and
+  // ShadeWaterAlpha). Consumed by the exact branch cam_pos.w = -33.
+  float4 wa_c8;   // PCA normal mean
+  float4 wa_c9;   // PCA weight rows (two component maps x two taps)
+  float4 wa_c10;
+  float4 wa_c11;
+  float4 wa_c12;
+  float4 wa_c13;
+  float4 wa_c14;
+  float4 wa_c15;  // shadow color
+  float4 wa_c16;
+  float4 wa_c17;  // x = scene exposure
+  float4 wa_c18;  // y = fog multiplier, zw = tangent normal scale
+  float4 wa_c19;  // scroll speeds (tap 1 xy, tap 2 zw)
+  float4 wa_c20;  // tap UV scales (tap 1 xy, tap 2 zw)
+  float4 wa_c21;  // x = UV multiplier, y = mask threshold, z = spec power
+  float4 wa_c22;  // x = g_fAnimationTime
+  float4 wa_sun;  // the shader's own c6 sun direction
+  // Water enhancements (cvars): z = ripple de-tiling strength (0 = the
+  // game's look); xyw spare.
+  float4 wa_ctl;
 };

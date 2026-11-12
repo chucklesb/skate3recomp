@@ -1037,7 +1037,7 @@ struct RendererState {
   // rows and the oceanreflection fade row (oc_* / orf), rows 34-35 the
   // PCSS soft-shadow parameters (sh_pcss / sh_pcss2).
   static constexpr uint32_t kShadowCbRegions = 8;
-  static constexpr uint32_t kShadowCbSlice = 768;
+  static constexpr uint32_t kShadowCbSlice = 1024;
   nrhi::Buffer* shadow_cb = nullptr;
   uint8_t* shadow_cb_cpu = nullptr;
   UploadRingRegions shadow_cb_regions{"shadow CB", kShadowCbRegions};

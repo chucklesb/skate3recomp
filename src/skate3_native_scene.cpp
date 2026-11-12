@@ -153,6 +153,13 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_ssr, false, "Skate 3",
                     "off by default pending image-quality calibration (residual "
                     "smearing/noise on some surfaces).")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_DOUBLE(skate3_native_render_scene_water_detile, 1.0, "Skate 3",
+                      "Canal water (water.alpha): blend in a rotated second copy "
+                      "of the wave normal field under low-frequency noise so the "
+                      "per-metre repeat of the ripple texture stops reading as a "
+                      "grid (0 = the game's look, 1 = full).")
+    .range(0.0, 1.0)
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_INT32(skate3_native_render_scene_ssr_steps, 48, "Skate 3",
                      "SSR screen-space march taps per ray (half-res pass). More "
                      "taps resolve thinner reflected geometry at proportional "
@@ -2479,6 +2486,9 @@ bool BuildItemFromMesh(uint8_t* base, uint32_t mesh, DrawItem& item) {
             // m_params rows are captured (see FrameScene::water_rows).
             item.water_flowing =
                 std::memcmp(mat_name, "water.flowing", 13) == 0;
+            // water.alpha = the wateralpha shader family (the Downtown
+            // canals): the flowingwateralpha program with opaque output.
+            item.water_alpha = std::memcmp(mat_name, "water.alpha", 11) == 0;
             // ocean.default / ocean.reflection: the sea surface and its
             // baked horizon reflection sheet (see DrawItem::water_ocean).
             if (std::memcmp(mat_name, "ocean.default", 14) == 0) {
@@ -3401,9 +3411,133 @@ void CapturePfxConstants(uint8_t* base, uint32_t bank_ptr, uint32_t device,
   }
 }
 
+// The water pixel-shader family currently set, by debug path: 1 =
+// flowingwateralpha, 2 = wateralpha (the water.alpha canals; the same
+// program with opaque output), 0 = neither. Both shader labels are checked
+// (the SetShader hook's pixel/vertex flags are swapped; see OnSetShader).
+int WaterPsFamily(uint8_t* base) {
+  const auto check = [&](uint32_t obj) -> int {
+    if (obj < 0x10000 || !GuestReadableApprox(base, obj)) {
+      return 0;
+    }
+    char text[120] = {};
+    for (int k = 0; k < 119; ++k) {
+      text[k] = char(REX_LOAD_U8(obj + 0x54 + k));
+      if (text[k] == '\0') break;
+    }
+    if (std::strstr(text, "\\flowingwateralpha") != nullptr) {
+      return 1;
+    }
+    return std::strstr(text, "\\wateralpha") != nullptr ? 2 : 0;
+  };
+  const int a = check(g_cur_ps_obj.load(std::memory_order_relaxed));
+  return a != 0 ? a : check(g_cur_vs_obj.load(std::memory_order_relaxed));
+}
+
+// flowingwateralpha / wateralpha m_params + animation time (PS c11..c14,
+// c15.x) from a pixel constant bank, range-gated, into the family's rows
+// (once per frame per family). Called from the pixel-bank upload (the bank
+// the draw will use) and from the camera-keyed vertex-bank capture (the
+// last pixel bank seen); whichever sees a sane bank first wins the frame.
+void TryCaptureWaterRows(uint8_t* base, uint32_t ps_bank, int water_fam) {
+  if (ps_bank == 0 || water_fam == 0) {
+    return;
+  }
+  if (water_fam == 2) {
+    // wateralpha_defaultPS: its own constant layout (see FrameScene::
+    // wateralpha_rows): c8..c22 verbatim. Gate on the rows whose meaning
+    // the ucode fixes: c17.x scene exposure, c21.z spec power, c22.x the
+    // animation time.
+    if (g_wateralpha_frame_done) {
+      return;
+    }
+    float rows[64];
+    for (int i = 0; i < 60; ++i) {
+      rows[i] = LoadGuestF32(base, ps_bank + (32 + i) * 4);  // c8..c22
+    }
+    for (int i = 0; i < 4; ++i) {
+      rows[60 + i] = LoadGuestF32(base, ps_bank + (24 + i) * 4);  // c6 = sun
+    }
+    const float expo = rows[(17 - 8) * 4 + 0];
+    const float spow = rows[(21 - 8) * 4 + 2];
+    const float time = rows[(22 - 8) * 4 + 0];
+    const bool sane = expo > 0.01f && expo < 100.0f && spow >= 1.0f &&
+                      spow <= 1000.0f && time >= 0.0f && time < 1e7f;
+    static std::atomic<int> s_wa_logs{0};
+    const bool log_rows = s_wa_logs.fetch_add(1, std::memory_order_relaxed) < 1;
+    if (sane) {
+      std::memcpy(g_wateralpha_rows, rows, sizeof(rows));
+      g_wateralpha_have = true;
+      g_wateralpha_frame_done = true;
+    }
+    if (log_rows) {
+      std::string text;
+      char buf[48];
+      for (int r = 0; r < 15; ++r) {
+        std::snprintf(buf, sizeof(buf), " c%d=(%.3g,%.3g,%.3g,%.3g)", 8 + r, rows[r * 4],
+                      rows[r * 4 + 1], rows[r * 4 + 2], rows[r * 4 + 3]);
+        text += buf;
+      }
+      std::snprintf(buf, sizeof(buf), " c6=(%.3g,%.3g,%.3g,%.3g)", rows[60], rows[61],
+                    rows[62], rows[63]);
+      text += buf;
+      REXLOG_INFO("native-scene: wateralpha bank {}:{}", sane ? "captured" : "REJECTED", text);
+    }
+    return;
+  }
+  bool& dst_done = g_water_frame_done;
+  if (dst_done) {
+    return;
+  }
+  float* const dst_rows = g_water_rows;
+  bool& dst_have = g_water_have;
+  float rows[17];
+  for (int i = 0; i < 16; ++i) {
+    rows[i] = LoadGuestF32(base, ps_bank + (44 + i) * 4);  // c11..c14
+  }
+  rows[16] = LoadGuestF32(base, ps_bank + 60 * 4);  // c15.x = time
+  // Range gate: normal scales O(1), material multiplier small positive,
+  // scroll speeds/UV scales bounded, spec power a real exponent, alpha
+  // floor a blend factor, time non-negative.
+  bool sane = rows[1] > 0.0f && rows[1] <= 8.0f &&       // c11.y mult
+              rows[13] >= 0.0f && rows[13] <= 1.0f &&    // c14.y thr
+              rows[14] >= 1.0f && rows[14] <= 1000.0f && // c14.z pow
+              rows[15] >= 0.0f && rows[15] <= 1.0f &&    // c14.w floor
+              rows[16] >= 0.0f && rows[16] < 1e7f;       // time
+  for (int i = 0; i < 4 && sane; ++i) {
+    sane = std::fabs(rows[0 + i]) <= 8.0f &&   // c11
+           std::fabs(rows[4 + i]) <= 64.0f &&  // c12 speeds
+           std::fabs(rows[8 + i]) <= 256.0f;   // c13 scales
+  }
+  const char* const fam_name = water_fam == 1 ? "water" : "wateralpha";
+  if (sane) {
+    const bool first = !dst_have;
+    std::memcpy(dst_rows, rows, sizeof(rows));
+    dst_have = true;
+    dst_done = true;
+    if (first) {
+      REXLOG_INFO(
+          "native-scene: {} m_params captured: p0=({:.3g},{:.3g},"
+          "{:.3g},{:.3g}) speed=({:.3g},{:.3g},{:.3g},{:.3g}) "
+          "scale=({:.3g},{:.3g},{:.3g},{:.3g}) thr={:.3g} pow={:.3g} "
+          "floor={:.3g} t={:.2f}",
+          fam_name, rows[0], rows[1], rows[2], rows[3], rows[4], rows[5], rows[6],
+          rows[7], rows[8], rows[9], rows[10], rows[11], rows[13], rows[14],
+          rows[15], rows[16]);
+    }
+  } else {
+    static std::atomic<int> s_water_rejects{0};
+    if (s_water_rejects.fetch_add(1, std::memory_order_relaxed) < 4) {
+      REXLOG_INFO(
+          "native-scene: {} m_params REJECTED by range gate: "
+          "mult={:.3g} thr={:.3g} pow={:.3g} floor={:.3g} t={:.3g}",
+          fam_name, rows[1], rows[13], rows[14], rows[15], rows[16]);
+    }
+  }
+}
+
 void OnVsConstantUpload(uint8_t* base, uint64_t mask, uint32_t bank, uint32_t ptr,
                         uint32_t device) {
-  (void)base;
   (void)mask;
   if (device != 0) {
     g_device.store(device, std::memory_order_relaxed);
@@ -3413,6 +3547,12 @@ void OnVsConstantUpload(uint8_t* base, uint64_t mask, uint32_t bank, uint32_t pt
   }
   if (bank == 0x4400) {
     g_ps_bank.store(ptr, std::memory_order_relaxed);
+    // Water m_params ride this bank; capture at upload time when a water
+    // pixel shader is set (the canal's draws upload their pixel bank after
+    // the vertex bank, so the camera-keyed capture below sees a stale one).
+    if (!g_water_frame_done || !g_wateralpha_frame_done) {
+      TryCaptureWaterRows(base, ptr, WaterPsFamily(base));
+    }
     return;
   }
   if (bank != 0x4000) {
@@ -5358,66 +5498,11 @@ void OnDrawDone(uint8_t* base, uint32_t func, uint32_t r4, uint32_t r5, uint32_t
       // discriminates. One material's rows serve the frame; every
       // flowingwateralpha draw in a capture carried identical m_params, and
       // the animation time is pass-global anyway.
-      if (!g_water_frame_done && ps_bank != 0) {
-        const auto water_ps = [&]() -> bool {
-          const auto check = [&](uint32_t obj) -> bool {
-            if (obj < 0x10000 || !GuestReadableApprox(base, obj)) {
-              return false;
-            }
-            char text[120] = {};
-            for (int k = 0; k < 119; ++k) {
-              text[k] = char(REX_LOAD_U8(obj + 0x54 + k));
-              if (text[k] == '\0') break;
-            }
-            return std::strstr(text, "\\flowingwateralpha") != nullptr;
-          };
-          return check(g_cur_ps_obj.load(std::memory_order_relaxed)) ||
-                 check(g_cur_vs_obj.load(std::memory_order_relaxed));
-        };
-        if (water_ps()) {
-          float rows[17];
-          for (int i = 0; i < 16; ++i) {
-            rows[i] = LoadGuestF32(base, ps_bank + (44 + i) * 4);  // c11..c14
-          }
-          rows[16] = LoadGuestF32(base, ps_bank + 60 * 4);  // c15.x = time
-          // Range gate: normal scales O(1), material multiplier small
-          // positive, scroll speeds/UV scales bounded, spec power a real
-          // exponent, alpha floor a blend factor, time non-negative.
-          bool sane = rows[1] > 0.0f && rows[1] <= 8.0f &&    // c11.y mult
-                      rows[13] >= 0.0f && rows[13] <= 1.0f && // c14.y thr
-                      rows[14] >= 1.0f && rows[14] <= 1000.0f && // c14.z pow
-                      rows[15] >= 0.0f && rows[15] <= 1.0f && // c14.w floor
-                      rows[16] >= 0.0f && rows[16] < 1e7f;    // time
-          for (int i = 0; i < 4 && sane; ++i) {
-            sane = std::fabs(rows[0 + i]) <= 8.0f &&    // c11
-                   std::fabs(rows[4 + i]) <= 64.0f &&   // c12 speeds
-                   std::fabs(rows[8 + i]) <= 256.0f;    // c13 scales
-          }
-          if (sane) {
-            const bool first = !g_water_have;
-            std::memcpy(g_water_rows, rows, sizeof(rows));
-            g_water_have = true;
-            g_water_frame_done = true;
-            if (first) {
-              REXLOG_INFO(
-                  "native-scene: water m_params captured: p0=({:.3g},{:.3g},"
-                  "{:.3g},{:.3g}) speed=({:.3g},{:.3g},{:.3g},{:.3g}) "
-                  "scale=({:.3g},{:.3g},{:.3g},{:.3g}) thr={:.3g} pow={:.3g} "
-                  "floor={:.3g} t={:.2f}",
-                  rows[0], rows[1], rows[2], rows[3], rows[4], rows[5],
-                  rows[6], rows[7], rows[8], rows[9], rows[10], rows[11],
-                  rows[13], rows[14], rows[15], rows[16]);
-            }
-          } else {
-            static std::atomic<int> s_water_rejects{0};
-            if (s_water_rejects.fetch_add(1, std::memory_order_relaxed) < 4) {
-              REXLOG_INFO(
-                  "native-scene: water m_params REJECTED by range gate: "
-                  "mult={:.3g} thr={:.3g} pow={:.3g} floor={:.3g} t={:.3g}",
-                  rows[1], rows[13], rows[14], rows[15], rows[16]);
-            }
-          }
-        }
+      // wateralpha_defaultPS (the water.alpha canal materials) is the same
+      // program with opaque output; its bank is captured into its own rows
+      // (the two families' m_params differ per material).
+      if ((!g_water_frame_done || !g_wateralpha_frame_done) && ps_bank != 0) {
+        TryCaptureWaterRows(base, ps_bank, WaterPsFamily(base));
       }
       // scrollincandescent.fx (the emissive time-scrolled LED chyron):
       // g_fAnimationTime from the VERTEX bank (c9.x) and the material
@@ -11067,6 +11152,11 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
     std::memcpy(scene.water_rows, g_water_rows, sizeof(scene.water_rows));
     scene.water_valid = true;
   }
+  if (g_wateralpha_have) {
+    std::memcpy(scene.wateralpha_rows, g_wateralpha_rows,
+                sizeof(scene.wateralpha_rows));
+    scene.wateralpha_valid = true;
+  }
   if (g_ocean_have) {
     std::memcpy(scene.ocean_rows, g_ocean_rows, sizeof(scene.ocean_rows));
     scene.ocean_valid = true;
@@ -11228,6 +11318,7 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
   g_proxy_frame_done = false;
   g_dynobj_frame_done = false;
   g_water_frame_done = false;
+  g_wateralpha_frame_done = false;
   g_ocean_frame_done = false;
   g_oceanrefl_frame_done = false;
   g_scroll_frame_done = false;
