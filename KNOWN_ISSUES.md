@@ -1054,7 +1054,7 @@ repro steps; the entry says where the problem is and how it would show.
 
 ### KI-119: With static shadow casters on, the scene is over-shadowed (skater loses its ground shadow, long hair draws dark)
 
-- **Status:** open · **Severity:** medium
+- **Status:** mitigated (elevation offset, Windows-verified; Odin 2 pending) · **Severity:** medium
 - **Area:** native renderer, shadows (Enhanced Shadows / PCSS, static casters)
 - **Tracking:** none yet. Found by the harness's reel stills (2026-11-11);
   likely related to KI-5 (Enhanced Shadows artifacts, shelved).
@@ -1136,13 +1136,34 @@ repro steps; the entry says where the problem is and how it would show.
   anything. The option is off by default, so only players who turn it on
   see this; it is the "odd extra shadows" upstream shelved it for (KI-5).
 - **Emulated (F5):** correct.
-- **Options:**
-  - raise the static map's axis: keep c6's azimuth and add about 15° of
-    elevation (a tunable offset), for the static map only;
-  - only apply static shade where the baked lighting agrees (min with the
-    lightmap is already done for world receivers; characters and props have
-    no such check);
-  - leave the option off by default and document the limit (current state).
+- **Mitigation (2026-11-12):** the static map is built along c6 raised by
+  `skate3_native_render_scene_shadow_static_elevation_offset` (default 15°,
+  0-40, hot-reload; the game's lighting, dynamic shadows and sky keep c6;
+  ignored while the lighting-lab sun override is on). Windows results,
+  static casters on vs off, `scenarios/ki119_static_sun.toml` and
+  `reel_stills`:
+
+  | Frame | Before (offset 0) | After (15°) |
+  |---|---|---|
+  | Reel 2, 18 s | SSIM 0.85, 67% of the frame wrongly darkened | 0.98, 0.6% |
+  | Reel 2, 6 / 10 / 14 s | 0.97 / 0.95 / 0.96 | 0.97 / 0.97 / 0.98 |
+  | Peterson Pavilion spawn | 0.83 | 0.96 |
+
+  Vulkan passed 3 of 3 runs. D3D12 passed 3 of 4: one run showed the "on"
+  frame fully shaded like offset 0, and it did not come back in three
+  repeats, including the same order of variants. Watch for it.
+- **Still open:**
+  - **Core Plaza** improves on the frame-exact debug-view measure (IoU
+    0.44 → 0.63; static shade on baked-lit pixels 55% → 15%), but part of
+    the lit path next to the shelter is now shaded at 62° where it was lit
+    at 47°: one elevation does not fit every place. Only applying static
+    shade where the bake agrees (world receivers already take the darker
+    of the two; characters and props have no such check) would cover the
+    rest.
+  - The receiver slope bias (`sh_sun`) and the volumetric shafts
+    (`hdr.hlsl`) still use c6; changing them needs HLSL plus regenerated
+    SPIR-V.
+  - **Odin 2** not checked yet.
 - **Tools:** `play_reel stills_variants` (the same reel frame under several
   cvar sets) and the per-rebuild log `static sun rebuild … sun=… sky_sun=…`,
   `static sun csm_axis=…`, `static sun dynobj_sun=…`. The debug view is not

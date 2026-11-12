@@ -1,0 +1,37 @@
+# KI-119 regression: the static sun map ("Enhanced Shadows") against the
+# baked lighting. Reel 2 held at 18 s, where the map along the captured sun
+# (offset 0) puts the whole plaza in shade. Three shots of the same recorded
+# frame: static casters off, on (default elevation offset), on with offset 0.
+# Compare with tools/harness/imgdiff.py: "on" should be close to "off";
+# "on_offset0" reproduces the bug.
+name = "ki119_static_sun"
+timeout_s = 600
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+skate3_native_render_scene_sun_override = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+clip = 2
+from = "marker"
+stills = [18.0]
+settle_frames = 40
+stills_variants = [
+  { tag = "off", set = { skate3_native_render_scene_shadow_static_casters = false } },
+  { tag = "on", set = { skate3_native_render_scene_shadow_static_casters = true, skate3_native_render_scene_shadow_static_elevation_offset = 15.0 } },
+  { tag = "on_offset0", set = { skate3_native_render_scene_shadow_static_elevation_offset = 0.0 } },
+  { tag = "reset", set = { skate3_native_render_scene_shadow_static_casters = false, skate3_native_render_scene_shadow_static_elevation_offset = 15.0 } },
+]
