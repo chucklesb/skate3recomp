@@ -1016,6 +1016,60 @@ repro steps; the entry says where the problem is and how it would show.
   photo (a screenshot of each) and note the build. #63 was changed to drop
   the gate (`pr63b`); a photo session on that build is queued.
 
+### KI-117: Feet and other body parts fly off the skater at high speed
+
+- **Status:** open · **Severity:** medium
+- **Area:** native renderer (skinned character capture), physics speed
+- **Tracking:** none yet. Long-standing; the harness repro is new.
+- **Symptom:** at high speed (a fast fall, a long bomb) the skater's feet and
+  other body parts detach and trail or fly off.
+- **Repro (reliable):** `scenarios/repro_fast_fall_body_parts.toml` teleports
+  with the lower-level sequencer path (`path = "sequencer"`) into a district
+  that isn't loaded, so the skater falls through the world at speed. Spawning
+  at any invalid location does the same. Screenshots every 20 frames.
+- **Cause so far:** unknown. The logs at speed show
+  `ropa interp DETACH repaired` lines from `skate3_native_scene.cpp`, the
+  bone-ring interpolation's detach guard, which points at skinned capture /
+  pose interpolation.
+- **Emulated (F5):** not checked yet.
+- **Next step:** run the repro with native and emulated stills (the harness
+  `renderer` verb) to confirm it is native-only, then read the detach guard's
+  thresholds against the measured speeds.
+
+### KI-118: Some spawn locations render black
+
+- **Status:** open · **Severity:** low–medium
+- **Area:** native renderer, streaming
+- **Tracking:** none yet. Seen while surveying teleport locations with the
+  harness (2026-11-08).
+- **Symptom:** after a teleport to some locations the screen stays black
+  (only the HUD draws) although the game runs. It is a rendering bug, not a
+  slow load: it does not resolve by waiting.
+- **Repro:** the harness `teleport` verb to the affected locators (the survey
+  list is in `scenarios/teleport_locations.md`; the black ones still need
+  marking there).
+- **Emulated (F5):** not checked yet.
+- **Next step:** mark the affected locators, then compare native vs emulated
+  (F5 / the harness `renderer` verb) and take a RenderDoc capture on one.
+
+### KI-119: In replays the native renderer drops the skater's ground shadow and draws long hair as a dark shape
+
+- **Status:** open · **Severity:** medium
+- **Area:** native renderer, characters (skate.Reel playback)
+- **Tracking:** none yet. Found by `scenarios/reel_renderers.toml`
+  (2026-11-11, Windows Vulkan).
+- **Symptom:** on the same reel frame (replay 2 held at 8 s), the emulated
+  renderer draws the skater's shadow on the ground and long hair; the native
+  renderer draws no skater shadow there and the hair as a dark hood-like
+  shape. SSIM native vs emulated 0.906 at 8 s, 0.908 at 14 s.
+- **Emulated (F5):** correct (shadow and hair drawn), so it's a native
+  renderer bug.
+- **Not yet checked:** whether the same happens in free skate (not only in
+  replay playback), and with other hairstyles.
+- **Next step:** RenderDoc captures of that reel frame on both renderers
+  (`play_reel stills` holds the frame), then compare the hair and shadow
+  draws.
+
 ## Resolved
 
 ### KI-102: Linux crashes at the ISO picker on X11 (GTK never initialised)
