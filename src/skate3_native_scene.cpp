@@ -1269,6 +1269,14 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_dyn_gap_fill, true, "Skate 3",
                     "Re-publish character/cloth/skinned items for up to two "
                     "missed publish frames (high-frame-rate body flicker)")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_rescue_reanchor, true, "Skate 3",
+                    "When a skinned character piece's pose capture is refused and "
+                    "its last palette is re-published (the per-instance rescue), "
+                    "move that palette along with the owner's motion since it was "
+                    "cached. Off = the old behavior: the piece stays where the "
+                    "character was, up to 10 frames behind (KI-117, body parts "
+                    "flying off at speed on 30 fps targets).")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 namespace skate3::native_scene {
 namespace {
 
@@ -8996,6 +9004,84 @@ void WidenPublishedCamera(FrameScene& scene, float scale) {
   }
 }
 
+// 3x4 affines in the palette/entity-row layout: 3 rows, rotation(+scale) in
+// components 0..2, translation in component 3; p' = M * [p; 1].
+//
+// out = to * inverse(from): the rigid(+scale) motion that takes a pose
+// placed by `from` to the same pose placed by `to`. False when `from` is
+// singular (garbage rows): the caller keeps the unmodified palette.
+static bool AffineDelta3x4(const float from[12], const float to[12], float out[12]) {
+  const double a = from[0], b = from[1], c = from[2];
+  const double d = from[4], e = from[5], f = from[6];
+  const double g = from[8], h = from[9], i = from[10];
+  const double det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+  if (!std::isfinite(det) || std::fabs(det) < 1e-6) {
+    return false;
+  }
+  const double inv[9] = {(e * i - f * h) / det, (c * h - b * i) / det, (b * f - c * e) / det,
+                         (f * g - d * i) / det, (a * i - c * g) / det, (c * d - a * f) / det,
+                         (d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det};
+  // inverse translation: -R^-1 * t
+  const double t[3] = {from[3], from[7], from[11]};
+  double it[3];
+  for (int r = 0; r < 3; ++r) {
+    it[r] = -(inv[r * 3 + 0] * t[0] + inv[r * 3 + 1] * t[1] + inv[r * 3 + 2] * t[2]);
+  }
+  for (int r = 0; r < 3; ++r) {
+    for (int col = 0; col < 3; ++col) {
+      double s = 0.0;
+      for (int k = 0; k < 3; ++k) {
+        s += double(to[r * 4 + k]) * inv[k * 3 + col];
+      }
+      out[r * 4 + col] = float(s);
+    }
+    double s = to[r * 4 + 3];
+    for (int k = 0; k < 3; ++k) {
+      s += double(to[r * 4 + k]) * it[k];
+    }
+    out[r * 4 + 3] = float(s);
+  }
+  for (int k = 0; k < 12; ++k) {
+    if (!std::isfinite(out[k])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// bones[i] = delta * bones[i] for every 12-float bone of a palette.
+static void ApplyAffine3x4(const float delta[12], std::vector<float>& bones) {
+  for (size_t bi = 0; bi + 12 <= bones.size(); bi += 12) {
+    float m[12];
+    std::memcpy(m, bones.data() + bi, sizeof(m));
+    for (int r = 0; r < 3; ++r) {
+      for (int col = 0; col < 4; ++col) {
+        float s = delta[r * 4 + 0] * m[0 * 4 + col] + delta[r * 4 + 1] * m[1 * 4 + col] +
+                  delta[r * 4 + 2] * m[2 * 4 + col];
+        if (col == 3) {
+          s += delta[r * 4 + 3];
+        }
+        bones[bi + r * 4 + col] = s;
+      }
+    }
+  }
+}
+
+// A per-instance rescue served a cached world-space palette it could not
+// carry along with its owner (KI-117). Rate-limited; the regression
+// scenario fails on this line for the player.
+static void LogStaleRescue(const DrawItem& item, float moved_m, uint64_t age_frames,
+                           const char* why) {
+  static std::atomic<uint32_t> s_n{0};
+  const uint32_t n = s_n.fetch_add(1, std::memory_order_relaxed);
+  if (n < 32 || (n & 255u) == 0) {
+    REXLOG_INFO(
+        "native-scene: stale palette rescue mesh={:08X} ctx={:08X} fam={} "
+        "moved={:.2f}m age={} frames ({}) (n={})",
+        item.mesh, item.ctx, item.char_family, moved_m, age_frames, why, n + 1);
+  }
+}
+
 void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
   // Before any early return (see ReleaseFreecamIfOff).
   ReleaseFreecamIfOff();
@@ -9584,6 +9670,7 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
       CachedBones& cb = g_bones_cache_ctx[item.ctx];
       cb.bones = item.bones;
       cb.frame = g_guest_frame;
+      cb.ent_ok = skate3::native_entity::ReadEntityWorldRows(base, item.ctx, cb.ent);
     }
     // Per-instance rescue: a refused/pending skinned character capture
     // whose ctx did not publish this frame re-publishes with ITS OWN last
@@ -9603,6 +9690,34 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
       rescued.bones = bit->second.bones;
       rescued.pending = false;
       rescued.dbg_src = 3;
+      // KI-117: the cached palette is world-space and up to 10 frames old.
+      // Carry it along with the owner entity's motion since the cache was
+      // written, so a rescued piece stays on the skater instead of being
+      // left metres behind at speed (the limb pose may be a few frames old;
+      // its placement is current).
+      float ent_now[12];
+      const bool reanchor_on =
+          REXCVAR_GET(skate3_native_render_scene_rescue_reanchor);
+      if (bit->second.ent_ok &&
+          skate3::native_entity::ReadEntityWorldRows(base, ctxk, ent_now)) {
+        const float* e0 = bit->second.ent;
+        const float moved = std::sqrt(
+            (ent_now[3] - e0[3]) * (ent_now[3] - e0[3]) +
+            (ent_now[7] - e0[7]) * (ent_now[7] - e0[7]) +
+            (ent_now[11] - e0[11]) * (ent_now[11] - e0[11]));
+        float delta[12];
+        if (reanchor_on && AffineDelta3x4(e0, ent_now, delta)) {
+          ApplyAffine3x4(delta, rescued.bones);
+          rescued.dbg_src = 13;
+          g_rescue_reanchored.fetch_add(1, std::memory_order_relaxed);
+        } else if (moved > 0.25f) {
+          LogStaleRescue(rescued, moved, g_guest_frame - bit->second.frame,
+                         reanchor_on ? "delta not invertible" : "re-anchor off");
+        }
+      } else {
+        LogStaleRescue(rescued, -1.0f, g_guest_frame - bit->second.frame,
+                       "owner not readable");
+      }
       ++pub_count[rescued.mesh];
       // Mark the ctx published so the LW gap fill below cannot double-
       // publish the same instance this frame.

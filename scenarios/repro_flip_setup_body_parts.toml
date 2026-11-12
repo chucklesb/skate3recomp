@@ -1,0 +1,61 @@
+# KI-117 regression: body parts drawn behind the skater during flip setups.
+#
+# Replays a recording made on the Odin 2 (2026-11-12): from Lower Campus,
+# skating at moderate speed with repeated flip setups (right stick held
+# down). Before the fix, a skinned piece whose pose capture was refused got
+# re-published with its last palette, frozen in world space for up to 10
+# frames, so it was drawn metres behind the moving skater (the "feet fly
+# off"). Shows constantly at 30 fps (the Odin 2); rare at high frame rates.
+#
+# The check: no "stale palette rescue" line for the player's pieces (fam=2).
+# char_track logs one line per frame for the body and the shirt (raw vs
+# rendered position) for a closer look.
+#
+#   tools/harness/run_scenario.py odin2 scenarios/repro_flip_setup_body_parts.toml
+#   ... -- --skate3_native_render_scene_rescue_reanchor=false   (the old behavior)
+name = "repro_flip_setup_body_parts"
+timeout_s = 500
+boot = "demo"
+state_every_frames = 10
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+skate3_native_render_scene_char_track = true
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 300
+
+[[step]]
+do = "wait"
+frames = 90
+
+[[step]]
+do = "teleport"
+location = "Z_UN_LowerCampus"
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "play"
+file = "repro_flip_setup_body_parts.s3rec"
+async = true
+
+[[step]]
+do = "screenshot"
+tag = "ride"
+count = 64
+every_frames = 30
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "expect"
+no_log = "stale palette rescue .* fam=2 "

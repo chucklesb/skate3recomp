@@ -413,6 +413,13 @@ struct CachedBones {
   // refusal resurrecting a seconds-old palette rendered the vehicle 10-20 m
   // BEHIND its live position (the momentary ghost-back).
   uint64_t frame = 0;
+  // The owner entity's world block at refresh (ReadEntityWorldRows layout:
+  // 3 rows, translation in component 3). The per-instance rescue re-anchors
+  // the cached palette by the owner's motion since then: a cached pose is
+  // world-space, so serving it as-is left the piece metres behind a moving
+  // skater for up to 10 frames (KI-117: body parts flying off at speed).
+  float ent[12] = {};
+  bool ent_ok = false;
 };
 // ctx -> last published palette for skinned character-family items. The
 // MeshContext is the game's own per-instance identity, so this cache
@@ -420,6 +427,9 @@ struct CachedBones {
 // clones are alive.
 inline std::unordered_map<uint32_t, CachedBones> g_bones_cache_ctx;
 inline std::atomic<uint64_t> g_lw_ctx_rescued{0};
+// Per-instance rescues whose cached palette was re-anchored to the owner's
+// current placement (KI-117; dbg_src 13).
+inline std::atomic<uint64_t> g_rescue_reanchored{0};
 // LW entity store consumption counters (stats line lw[...]).
 inline std::atomic<uint64_t> g_lw_stamped{0};
 inline std::atomic<uint64_t> g_lw_fade0{0};

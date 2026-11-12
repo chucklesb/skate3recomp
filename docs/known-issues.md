@@ -10,40 +10,81 @@ happen. The technical details follow for whoever works on it.
 
 | Issue | What you see | Status |
 |---|---|---|
-| [KI-117](#ki-117-the-skaters-feet-and-body-parts-fly-off-at-high-speed) | Feet and other body parts come off the skater at high speed | Open |
+| [KI-117](#ki-117-the-skaters-feet-and-body-parts-fly-off-at-speed) | Feet and other body parts come off the skater at speed, e.g. setting up a flip | Fixed (Odin 2) |
 | [KI-118](#ki-118-the-screen-goes-black-after-spawning-at-some-locations) | Black screen (HUD only) after spawning at some places | Open |
 | [KI-119](#ki-119-enhanced-shadows-put-sunny-places-in-shade) | With Enhanced Shadows on, sunny places go dark and the skater loses their shadow | Mostly fixed |
+| [KI-120](#ki-120-the-skater-jitters-worse-with-speed) | The skater looks jittery, as if falling behind and catching up, worse with speed | Open |
 
 ---
 
-## KI-117: The skater's feet and body parts fly off at high speed
+## KI-117: The skater's feet and body parts fly off at speed
 
-**What you see:** while moving very fast (a long fall, a fast bomb), the
-skater's feet, and sometimes other body parts, separate from the body and
-trail behind or fly away.
+**What you see:** while skating at a moderate speed, especially while
+setting up a flip trick (right stick held down), one of the skater's body
+pieces (the feet, arms or another skin piece) is drawn behind the rest of the
+body for a few frames, sometimes metres away, then snaps back. On the Odin 2
+at 30 fps it happens all the time; on a fast PC it's rare. Long falls show it
+too.
 
-**How to see it:** fall through the world. The harness does it reliably:
-`scenarios/repro_fast_fall_body_parts.toml` teleports into a district that
-isn't loaded yet, the skater drops through the ground, and screenshots every
-20 frames show the parts coming off. Spawning at any invalid location does
-the same.
+**How to see it:** on the Odin 2, skate at Lower Campus and hold the right
+stick down for flip setups. The harness replays a real session that shows
+it: `scenarios/repro_flip_setup_body_parts.toml` (with
+`repro_flip_setup_body_parts.s3rec`).
 
-**Status:** open, cause unknown · **Severity:** medium · **Found:** long-standing;
-the harness gave it a reliable repro.
+**Status:** fixed (2026-11-12), verified on the Odin 2 by replay and by hand
+· **Severity:** medium · **Found:** long-standing.
 
-**Where it happens:** native renderer, in how the skater's skinned mesh is
-captured and interpolated between frames.
+**What was wrong:** when the renderer can't read a body piece's pose for a
+frame, it reuses that piece's last pose, up to 10 frames old, so the piece
+doesn't flicker. Those poses are stored in world coordinates, so on a moving
+skater the reused pose stayed where the skater *had been*: up to about 2.7 m
+behind at 8 m/s. At 30 fps the pose read fails often during flip setups.
+
+**The fix:** the reused pose now moves along with the skater (the owning
+character's movement since the pose was stored is applied to it). The piece
+stays on the body; at worst its limb pose is a few frames old. The setting
+`skate3_native_render_scene_rescue_reanchor` (default on) switches it off for
+comparison.
+
+**Results (Odin 2, replaying the recording):**
+
+| | Before | After |
+|---|---|---|
+| Frames with a piece drawn left behind | 19 (0.26 m, 0.53 m, 0.79 m… growing) | 0 |
+| Stretches with a piece frozen in place | 8 (up to 12 frames) | 0 |
+| Largest frame-to-frame jump between body and shirt | 3.3 m | 0.54 m |
+| Scenario | fail | pass |
+
+By hand on the Odin 2 the limbs stay on the body. A general jitter of the
+whole skater remains; that's [KI-120](#ki-120-the-skater-jitters-worse-with-speed),
+an older, separate issue.
 
 <details>
 <summary>Technical details</summary>
 
-- At speed the log shows `ropa interp DETACH repaired` from
-  `skate3_native_scene.cpp`: the bone-ring interpolation's detach guard is
-  firing, which points at skinned capture or pose interpolation.
-- Not yet checked with the emulated renderer (F5).
-- **Next step:** run the repro with native and emulated stills (the harness
-  `renderer` verb) to confirm it is native-only, then compare the detach
-  guard's thresholds with the measured speeds.
+- **Where:** `BuildFrameScene` in `skate3_native_scene.cpp`, the
+  per-instance rescue (`dbg_src` 3): a refused or pending skinned character
+  capture whose ctx didn't publish re-publishes `g_bones_cache_ctx[ctx]`
+  (<= 10 guest frames old). The authoritative palette serve
+  (`ServeAuthoritativePalettes`, `dbg_src` 11) runs before it and skips
+  pending items, so nothing corrected the stale copy.
+- **Fix:** the cache also stores the owner entity's world block
+  (`ReadEntityWorldRows`); the rescue applies `E_now · E_cached⁻¹` to every
+  bone (`AffineDelta3x4` / `ApplyAffine3x4`; `dbg_src` 13; counter
+  `g_rescue_reanchored`). If the owner can't be read, or the delta isn't
+  invertible, the old behaviour is kept and logged as
+  `stale palette rescue … moved=…`, which the regression scenario fails on
+  for the player (`fam=2`).
+- **Found with** the `char_track` diagnostic
+  (`skate3_native_render_scene_char_track`): per frame, the body's and the
+  shirt's raw (`rp`) and drawn (`fp`) positions. The frozen stretches were
+  all mesh `4052EFE0` from `dbg_src` 3. The harness `record` command
+  (Ctrl+Shift+R doesn't work on Windows) captured the session.
+- The original fall repro (`repro_fast_fall_body_parts.toml`) reaches ~96
+  m/s but shows the bug only occasionally on the current build.
+- **Not covered:** garment (ropa) rescues (`dbg_src` 4, mesh-keyed cache up
+  to 30 frames) still serve their cached state without re-anchoring; the
+  post-interpolation DETACH guard catches the worst of those.
 
 </details>
 
@@ -170,5 +211,38 @@ The Odin 2's frames also match the Windows ones for each setting (SSIM
 - **Tools:** `play_reel stills_variants` shoots one replay frame under
   several settings; the per-rebuild log lines are `static sun rebuild`,
   `csm_axis` and `dynobj_sun`.
+
+</details>
+
+---
+
+## KI-120: The skater jitters, worse with speed
+
+**What you see:** the skater model looks slightly jittery while skating, as
+if the physics fell behind and caught up again and again. It seems
+intermittent and gets more noticeable the faster you go. Most visible on the
+Odin 2 (30 fps).
+
+**How to see it:** skate at speed on the Odin 2 and watch the skater against
+the background.
+
+**Status:** open · **Severity:** low to medium · **Found:** long-standing;
+reported again 2026-11-12 while checking the KI-117 fix.
+
+<details>
+<summary>Technical details</summary>
+
+- On its own the skater's drawn motion is fairly steady (Odin 2,
+  `repro_flip_setup_body_parts`): frames render at 33 ms, and the drawn speed
+  follows the true speed within 0.2-0.3 m/s typically, 1.7-1.9 m/s at the
+  95th percentile at 5-8+ m/s.
+- **Hypothesis:** the jitter is the skater relative to the camera. The
+  camera is smoothed from ~200 Hz samples on its own track; skater poses
+  arrive at 30 Hz and are stamped when the renderer ingests them
+  (`g_latest_cam_tick`), not when the game simulated them. Timestamp error
+  becomes position error proportional to speed (33 ms at 8 m/s = 0.26 m).
+- **Next step:** log the drawn camera position next to `char_track` and
+  measure the skater's on-screen wobble at speed; compare with the emulated
+  renderer (F5) and a fast PC.
 
 </details>
