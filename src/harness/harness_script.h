@@ -51,6 +51,7 @@ enum class Verb {
   kCrash,       // where="runner"|"guest": fault on purpose (needs allow_crash = true)
   kTeleport,    // location="Z_UN_ClockTower" (a registry locator) tolerance=5 timeout_s=60
                 // settle=true (false: return on arrival, e.g. a floorless locator)
+  kRenderer,    // renderer="native"|"emulated" frames=30: the F5 switch, then settle
   kPlayReel,    // clip=N (a saved skate.Reel replay, 1-based as listed in My Replays):
                 // plays it start to end at 1x with no UI, then returns to free skate;
                 // from="start"|"marker" stills=[s...] settle_frames=20 every_frames=N tag=x
@@ -117,6 +118,10 @@ struct Step {
   std::string from = "start";  // "start" | "marker"
   std::vector<double> stills;  // reel times (s) to hold at for screenshots
   int64_t settle_frames = 20;  // frames to wait at a still before its screenshot
+  std::vector<std::string> stills_renderers;  // shoot each still on these renderers
+
+  // renderer
+  std::string renderer;  // "native" | "emulated"
 };
 
 struct Scenario {

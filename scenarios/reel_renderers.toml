@@ -1,0 +1,31 @@
+# Native vs emulated renderer on fixed reel frames: reel 2 holds at each still,
+# is shot on the native scene renderer and on the emulated GPU (the F5
+# switch), and run_scenario.py diffs each pair (renderer_diffs.json, heat maps
+# in diffs/). Several known issues' next step is "compare with F5" (KI-3,
+# KI-6, KI-36, KI-101); this does it on a frame that is the same every run.
+# Needs the signed-in profile's saves (test user data).
+name = "reel_renderers"
+timeout_s = 600
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+clip = 2
+from = "marker"
+stills = [8.0, 14.0]
+stills_renderers = ["native", "emulated"]
+settle_frames = 30

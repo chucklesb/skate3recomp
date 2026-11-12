@@ -339,7 +339,32 @@ def summary(run: Path) -> int:
     shots = sorted((run / "shots").glob("*.png")) if (run / "shots").exists() else []
     if shots:
         print(f"  shots: {shots[0].name} .. {shots[-1].name}")
+    renderer_diffs(run, shots)
     return int(r["code"])
+
+
+def renderer_diffs(run: Path, shots: list[Path]) -> None:
+    """Native vs emulated: diff each still shot on both renderers
+    (play_reel stills_renderers; tags <tag>_native / <tag>_emulated)."""
+    pairs = {}
+    for png in shots:
+        m = SHOT_RE.match(png.name)
+        if m and m.group(1).endswith(("_native", "_emulated")):
+            base, rend = m.group(1).rsplit("_", 1)
+            pairs.setdefault(base, {})[rend] = png
+    pairs = {k: v for k, v in pairs.items() if len(v) == 2}
+    if not pairs:
+        return
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import imgdiff  # noqa: E402
+    out = {}
+    print("  native vs emulated (ssim 1.0 = identical):")
+    for base, v in sorted(pairs.items()):
+        m = imgdiff.diff(v["native"], v["emulated"], run / "diffs" / f"{base}_native_vs_emulated.png")
+        out[base] = m
+        print(f"    {base:<24} ssim {m['ssim']:.4f} changed {m['changed']:5.2f}% "
+              f"mae {m['mae']:6.2f}  {m['verdict']}")
+    (run / "renderer_diffs.json").write_text(json.dumps(out, indent=2) + "\n")
 
 
 def command_toml(verb: str, pairs: list[str], cid: str) -> str:

@@ -25,6 +25,8 @@
 #include <vector>
 
 #include <rex/cvar.h>
+
+#include "skate3_native_scene.h"
 #include <rex/kernel/guest_presence.h>
 #include <rex/logging.h>
 #include <rex/logging/api.h>
@@ -61,6 +63,8 @@ namespace skate3::native_scene {
 // built frame (0 when the native renderer has not built one).
 uint32_t MainViewCamera();
 }  // namespace skate3::native_scene
+
+REXCVAR_DECLARE(bool, skate3_native_render_scene);
 
 namespace skate3::harness {
 namespace {
@@ -569,6 +573,15 @@ bool TakeScreenshots(Run& r, const std::string& tag, int64_t count, int64_t ever
 // ------------------------------------------------------------ waiting
 
 // Waits until pred() holds (checked under r.mu) or the timeout passes.
+// The F5 switch: native scene renderer or the emulated GPU. Returns false if
+// the switch is refused (the native layer was not enabled at boot).
+bool SetRenderer(bool native) {
+  if (REXCVAR_GET(skate3_native_render_scene) != native) {
+    native_scene::ToggleSceneEnabled();
+  }
+  return REXCVAR_GET(skate3_native_render_scene) == native;
+}
+
 template <typename Pred>
 bool WaitUntil(Run& r, double timeout_s, Pred pred) {
   const auto deadline = Clock::now() + std::chrono::duration_cast<Clock::duration>(
@@ -1112,6 +1125,21 @@ Outcome Execute(Run& r, const Step& st) {
       return o;
     }
 
+    case Verb::kRenderer: {
+      const bool native = st.renderer == "native";
+      if (!SetRenderer(native)) {
+        return Fail("renderer: the switch to " + st.renderer +
+                    " was refused (native layer not enabled at boot?)");
+      }
+      const uint64_t f0 = r.state.frame;
+      const int64_t settle = st.frames.value_or(30);
+      WaitUntil(r, 20.0, [&] { return r.state.frame >= f0 + static_cast<uint64_t>(settle); });
+      Event(r, "renderer", "\"renderer\":\"" + st.renderer + "\"");
+      Outcome o;
+      o.result_json = "\"renderer\":\"" + st.renderer + "\"";
+      return o;
+    }
+
     case Verb::kPlayReel: {
       // Free skate first (the reel loads from there and returns there).
       if (!WaitUntil(r, 30.0, [&] { return r.state.presence == 1 && r.state.skater_valid; })) {
@@ -1167,17 +1195,42 @@ Outcome Execute(Run& r, const Step& st) {
             held_since = r.state.frame;
           }
           if (r.state.frame >= held_since + static_cast<uint64_t>(st.settle_frames)) {
-            char still_tag[96];
-            std::snprintf(still_tag, sizeof(still_tag), "%s_t%.2f", tag.c_str(), cur.t_s);
-            std::string shot_err;
-            std::vector<std::string> names;
-            TakeScreenshots(r, still_tag, 1, 1, &names, &shot_err);
-            const std::string file = names.empty() ? "" : JsonEscape(names[0]);
-            char fields[200];
-            std::snprintf(fields, sizeof(fields), "\"t\":%.3f,\"file\":\"%s\"", cur.t_s,
-                          file.c_str());
-            stills_json += std::string(stills_json.empty() ? "" : ",") + "{" + fields + "}";
-            Event(r, "reel_still", clip + "," + fields);
+            // One shot per requested renderer (the F5 switch, then settle),
+            // or one on the current renderer.
+            const bool was_native = REXCVAR_GET(skate3_native_render_scene);
+            std::vector<std::string> renderers = st.stills_renderers;
+            if (renderers.empty()) {
+              renderers.push_back("");
+            }
+            for (const std::string& rend : renderers) {
+              if (!rend.empty()) {
+                const bool want_native = rend == "native";
+                if (!SetRenderer(want_native)) {
+                  Event(r, "reel_still_skipped",
+                        clip + ",\"renderer\":\"" + rend + "\",\"why\":\"switch refused\"");
+                  continue;
+                }
+                const uint64_t f0 = r.state.frame;
+                WaitUntil(r, 10.0, [&] {
+                  return r.state.frame >= f0 + static_cast<uint64_t>(st.settle_frames);
+                });
+              }
+              char still_tag[112];
+              std::snprintf(still_tag, sizeof(still_tag), "%s_t%.2f%s%s", tag.c_str(), cur.t_s,
+                            rend.empty() ? "" : "_", rend.c_str());
+              std::string shot_err;
+              std::vector<std::string> names;
+              TakeScreenshots(r, still_tag, 1, 1, &names, &shot_err);
+              const std::string file = names.empty() ? "" : JsonEscape(names[0]);
+              char fields[240];
+              std::snprintf(fields, sizeof(fields), "\"t\":%.3f,\"renderer\":\"%s\",\"file\":\"%s\"",
+                            cur.t_s, rend.c_str(), file.c_str());
+              stills_json += std::string(stills_json.empty() ? "" : ",") + "{" + fields + "}";
+              Event(r, "reel_still", clip + "," + fields);
+            }
+            if (!st.stills_renderers.empty()) {
+              SetRenderer(was_native);
+            }
             game::ReleaseReelHold();
             next = r.state.frame + (periodic ? static_cast<uint64_t>(st.every_frames) : 0);
           }

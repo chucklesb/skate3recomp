@@ -25,7 +25,7 @@ constexpr VerbEntry kVerbs[] = {
     {"expect", Verb::kExpect},     {"exit", Verb::kExit},
     {"query", Verb::kQuery},       {"capture", Verb::kCapture},
     {"crash", Verb::kCrash},       {"teleport", Verb::kTeleport},
-    {"play_reel", Verb::kPlayReel},
+    {"play_reel", Verb::kPlayReel},  {"renderer", Verb::kRenderer},
 };
 
 // TOML scalar -> the string form rex::cvar::SetFlagByName takes.
@@ -169,6 +169,17 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
   s.clip = Integer(t, "clip").value_or(0);
   s.from = t["from"].value_or(std::string("start"));
   s.settle_frames = std::max<int64_t>(0, Integer(t, "settle_frames").value_or(20));
+  s.renderer = t["renderer"].value_or(std::string());
+  if (const toml::array* arr = t["stills_renderers"].as_array()) {
+    for (const toml::node& n : *arr) {
+      auto v = n.value<std::string>();
+      if (!v || (*v != "native" && *v != "emulated")) {
+        *error = "stills_renderers must list \"native\" and/or \"emulated\"";
+        return false;
+      }
+      s.stills_renderers.push_back(*v);
+    }
+  }
   if (const toml::array* arr = t["stills"].as_array()) {
     for (const toml::node& n : *arr) {
       if (auto d = n.value<double>()) {
@@ -182,6 +193,12 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
 
   // Per-verb requirements.
   switch (s.verb) {
+    case Verb::kRenderer:
+      if (s.renderer != "native" && s.renderer != "emulated") {
+        *error = "renderer needs renderer = \"native\" or \"emulated\"";
+        return false;
+      }
+      break;
     case Verb::kPlayReel:
       if (s.clip < 1) {
         *error = "play_reel needs clip = N (1-based saved replay, as listed in My Replays)";
