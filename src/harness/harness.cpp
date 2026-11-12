@@ -122,6 +122,7 @@ struct GameState {
   uint32_t skater_candidates = 0;  // skater entities bound recently
   bool skater_valid = false;
   float skater_pos[3] = {};
+  float skater_yaw = 0.0f;      // heading, degrees (game::SkaterYawDeg; teleport yaw=)
   double skater_speed = 0.0;    // units/s, 3D
   double skater_hspeed = 0.0;   // units/s, horizontal (x/z)
   bool cam_valid = false;
@@ -170,9 +171,9 @@ std::string StateJson(const GameState& s, std::string_view tag = {}) {
   if (s.skater_valid) {
     n = std::snprintf(buf, sizeof(buf),
                       ",\"skater\":{\"entity\":\"0x%08X\",\"pos\":[%.3f,%.3f,%.3f],"
-                      "\"speed\":%.3f,\"hspeed\":%.3f}",
+                      "\"yaw\":%.1f,\"speed\":%.3f,\"hspeed\":%.3f}",
                       s.skater, s.skater_pos[0], s.skater_pos[1], s.skater_pos[2],
-                      s.skater_speed, s.skater_hspeed);
+                      s.skater_yaw, s.skater_speed, s.skater_hspeed);
     out.append(buf, n > 0 ? static_cast<size_t>(n) : 0);
   }
   if (s.cam_valid) {
@@ -1039,88 +1040,134 @@ Outcome Execute(Run& r, const Step& st) {
       constexpr double kFellBelow = 15.0;
       const auto deadline = Clock::now() + std::chrono::duration_cast<Clock::duration>(
                                                std::chrono::duration<double>(st.timeout_s));
+      // pos teleports face `yaw`, else the heading the skater has now.
+      float pos_yaw = 0.0f;
+      float skater_now[3] = {};
+      {
+        std::lock_guard lk(r.mu);
+        pos_yaw = st.yaw ? static_cast<float>(*st.yaw) : r.state.skater_yaw;
+        std::memcpy(skater_now, r.state.skater_pos, sizeof(skater_now));
+      }
+      // A far coordinate target goes through the nearest vetted locator
+      // first: the sequencer move alone arrives before the area's collision
+      // streams in, and the skater falls through the world (seen 60+ m out).
+      constexpr float kHopBeyondM = 60.0f;
+      std::string first = st.location;
+      if (st.has_pos && first.empty()) {
+        const float dx = st.pos[0] - skater_now[0], dz = st.pos[2] - skater_now[2];
+        const bool far = std::sqrt(dx * dx + dz * dz) > kHopBeyondM;
+        if (st.hop.value_or(far)) {
+          first = game::NearestSpot(st.pos);
+        }
+      }
+      char pos_name[96];
+      std::snprintf(pos_name, sizeof(pos_name), "[%.2f, %.2f, %.2f] yaw %.1f", st.pos[0],
+                    st.pos[1], st.pos[2], pos_yaw);
       game::TeleportResult tr;
       char target[96] = "[]";
       double dist = -1.0, speed = 0.0;
       bool arrived = false;
       int attempt = 0;
-      for (; attempt <= st.retries; ++attempt) {
-        const auto ready_deadline =
-            Clock::now() + std::chrono::duration_cast<Clock::duration>(
-                               std::chrono::duration<double>(kReadyWaitS));
-        const uint64_t key = st.via_sequencer ? game::kForceSequencer : st.map_key;
-        tr = game::Teleport(st.location, 15.0, key);
-        while (!tr.ok && tr.busy && Clock::now() < ready_deadline && !r.stop.load()) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(250));
-          tr = game::Teleport(st.location, 15.0, key);
+      std::string name;
+      // Up to two legs: the locator (which loads its district's map), then
+      // the coordinates (sequencer only: same map).
+      const bool legs[2] = {!first.empty(), st.has_pos};
+      for (int leg = 0; leg < 2; ++leg) {
+        if (!legs[leg]) {
+          continue;
         }
-        if (!tr.ok) {
-          return Fail("teleport to '" + st.location + "': " + tr.error);
+        const bool by_pos = leg == 1;
+        name = by_pos ? std::string(pos_name) : first;
+        if (leg == 1 && legs[0] &&
+            !WaitUntil(r, kReadyWaitS,
+                       [&] { return r.state.presence == 1 && r.state.skater_valid; })) {
+          return Fail("teleport: no free skate after reaching '" + first + "'");
         }
-        std::snprintf(target, sizeof(target), "[%.3f,%.3f,%.3f]", tr.target[0], tr.target[1],
-                      tr.target[2]);
-        Event(r, attempt ? "teleport_retry" : "teleport",
-              "\"location\":\"" + JsonEscape(st.location) + "\",\"target\":" + target +
-                  ",\"streamed\":" + (tr.streamed ? "true" : "false") +
-                  ",\"path\":\"" + (tr.via_service ? "map" : "sequencer") + "\"" +
-                  ",\"map_load\":" + (tr.map_load ? "true" : "false") + ",\"district\":\"" +
-                  JsonEscape(tr.district) + "\",\"attempt\":" + std::to_string(attempt + 1));
-        bool reached = false, fell = false;
-        uint64_t settled_since = 0;
-        const double left =
-            std::max(0.5, std::chrono::duration<double>(deadline - Clock::now()).count());
-        WaitUntil(r, left, [&] {
-          if (!r.state.skater_valid) {
-            settled_since = 0;
-            return false;
+        const auto issue = [&]() {
+          return by_pos ? game::TeleportToPos(st.pos, pos_yaw, 15.0)
+                        : game::Teleport(first, 15.0,
+                                         st.via_sequencer ? game::kForceSequencer : st.map_key);
+        };
+        arrived = false;
+        dist = -1.0;
+        attempt = 0;
+        for (; attempt <= st.retries; ++attempt) {
+          const auto ready_deadline =
+              Clock::now() + std::chrono::duration_cast<Clock::duration>(
+                                 std::chrono::duration<double>(kReadyWaitS));
+          tr = issue();
+          while (!tr.ok && tr.busy && Clock::now() < ready_deadline && !r.stop.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            tr = issue();
           }
-          const double dx = r.state.skater_pos[0] - tr.target[0];
-          const double dy = r.state.skater_pos[1] - tr.target[1];
-          const double dz = r.state.skater_pos[2] - tr.target[2];
-          dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-          speed = r.state.skater_speed;
-          const bool near = std::sqrt(dx * dx + dz * dz) <= st.tolerance &&
-                            dy >= -kFellBelow && dy <= st.tolerance;
-          if (near) {
-            reached = true;
+          if (!tr.ok) {
+            return Fail("teleport to '" + name + "': " + tr.error);
           }
-          if (!st.settle) {
-            arrived = reached;  // arrival is enough
+          std::snprintf(target, sizeof(target), "[%.3f,%.3f,%.3f]", tr.target[0], tr.target[1],
+                        tr.target[2]);
+          Event(r, attempt ? "teleport_retry" : "teleport",
+                "\"location\":\"" + JsonEscape(name) + "\",\"target\":" + target +
+                    ",\"streamed\":" + (tr.streamed ? "true" : "false") +
+                    ",\"path\":\"" + (tr.via_service ? "map" : "sequencer") + "\"" +
+                    ",\"map_load\":" + (tr.map_load ? "true" : "false") + ",\"district\":\"" +
+                    JsonEscape(tr.district) + "\",\"attempt\":" + std::to_string(attempt + 1));
+          bool reached = false, fell = false;
+          uint64_t settled_since = 0;
+          const double left =
+              std::max(0.5, std::chrono::duration<double>(deadline - Clock::now()).count());
+          WaitUntil(r, left, [&] {
+            if (!r.state.skater_valid) {
+              settled_since = 0;
+              return false;
+            }
+            const double dx = r.state.skater_pos[0] - tr.target[0];
+            const double dy = r.state.skater_pos[1] - tr.target[1];
+            const double dz = r.state.skater_pos[2] - tr.target[2];
+            dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+            speed = r.state.skater_speed;
+            const bool near = std::sqrt(dx * dx + dz * dz) <= st.tolerance &&
+                              dy >= -kFellBelow && dy <= st.tolerance;
+            if (near) {
+              reached = true;
+            }
+            if (!st.settle) {
+              arrived = reached;  // arrival is enough
+              return arrived;
+            }
+            if (reached && dy < -kFellBelow) {
+              fell = true;  // through the floor: retry
+              return true;
+            }
+            if (!near || speed > kSettleSpeed) {
+              settled_since = 0;
+              return false;
+            }
+            if (!settled_since) {
+              settled_since = r.state.frame;
+            }
+            arrived = r.state.frame - settled_since >= kSettleFrames;
             return arrived;
+          });
+          if (arrived || !fell || Clock::now() >= deadline) {
+            break;
           }
-          if (reached && dy < -kFellBelow) {
-            fell = true;  // through the floor: retry
-            return true;
-          }
-          if (!near || speed > kSettleSpeed) {
-            settled_since = 0;
-            return false;
-          }
-          if (!settled_since) {
-            settled_since = r.state.frame;
-          }
-          arrived = r.state.frame - settled_since >= kSettleFrames;
-          return arrived;
-        });
-        if (arrived || !fell || Clock::now() >= deadline) {
-          break;
         }
-      }
-      if (!arrived) {
-        char why[240];
-        std::snprintf(why, sizeof(why),
-                      "teleport to '%s' issued %d time(s), but the skater did not settle there: "
-                      "%.1f m from %s at %.1f m/s after %.0f s",
-                      st.location.c_str(), std::min(attempt + 1, st.retries + 1), dist, target,
-                      speed, st.timeout_s);
-        return Fail(why);
-      }
+        if (!arrived) {
+          char why[320];
+          std::snprintf(why, sizeof(why),
+                        "teleport to '%s' issued %d time(s), but the skater did not settle there: "
+                        "%.1f m from %s at %.1f m/s after %.0f s",
+                        name.c_str(), std::min(attempt + 1, st.retries + 1), dist, target, speed,
+                        st.timeout_s);
+          return Fail(why);
+        }
+      }  // legs
       Outcome o;
-      char extra[256];
+      char extra[320];
       std::snprintf(extra, sizeof(extra),
                     "\"location\":\"%s\",\"target\":%s,\"distance\":%.2f,\"streamed\":%s,"
                     "\"attempts\":%d",
-                    JsonEscape(st.location).c_str(), target, dist, tr.streamed ? "true" : "false",
+                    JsonEscape(name).c_str(), target, dist, tr.streamed ? "true" : "false",
                     attempt + 1);
       o.result_json = extra;
       return o;
@@ -1752,6 +1799,7 @@ void OnFrame(uint8_t* base) {
   // the one tracked last frame, else the first bound.
   uint32_t chosen = 0;
   float chosen_pos[3] = {};
+  float chosen_yaw = 0.0f;
   float best = 0.0f;
   s.skater_candidates = static_cast<uint32_t>(skaters.size());
   for (uint32_t e : skaters) {
@@ -1780,6 +1828,7 @@ void OnFrame(uint8_t* base) {
       chosen_pos[0] = m[12];
       chosen_pos[1] = m[13];
       chosen_pos[2] = m[14];
+      chosen_yaw = game::SkaterYawDeg(m);
     }
   }
 
@@ -1801,6 +1850,7 @@ void OnFrame(uint8_t* base) {
       s.skater = chosen;
       s.skater_valid = true;
       std::memcpy(s.skater_pos, chosen_pos, sizeof(chosen_pos));
+      s.skater_yaw = chosen_yaw;
       if (r->have_last_pos && chosen == r->last_skater) {
         const double pdt = std::chrono::duration<double>(now - r->last_pos_time).count();
         if (pdt > 0.0) {

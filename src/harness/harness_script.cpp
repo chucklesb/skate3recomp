@@ -1,6 +1,7 @@
 #include "harness/harness_script.h"
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -207,6 +208,24 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
       return false;
     }
   }
+  if (const toml::node* pn = t.get("pos")) {
+    const toml::array* arr = pn->as_array();
+    bool good = arr && arr->size() == 3;
+    for (size_t k = 0; good && k < 3; ++k) {
+      auto d = (*arr)[k].value<double>();
+      good = d.has_value() && std::isfinite(*d);
+      if (good) {
+        s.pos[k] = static_cast<float>(*d);
+      }
+    }
+    if (!good) {
+      *error = "pos must be [x, y, z] world coordinates (as in the state's skater pos)";
+      return false;
+    }
+    s.has_pos = true;
+  }
+  s.yaw = Number(t, "yaw");
+  s.hop = t["hop"].value<bool>();
   if (const toml::array* arr = t["stills"].as_array()) {
     for (const toml::node& n : *arr) {
       if (auto d = n.value<double>()) {
@@ -242,8 +261,18 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
       }
       break;
     case Verb::kTeleport:
-      if (s.location.empty()) {
-        *error = "teleport needs location = \"<locator name>\" (e.g. \"Z_UN_ClockTower\")";
+      if (s.location.empty() && !s.has_pos) {
+        *error =
+            "teleport needs location = \"<locator name>\" (e.g. \"Z_UN_ClockTower\") and/or "
+            "pos = [x, y, z]";
+        return false;
+      }
+      if (s.yaw && !s.has_pos) {
+        *error = "teleport yaw needs pos = [x, y, z]";
+        return false;
+      }
+      if (s.hop && (!s.has_pos || !s.location.empty())) {
+        *error = "teleport hop applies to pos = [x, y, z] without a location";
         return false;
       }
       if (!t.get("timeout_s")) {

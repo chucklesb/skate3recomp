@@ -53,6 +53,24 @@ constexpr uint64_t kForceSequencer = ~0ull;
 // the key of the locator's district (when known).
 TeleportResult Teleport(const std::string& location, double timeout_s, uint64_t map_key = 0);
 
+// Harness thread: teleport the player to world coordinates `pos` facing
+// `yaw_deg` (the heading convention of SkaterYawDeg). It builds a yaw-only
+// 4x4 transform and hands it to the sequencer like a locator's, so it never
+// loads another map: teleport to a locator in the destination's district
+// first when it is not the current one.
+TeleportResult TeleportToPos(const float pos[3], float yaw_deg, double timeout_s);
+
+// The vetted teleport location (docs/teleport-locations.md) nearest to
+// `pos`, and its distance in metres: the stepping stone a far coordinate
+// teleport goes through first, so the area is loaded and streamed.
+std::string NearestSpot(const float pos[3], float* distance = nullptr);
+
+// The heading of an entity's local-to-world matrix (row-major, rows 0..2 =
+// the basis), in degrees: atan2 of row 2's x over its z. TeleportToPos takes
+// the same convention; a standing skater reads back within ~10 degrees (its
+// idle pose turns the body a little).
+float SkaterYawDeg(const float m[16]);
+
 // skate.Reel playback (play_reel): load saved replay `slot` (1-based, as
 // listed in My Replays) the game's own way, play it start to end at 1x with
 // our own clock and no UI, then return to free skate. Harness thread: start,

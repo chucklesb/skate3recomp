@@ -18,17 +18,23 @@ set(SKATE3_TESTS
     hall_of_meat_test
     harness_pad_test
     harness_reels_test
+    harness_script_test
     screen_fx_test
 )
 
 # Tests whose logic lives in a standard-library-only .cpp (not a header).
 set(harness_reels_test_SOURCES ${PROJECT_SOURCE_DIR}/src/harness/harness_reels.cpp)
+# The scenario parser also needs toml++ (header-only, vendored in the SDK).
+set(harness_script_test_SOURCES ${PROJECT_SOURCE_DIR}/src/harness/harness_script.cpp)
+set(harness_script_test_INCLUDES
+    ${PROJECT_SOURCE_DIR}/third_party/rexglue-sdk/thirdparty/tomlplusplus/include)
 
 foreach(test_name IN LISTS SKATE3_TESTS)
     add_executable(${test_name} ${test_name}.cpp test_check.h ${${test_name}_SOURCES})
     target_include_directories(${test_name} PRIVATE
         ${PROJECT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${${test_name}_INCLUDES}
     )
     target_compile_features(${test_name} PRIVATE cxx_std_20)
     if(MSVC)

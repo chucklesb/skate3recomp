@@ -112,6 +112,15 @@ struct Step {
   int retries = 3;         // re-issues after falling through an unloaded floor
   uint64_t map_key = 0;    // override of the destination's map key (hex string in TOML)
   bool via_sequencer = false;  // path = "sequencer": the lower-level teleport (no map load)
+  // pos = [x, y, z]: teleport to world coordinates (the `state` skater pos)
+  // instead of / after a locator; yaw = heading in degrees (the `state` yaw),
+  // default the skater's current heading.
+  bool has_pos = false;
+  float pos[3] = {};
+  std::optional<double> yaw;
+  // pos without location: hop to the nearest vetted locator first (loads and
+  // streams the area). Unset = only when the target is far from the skater.
+  std::optional<bool> hop;
 
   // play_reel
   int64_t clip = 0;            // 1-based saved replay slot

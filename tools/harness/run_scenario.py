@@ -395,7 +395,10 @@ def command_toml(verb: str, pairs: list[str], cid: str) -> str:
             float(v)
             lit = v
         except ValueError:
-            lit = v if v in ("true", "false") else json.dumps(v)
+            # Arrays and inline tables (pos=[x,y,z], stills=[6.0]) pass
+            # through as TOML literals; everything else is a string.
+            literal = v in ("true", "false") or v.strip().startswith(("[", "{"))
+            lit = v if literal else json.dumps(v)
         lines.append(f"{k} = {lit}")
     return "\n".join(lines) + "\n"
 

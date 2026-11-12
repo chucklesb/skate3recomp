@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <iterator>
 #include <condition_variable>
 #include <cstring>
@@ -158,6 +159,9 @@ bool ReadF32(uint8_t* base, uint32_t addr, float* out) {
 struct Request {
   std::string location;
   uint64_t map_key = 0;
+  bool use_pos = false;  // TeleportToPos: pos/yaw instead of a locator
+  float pos[3] = {};
+  float yaw_deg = 0;
   std::optional<TeleportResult> result;
 };
 
@@ -200,34 +204,107 @@ double CallGuestF(PPCContext& ctx, uint8_t* base, void (*fn)(PPCContext&, uint8_
   return ret;
 }
 
+// The objects every teleport needs, checked: false (with res.error) when the
+// game is not in a state that can teleport.
+struct TeleportObjects {
+  uint32_t registry = 0, teleporter = 0, mode = 0;
+};
+bool GetTeleportObjects(uint8_t* base, TeleportObjects* o, TeleportResult* res) {
+  uint32_t world = 0, owner = 0;
+  if (!Read32(base, kWorldPtr, &world) || !world) {
+    res->error = "no world object yet";
+    res->busy = true;
+    return false;
+  }
+  if (!Read32(base, world + kWorldRegistry, &o->registry) || !o->registry ||
+      !Read32(base, world + kWorldModeOwner, &owner) || !owner ||
+      !Read32(base, owner + kOwnerTeleporter, &o->teleporter) || !o->teleporter) {
+    res->error = "the teleporter is not set up (not in free skate?)";
+    return false;
+  }
+  uint32_t mode_vt = 0;
+  uint8_t allowed = 0;
+  if (!Read32(base, owner + kOwnerTeleportMode, &o->mode) || !o->mode ||
+      !Read32(base, o->mode, &mode_vt) || mode_vt != kTeleportModeVtable) {
+    res->error = "the teleport mode component is missing (not in free skate?)";
+    return false;
+  }
+  if (!Read8(base, o->mode + kTeleportModeAllowed, &allowed) || !allowed) {
+    res->error = "the game does not allow teleporting right now";
+    res->busy = true;  // e.g. a teleport or respawn still finishing
+    return false;
+  }
+  return true;
+}
+
+// The sequencer path with a given transform (`matrix`: guest address of a
+// 16-byte-aligned 4x4 world matrix, a locator's layout). Returns whether the
+// teleporting state was entered (the destination is streamed in, then the
+// player moved).
+bool SequencerTeleport(PPCContext& ctx, uint8_t* base, const TeleportObjects& o,
+                       uint32_t matrix, uint32_t hash, uint32_t stack_top) {
+  uint32_t settings = 0;
+  uint8_t flag_byte = 0;
+  if (Read32(base, kSettingsPtr, &settings) && settings) {
+    Read8(base, settings + 120, &flag_byte);
+  }
+  // Returns whether the destination must be streamed in first
+  // (sub_82864C40). 0: the area is already loaded and the sequencer moved the
+  // player right away (sub_827070C0), which free skate ignores. 1: it stored
+  // the request; entering the teleporting state does the fade, streaming and
+  // move, as the map does. The hook above makes it always 1 for this call.
+  t_force_streamed_teleport = true;
+  const uint32_t needs_streaming =
+      CallGuest(ctx, base, sub_82706F50,
+                {o.teleporter, matrix, hash, flag_byte ? 1u : 0u, 0, 0, 0}, stack_top) &
+      0xFF;
+  t_force_streamed_teleport = false;
+  if (needs_streaming) {
+    CallGuest(ctx, base, sub_82720B50, {o.mode, kStateTeleporting, o.teleporter}, stack_top);
+  }
+  return needs_streaming != 0;
+}
+
+TeleportResult DoTeleportPos(PPCContext& ctx, uint8_t* base, const float pos[3],
+                             float yaw_deg) {
+  TeleportResult res;
+  TeleportObjects o;
+  if (!GetTeleportObjects(base, &o, &res)) {
+    return res;
+  }
+  // A yaw-only transform in the locators' layout: rows 0..2 the basis, row 3
+  // the translation. The skater entity's matrix (what SkaterYawDeg reads) is
+  // turned 90 degrees from the transform the teleport takes (measured: a
+  // teleport built with angle a reads back as a + 98.9 standing still; the
+  // other ~9 degrees are the idle pose), so the angle is yaw - 90.
+  const float a = (yaw_deg - 90.0f) * 3.14159265358979f / 180.0f;
+  const float c = std::cos(a), s = std::sin(a);
+  const float m[16] = {c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, pos[0], pos[1], pos[2], 1};
+  // On the guest stack below the hook's frame, 16-byte aligned (the game
+  // copies matrices with 128-bit vector loads).
+  const uint32_t data = (ctx.r1.u32 - 0x100) & ~0xFu;
+  for (int k = 0; k < 16; ++k) {
+    uint32_t bits;
+    std::memcpy(&bits, &m[k], 4);
+    Write32(base, data + 4 * k, bits);
+  }
+  for (int k = 0; k < 3; ++k) {
+    res.target[k] = pos[k];
+  }
+  res.streamed = SequencerTeleport(ctx, base, o, data, 0, data - 0x80);
+  res.ok = true;
+  return res;
+}
+
 TeleportResult DoTeleport(PPCContext& ctx, uint8_t* base, const std::string& location,
                           uint64_t map_key_override) {
   TeleportResult res;
   res.hash = NameHash(location);
-  uint32_t world = 0, registry = 0, owner = 0, teleporter = 0;
-  if (!Read32(base, kWorldPtr, &world) || !world) {
-    res.error = "no world object yet";
-    res.busy = true;
+  TeleportObjects o;
+  if (!GetTeleportObjects(base, &o, &res)) {
     return res;
   }
-  if (!Read32(base, world + kWorldRegistry, &registry) || !registry ||
-      !Read32(base, world + kWorldModeOwner, &owner) || !owner ||
-      !Read32(base, owner + kOwnerTeleporter, &teleporter) || !teleporter) {
-    res.error = "the teleporter is not set up (not in free skate?)";
-    return res;
-  }
-  uint32_t mode = 0, mode_vt = 0;
-  uint8_t allowed = 0;
-  if (!Read32(base, owner + kOwnerTeleportMode, &mode) || !mode ||
-      !Read32(base, mode, &mode_vt) || mode_vt != kTeleportModeVtable) {
-    res.error = "the teleport mode component is missing (not in free skate?)";
-    return res;
-  }
-  if (!Read8(base, mode + kTeleportModeAllowed, &allowed) || !allowed) {
-    res.error = "the game does not allow teleporting right now";
-    res.busy = true;  // e.g. a teleport or respawn still finishing
-    return res;
-  }
+  const uint32_t registry = o.registry;
 
   const uint32_t entry = CallGuest(ctx, base, sub_82910CE8, {registry, res.hash});
   uint32_t locator = 0;
@@ -271,26 +348,7 @@ TeleportResult DoTeleport(PPCContext& ctx, uint8_t* base, const std::string& loc
     res.ok = true;
     return res;
   }
-  uint32_t settings = 0;
-  uint8_t flag_byte = 0;
-  if (Read32(base, kSettingsPtr, &settings) && settings) {
-    Read8(base, settings + 120, &flag_byte);
-  }
-  // Returns whether the destination must be streamed in first
-  // (sub_82864C40). 0: the area is already loaded and the sequencer moved the
-  // player right away (sub_827070C0), which free skate ignores. 1: it stored
-  // the request; entering the teleporting state does the fade, streaming and
-  // move, as the map does. The hook above makes it always 1 for this call.
-  t_force_streamed_teleport = true;
-  const uint32_t needs_streaming =
-      CallGuest(ctx, base, sub_82706F50,
-                {teleporter, locator, res.hash, flag_byte ? 1u : 0u, 0, 0, 0}) &
-      0xFF;
-  t_force_streamed_teleport = false;
-  if (needs_streaming) {
-    CallGuest(ctx, base, sub_82720B50, {mode, kStateTeleporting, teleporter});
-  }
-  res.streamed = needs_streaming != 0;
+  res.streamed = SequencerTeleport(ctx, base, o, locator, res.hash, 0);
   res.ok = true;
   return res;
 }
@@ -309,8 +367,58 @@ uint32_t NameHash(std::string_view name) {
   return h;
 }
 
+namespace {
+struct Spot {
+  const char* name;
+  float x, y, z;
+};
+constexpr Spot kSpots[] = {
+#include "harness/teleport_spots.inc"
+};
+}  // namespace
+
+std::string NearestSpot(const float pos[3], float* distance) {
+  const Spot* best = nullptr;
+  float best_d2 = 0.0f;
+  for (const Spot& s : kSpots) {
+    const float dx = s.x - pos[0], dy = s.y - pos[1], dz = s.z - pos[2];
+    const float d2 = dx * dx + dy * dy + dz * dz;
+    if (!best || d2 < best_d2) {
+      best = &s;
+      best_d2 = d2;
+    }
+  }
+  if (distance) {
+    *distance = best ? std::sqrt(best_d2) : 0.0f;
+  }
+  return best ? best->name : std::string();
+}
+
+float SkaterYawDeg(const float m[16]) {
+  return std::atan2(m[8], m[10]) * 180.0f / 3.14159265358979f;
+}
+
+namespace {
+TeleportResult RunRequest(Request& req, double timeout_s);
+}  // namespace
+
 TeleportResult Teleport(const std::string& location, double timeout_s, uint64_t map_key) {
-  Request req{location, map_key, std::nullopt};
+  Request req;
+  req.location = location;
+  req.map_key = map_key;
+  return RunRequest(req, timeout_s);
+}
+
+TeleportResult TeleportToPos(const float pos[3], float yaw_deg, double timeout_s) {
+  Request req;
+  req.use_pos = true;
+  std::memcpy(req.pos, pos, sizeof(req.pos));
+  req.yaw_deg = yaw_deg;
+  return RunRequest(req, timeout_s);
+}
+
+namespace {
+TeleportResult RunRequest(Request& req, double timeout_s) {
   std::unique_lock lk(g_mu);
   if (g_pending) {
     TeleportResult r;
@@ -330,6 +438,7 @@ TeleportResult Teleport(const std::string& location, double timeout_s, uint64_t 
   g_pending = nullptr;
   return *req.result;
 }
+}  // namespace
 
 namespace {
 
@@ -791,6 +900,18 @@ void OnGuestFrame(PPCContext& ctx, uint8_t* base) {  // main (simulation) thread
     if (!req || req->result) {
       return;
     }
+  }
+  if (req->use_pos) {
+    TeleportResult r = DoTeleportPos(ctx, base, req->pos, req->yaw_deg);
+    REXLOG_INFO("harness: teleport to [{:.2f}, {:.2f}, {:.2f}] yaw {:.1f} -> {}{}", req->pos[0],
+                req->pos[1], req->pos[2], req->yaw_deg,
+                !r.ok ? "failed: " : "issued via the sequencer", r.error);
+    {
+      std::lock_guard lk(g_mu);
+      req->result = std::move(r);
+    }
+    g_cv.notify_all();
+    return;
   }
   TeleportResult r = DoTeleport(ctx, base, req->location, req->map_key);
   REXLOG_INFO("harness: teleport '{}' (hash {:08X}, district {}) -> {}{}", req->location, r.hash,
