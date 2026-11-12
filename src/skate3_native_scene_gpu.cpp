@@ -2100,13 +2100,7 @@ bool EnsureGuestTextureFromWords(const NativeGuestOutputRenderContext& context,
       }
       SwapGuestEndian(out_row, row_bytes, info.endianness);
       if (swap_rb_565) {
-        for (uint32_t i = 0; i + 2 <= row_bytes; i += 2) {
-          uint16_t value;
-          std::memcpy(&value, out_row + i, sizeof(value));
-          value = uint16_t((value & 0x07E0u) | ((value >> 11) & 0x1Fu) |
-                           ((value & 0x1Fu) << 11));
-          std::memcpy(out_row + i, &value, sizeof(value));
-        }
+        SwapRb565(out_row, row_bytes);
       }
       std::memcpy(mapping + p.offset + size_t(by) * p.pitch, out_row, row_bytes);
     }
@@ -2394,13 +2388,7 @@ bool UpdateGuestTexture2DInPlace(const NativeGuestOutputRenderContext& context,
     }
     SwapGuestEndian(out_row, row_bytes, info.endianness);
     if (swap_rb_565) {
-      for (uint32_t i = 0; i + 2 <= row_bytes; i += 2) {
-        uint16_t value;
-        std::memcpy(&value, out_row + i, sizeof(value));
-        value = uint16_t((value & 0x07E0u) | ((value >> 11) & 0x1Fu) |
-                         ((value & 0x1Fu) << 11));
-        std::memcpy(out_row + i, &value, sizeof(value));
-      }
+      SwapRb565(out_row, row_bytes);
     }
     std::memcpy(mapping + size_t(by) * pitch, out_row, row_bytes);
   }
@@ -2566,7 +2554,7 @@ bool EnsureGuestCubeTexture(const NativeGuestOutputRenderContext& context, uint8
 
   if (rgba_chain) {
     // Decode mip 0 -> RGBA8 per face (DXT1 block decode, or plain 8888
-    // texels: the water canal cubes), box-filter the full chain to 1x1,
+    // texels), box-filter the full chain to 1x1,
     // upload as an RGBA cube. The GUEST cube mip chain is never trusted:
     // its packed sub-32px levels and per-face slice layout are exactly
     // where garbage sneaks in, and the reflection fetch runs at a deep
@@ -2825,6 +2813,9 @@ bool EnsureGuestCubeTexture(const NativeGuestOutputRenderContext& context, uint8
                       bytes_per_block);
         }
         SwapGuestEndian(out_row, row_bytes, info.endianness);
+        if (cube_base_fmt == xenos::TextureFormat::k_5_6_5) {
+          SwapRb565(out_row, row_bytes);  // the water canal cubes
+        }
       }
     }
   }

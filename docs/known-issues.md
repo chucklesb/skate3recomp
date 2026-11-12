@@ -15,6 +15,7 @@ happen. The technical details follow for whoever works on it.
 | [KI-119](#ki-119-enhanced-shadows-put-sunny-places-in-shade) | With Enhanced Shadows on, sunny places go dark and the skater loses their shadow | Mostly fixed |
 | [KI-120](#ki-120-the-skater-jitters-worse-with-speed) | The skater looks jittery, as if falling behind and catching up, worse with speed | Fixed (Odin 2) |
 | [KI-121](#ki-121-on-d3d12-the-scene-is-sometimes-drawn-in-shade) | On D3D12, a sunny scene is sometimes drawn almost all in shade, with no skater shadow | Open |
+| [KI-122](#ki-122-canal-water-reflects-orange-brown-instead-of-blue-sky) | Canal water reflects orange-brown instead of blue sky, depending on the view angle | Fixed (Windows) |
 
 ---
 
@@ -317,5 +318,44 @@ It happened in 1 of 3 runs on 2026-11-12, and once during the KI-119 work
   run: `static sun rebuild` lines show the corrected sun (elev 62.4,
   captured 47.4) and ~1600-1660 casters. So the KI-119 offset is applied;
   what differs is what D3D12 renders or samples from the map that time.
+
+</details>
+
+---
+
+## KI-122: Canal water reflects orange-brown instead of blue sky
+
+**What you see:** in the native renderer, the canals' ripples reflect an
+orange-brown colour where the game shows blue sky. How much depends on the
+angle between the camera and the water: looking along the surface it covers
+most of the canal. Any canal water shows it.
+
+**How to see it:** `scenarios/water_probe.toml` teleports to the Downtown
+canal by the Villas (Plaza of Solitude) and takes the same view in the
+native and emulated renderers (`canal_nat`, `canal_emu`).
+
+**Status:** fixed (Windows, D3D12 and Vulkan) · **Severity:** medium (very
+visible) · **Found:** 2026-11-12 by the user.
+
+**Remaining difference:** with the colour fixed, our canal is a brighter,
+more even blue than the game's, which is mostly dark with blue glints and
+darker under the bridge. That's the reflection's strength and occlusion,
+not its colour; not investigated yet.
+
+<details>
+<summary>Technical details</summary>
+
+- The canal's water (`flowingwateralpha`) reflects a 128×128 environment
+  cube in `k_5_6_5`, the only non-DXT1 cube seen (`native-scene: cube
+  408007E0 128x128 fmt=4` with `log_level = "debug"`).
+- `k_5_6_5` maps to the host `B5G6R5` format on the understanding that the
+  upload swaps red and blue. Both 2D upload paths did that; the cube path
+  (it copies the guest's own mip chain for non-DXT1/8888 formats) only
+  swapped endianness. Blue sky with red and blue exchanged is orange-brown.
+- Fix: `SwapRb565` in `skate3_native_scene_gpu_internal.h`, called by every
+  `k_5_6_5` upload path, cubes included.
+- Runs: before `out/harness-runs/20261112-113027_water_probe` (Vulkan);
+  after `20261112-113232_water_probe` (Vulkan), `20261112-113338_water_probe`
+  (D3D12).
 
 </details>

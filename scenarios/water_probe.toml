@@ -1,0 +1,55 @@
+# Water colour probe: the Downtown canal by the Villas (Plaza of Solitude),
+# where the native renderer's ripple reflections come out orange-brown and
+# the emulated renderer's are blue sky. Native and emulated shots of the same
+# view, with debug logging on so the canal's texture decodes are logged.
+name = "water_probe"
+timeout_s = 600
+boot = "demo"
+
+[cvars]
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+log_level = "debug"
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 90
+
+[[step]]
+do = "mark"
+text = "water_probe: teleporting to the canal"
+
+[[step]]
+do = "teleport"
+pos = [-176.189, 49.557, -150.73]
+yaw = -75
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "state"
+tag = "canal"
+
+[[step]]
+do = "screenshot"
+tag = "canal_nat"
+
+[[step]]
+do = "renderer"
+renderer = "emulated"
+frames = 30
+
+[[step]]
+do = "screenshot"
+tag = "canal_emu"
+
+[[step]]
+do = "renderer"
+renderer = "native"

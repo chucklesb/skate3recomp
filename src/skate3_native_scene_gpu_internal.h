@@ -455,6 +455,19 @@ inline void ComposeSrvSwizzle(uint32_t fetch_swizzle, uint32_t host_swizzle,
   }
 }
 
+// k_5_6_5 texels after the endian swap: exchange the red and blue fields so
+// they match the host kB5G6R5_UNORM layout (HostFormatFor maps the format on
+// that understanding). Every k_5_6_5 upload path must call this; a missing
+// call shows blue as orange (the water canal cube, docs/known-issues.md).
+inline void SwapRb565(uint8_t* data, uint32_t size) {
+  for (uint32_t i = 0; i + 2 <= size; i += 2) {
+    uint16_t value;
+    std::memcpy(&value, data + i, sizeof(value));
+    value = uint16_t((value & 0x07E0u) | ((value >> 11) & 0x1Fu) | ((value & 0x1Fu) << 11));
+    std::memcpy(data + i, &value, sizeof(value));
+  }
+}
+
 inline void SwapGuestEndian(uint8_t* data, uint32_t size, xenos::Endian endian) {
   switch (endian) {
     case xenos::Endian::k8in16:
