@@ -7,7 +7,7 @@
 // harness thread. Never the render thread: allocators are per thread.
 //
 // Teleport: the same call the pause map's "teleport to location" event makes
-// (README "Notes for later work: game teleport").
+// (docs/scenario-harness.md, "Notes for later work: game teleport").
 //   world      = *(0x83083BCC)
 //   registry   = world + 168: EASTL map {name hash -> {type byte, object}}
 //   teleporter = *(*(world + 156) + 116)

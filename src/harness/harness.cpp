@@ -51,7 +51,7 @@ REXCVAR_DEFINE_BOOL(skate3_harness, false, "Skate 3",
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_STRING(skate3_harness_scenario, "", "Skate 3",
                       "Scenario harness: run this scenario TOML unattended and exit with its "
-                      "result code (README: Scenario harness)")
+                      "result code (docs/scenario-harness.md)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_STRING(skate3_harness_out, "harness", "Skate 3",
                       "Scenario harness output folder (run folders, inbox/, outbox/), relative "

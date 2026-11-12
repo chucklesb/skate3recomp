@@ -1,7 +1,7 @@
 // Reverse-engineering probes for the harness (off unless
 // --skate3_harness_re_probe=true). They log what the game passes to the
 // script-binding layer, so the state-setting and Reel verbs can be built on
-// the game's own functions. Findings: scenarios/README.md "Notes for later
+// the game's own functions. Findings: docs/scenario-harness.md "Notes for later
 // work". Addresses are TU3 (3.0.3.0) image addresses.
 //
 // Script bindings are tables of {0, 2, const char* name, lua_CFunction}

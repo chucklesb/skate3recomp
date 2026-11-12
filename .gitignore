@@ -51,3 +51,6 @@ CMakeUserPresets.json
 
 # Python bytecode
 __pycache__/
+
+# Internal notes and plans (not published)
+/docs/internal/

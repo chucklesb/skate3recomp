@@ -16,7 +16,7 @@
 //
 // Live commands (files dropped in <out>/inbox/) use the same keys as one
 // [[step]], at the top level of their own TOML file, plus an optional `id`.
-// Verbs and keys are listed with Verb below; README "Scenario harness" has
+// Verbs and keys are listed with Verb below; docs/scenario-harness.md has
 // the user-facing reference.
 
 #include <cstdint>
@@ -144,7 +144,7 @@ struct Scenario {
   // The `crash` verb only runs in a scenario that opts in.
   bool allow_crash = false;
   // Locator to teleport to right after the first `wait gameplay = true` step
-  // (scenarios/teleport_locations.md), so every target starts at one place.
+  // (docs/teleport-locations.md), so every target starts at one place.
   std::string start_spot;
   std::vector<std::pair<std::string, std::string>> cvars;
   std::vector<Step> steps;

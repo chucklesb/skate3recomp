@@ -5,6 +5,20 @@ controller, and records what happened: screenshots, game state, the log, and
 a pass/fail result. Use it to reproduce bugs on demand, check fixes, and
 compare builds. The code is in `src/harness/`.
 
+## Quick start
+
+For reproducing bugs and checking fixes, the game can run a scripted
+scenario unattended. It boots to gameplay, drives the controller, takes
+screenshots, traces the skater and camera, and exits with a pass/fail code:
+
+```sh
+./out/build/linux-relwithdebinfo/skate3 --game_data_root="$PWD/game" \
+  --skate3_harness_scenario=scenarios/boot_to_plaza.toml
+```
+
+`--skate3_harness=true` adds a live command channel and input recording
+(Ctrl+Shift+R) to a normal session.
+
 The harness is off unless one of these cvars is set:
 
 | Cvar | Effect |
@@ -313,7 +327,7 @@ build, no network symbol server). The summary lists its frames.
 The game keeps 1,080 named world locators. Each one is a 4×4 transform, keyed by a hash of its name, in a registry hanging off the world object. `teleport` hands one to the game's teleport sequencer. Rules for the names:
 
 - **The pause map's destinations** are mostly `Z_*` locators under internal names, e.g. `Z_UN_ClockTower` ("Clock Tower") and `Z_DT_Tresoutta` ("Tresoutta Plaza").
-- **Use the vetted names** in `scenarios/teleport_locations.md`: 72 Downtown, University and Industrial locations, checked by a survey that teleported to each one.
+- **Use the vetted names** in `docs/teleport-locations.md`: 72 Downtown, University and Industrial locations, checked by a survey that teleported to each one.
 - **Districts need a map key.** `teleport` goes through the pause map's own entry point, which loads the destination's map first. That needs the district's map key, captured from the menu: Downtown, University and Industrial so far. Districts without a key (the skate school, the separate skate parks, DLC) fall back to the game's lower-level teleport. That arrives before their map is loaded, so the skater falls through the world (the step fails, because the skater never settles).
 - **Regenerating the data:** the full locator list comes from a memory snapshot via `tools/re/registry.py <snapshot.gsnap>`. The locator-to-district table, `src/harness/teleport_districts.inc`, comes from `tools/re/locator_districts.py <game dump>`.
 

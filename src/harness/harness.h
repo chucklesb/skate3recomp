@@ -15,7 +15,7 @@
 //   *.s3rec       input recordings
 // <skate3_harness_out>/inbox/*.toml takes live commands (same keys as a
 // scenario [[step]]); replies land in <skate3_harness_out>/outbox/.
-// README "Scenario harness" documents the scenario format.
+// docs/scenario-harness.md documents the scenario format.
 
 #include <cstdint>
 #include <functional>
