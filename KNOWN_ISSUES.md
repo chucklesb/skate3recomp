@@ -1052,7 +1052,7 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** mark the affected locators, then compare native vs emulated
   (F5 / the harness `renderer` verb) and take a RenderDoc capture on one.
 
-### KI-119: With Enhanced Shadows on, the skater loses its ground shadow and long hair draws as a dark shape
+### KI-119: With static shadow casters on, the scene is over-shadowed (skater loses its ground shadow, long hair draws dark)
 
 - **Status:** open · **Severity:** medium
 - **Area:** native renderer, shadows (Enhanced Shadows / PCSS, static casters)
@@ -1073,9 +1073,22 @@ repro steps; the entry says where the problem is and how it would show.
 
   The Windows test profile also has SSAO on, MSAA x4 and 2x resolution and
   draw distance, but turning off the two shadow options alone was enough.
+  - **The cause is static casters, not PCSS** (2026-11-11, Windows Vulkan,
+    each option off on its own, stills compared with the both-off run):
+    - static casters off, PCSS on: same at every still (SSIM 0.997-0.9999,
+      MAE ≤ 0.15);
+    - PCSS off, static casters on: no better than both on (SSIM 0.85 at
+      18 s, MAE 30).
+
+    With static casters on, the static shadow map puts the whole plaza in
+    shadow, including the sunlit areas. The skater stands in that shade, so
+    its own ground shadow can't be seen and its hair is unlit; the "dark
+    hood" and the darker scene are the same over-shadowing.
 - **Emulated (F5):** correct, so it's a native renderer bug.
 - **Next step:**
-  - split PCSS from static casters (one stills run with each);
+  - look at the static caster shadow pass (`skate3_native_render_scene_shadow_static_casters`,
+    with `_shadow_static_size = 4096` in the test profile): its projection/bounds,
+    depth bias, or which casters it includes;
   - check whether free skate shows it too, not only replays;
   - take a RenderDoc capture of a held reel frame with the option on.
 
