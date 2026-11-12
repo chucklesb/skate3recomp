@@ -532,6 +532,7 @@ def run_odin2(dev: Device, scenario: Path, extra: list[str], env: list[str],
 
 
 SHOT_RE = re.compile(r"^f\d+_(.+)_(\d+)\.png$")
+STILL_TAG_RE = re.compile(r"_t\d+\.\d+$")
 
 
 def run_record(label: str, run: Path | None) -> dict:
@@ -578,8 +579,19 @@ def ab_compare(scenario: Path, runs: list[tuple[str, Path | None]], ab_dir: Path
                 dst = ab_dir / "shots" / m.group(1)
                 dst.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(png, dst / f"{label.replace('/', '-')}_{m.group(2)}.png")
+    # Image diffs per tag, each target against the first (tools/harness/imgdiff.py).
+    # Reel stills (tag reel<N>_t<s>) show the same recorded frame everywhere,
+    # so they are the meaningful ones; other shots are informational.
+    diffs = {}
+    shots_root = ab_dir / "shots"
+    if shots_root.is_dir():
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import imgdiff  # noqa: E402
+        for tag_dir in sorted(p for p in shots_root.iterdir() if p.is_dir()):
+            if len(list(tag_dir.glob("*.png"))) >= 2:
+                diffs[tag_dir.name] = imgdiff.diff_dir(tag_dir, ab_dir / "diffs")
     (ab_dir / "compare.json").write_text(
-        json.dumps({"scenario": scenario.name, "runs": recs}, indent=2) + "\n")
+        json.dumps({"scenario": scenario.name, "runs": recs, "diffs": diffs}, indent=2) + "\n")
 
     print(f"\nA/B {scenario.name}  ->  {ab_dir.relative_to(REPO)}")
     print(f"{'target':<18} {'status':<10} {'build':<16} {'frames':>6} {'sec':>6} {'fps':>6} "
@@ -607,6 +619,14 @@ def ab_compare(scenario: Path, runs: list[tuple[str, Path | None]], ab_dir: Path
     versions = {rec.get("version") for rec in recs if rec.get("version")}
     if len(versions) > 1:
         print(f"  WARNING: the targets ran different versions: {', '.join(sorted(versions))}")
+    if diffs:
+        print("  image diffs (vs the first target; ssim 1.0 = identical):")
+        for tag, items in diffs.items():
+            for m in items:
+                a_name, b_name = Path(m["a"]).stem, Path(m["b"]).stem
+                still = "  still" if STILL_TAG_RE.search(tag) else ""
+                print(f"    {tag:<24} {b_name:<20} vs {a_name:<20} ssim {m['ssim']:.4f} "
+                      f"changed {m['changed']:5.2f}% mae {m['mae']:6.2f}  {m['verdict']}{still}")
     if (ab_dir / "shots").is_dir():
         print(f"  paired screenshots: {(ab_dir / 'shots').relative_to(REPO)}/<tag>/")
     return 0 if all(rec.get("code") == 0 for rec in recs) else 1
