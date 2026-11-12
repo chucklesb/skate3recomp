@@ -95,9 +95,35 @@ jobs:
           grep -qx 'Icon=skate3recomp-testing' "$desktop"
           [ -f extract/squashfs-root/skate3recomp-testing.png ]
 
+      - name: Require the notable-changes notes
+        run: |
+          # docs/release-notes/<tag>.md, committed at the tag: the curated
+          # "Notable Changes" since the newest published pre-release or
+          # release (docs/linux-aarch64.md, Release notes).
+          f="docs/release-notes/$TAG.md"
+          [ -s "$f" ] || { echo "::error::$f is missing at the tag"; exit 1; }
+          grep -q '^## Notable Changes' "$f" || { echo "::error::$f has no '## Notable Changes' section"; exit 1; }
+          echo "NOTES=$PWD/$f" >> "$GITHUB_ENV"
+
+      - name: Find the previous pre-release or release
+        run: |
+          # A pre-release covers the changes since the newest published
+          # pre-release OR release, whichever is newer.
+          prev=$(gh release list --exclude-drafts --limit 100 --json tagName,publishedAt \
+            --jq '[.[] | select(.tagName != env.TAG)
+                       | select(.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-(aarch64|testing)\\.[0-9]+$"))]
+                  | sort_by(.publishedAt) | last | .tagName // ""')
+          echo "previous: ${prev:-none}"
+          echo "PREV=$prev" >> "$GITHUB_ENV"
+
       - name: Write release notes
         run: |
-          gh api "repos/$GH_REPO/releases/generate-notes" -f tag_name="$TAG" --jq .body > generated.md
+          if [ -n "$PREV" ]; then
+            gh api "repos/$GH_REPO/releases/generate-notes" -f tag_name="$TAG" \
+              -f previous_tag_name="$PREV" --jq .body > generated.md
+          else
+            gh api "repos/$GH_REPO/releases/generate-notes" -f tag_name="$TAG" --jq .body > generated.md
+          fi
           image=$(basename "$IMAGE")
           sha=$(cut -d' ' -f1 "$IMAGE.sha256")
           {
@@ -115,6 +141,12 @@ jobs:
             echo "(\`~/.local/share/skate3\` inside DroidDeck's Linux environment)."
             echo
             echo "No game data is included: you must own Skate 3."
+            echo
+            if [ -n "$PREV" ]; then
+              echo "Changes since \`$PREV\`."
+              echo
+            fi
+            cat "$NOTES"
             echo
             echo "### Files"
             echo "- \`$image\` (SHA-256 \`$sha\`)"

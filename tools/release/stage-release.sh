@@ -48,6 +48,10 @@ remote_tag=$(git ls-remote --tags "$remote" "refs/tags/$tag" | cut -f1)
 [ -n "$remote_tag" ] || die "$tag is not on $remote (git push $remote $tag)"
 [ "$remote_tag" = "$(git rev-parse "$tag")" ] || die "$tag on $remote differs from the local tag"
 
+notes=docs/release-notes/$tag.md
+[ -s "$notes" ] && grep -q '^## Notable Changes' "$notes" \
+    || die "$notes with a '## Notable Changes' section must be committed at the tag (docs/linux-aarch64.md, Release notes)"
+
 if [ -z "${SKATE3_SKIP_BUILD:-}" ]; then
     tools/cross-aarch64/build.sh release
 fi

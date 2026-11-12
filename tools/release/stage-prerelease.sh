@@ -45,14 +45,24 @@ remote_tag=$(git ls-remote --tags "$remote" "refs/tags/$tag" | cut -f1)
 [ -n "$remote_tag" ] || die "$tag is not on $remote (git push $remote $tag)"
 [ "$remote_tag" = "$(git rev-parse "$tag")" ] || die "$tag on $remote differs from the local tag"
 
+# RelWithDebInfo (optimized, debug info kept in the AppImage) so crash
+# addresses from testers' devices map to source lines; the notes the
+# workflow writes say so. Real releases (stage-release.sh) stay `release`.
+notes=docs/release-notes/$tag.md
+[ -s "$notes" ] && grep -q '^## Notable Changes' "$notes" \
+    || die "$notes with a '## Notable Changes' section must be committed at the tag (docs/linux-aarch64.md, Release notes)"
+
 export SKATE3_APPIMAGE_VARIANT=testing
+export SKATE3_APPIMAGE_KEEP_DEBUG=1
 if [ -z "${SKATE3_SKIP_BUILD:-}" ]; then
-    tools/cross-aarch64/build.sh release
+    # No `package` step: pre-releases ship only the AppImage (and the zip
+    # packer expects the release library names).
+    tools/cross-aarch64/build.sh relwithdebinfo sysroot codegen build appimage
 else
-    tools/cross-aarch64/build.sh release appimage
+    tools/cross-aarch64/build.sh relwithdebinfo appimage
 fi
 
-build=out/build/linux-aarch64-release
+build=out/build/linux-aarch64-relwithdebinfo
 built=$(sed -n 's/^#define SKATE3_VERSION_STRING "\(.*\)"$/\1/p' "$build/include/skate3_version.h")
 [ "$built" = "$version" ] || die "the build reports version '$built', expected '$version' (rebuild from the tag)"
 

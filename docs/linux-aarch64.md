@@ -75,9 +75,12 @@ binaries are therefore built locally and CI only validates and publishes them:
 1. Add your fork as a remote (`git remote add fork <url>`), and run
    `gh auth login` (`gh` is in `nix develop .#cross`). The fork's default
    branch must contain `.github/workflows/release-aarch64.yml`.
-2. Tag the release commit `v<upstream version>-aarch64.<n>`, for example
+2. Write the release notes (see "Release notes" below) to
+   `docs/release-notes/v2.1.0-aarch64.1.md` and commit them.
+3. Tag the release commit `v<upstream version>-aarch64.<n>`, for example
    `v2.1.0-aarch64.1`, then push the tag to the fork.
-3. Run `tools/release/stage-release.sh v2.1.0-aarch64.1`. It builds from the
+4. Run `tools/release/stage-release.sh v2.1.0-aarch64.1`. It builds a
+   `release` configuration from the
    tag, checks that the embedded version matches, and uploads the AppImage
    and zip (with `.sha256` files) to a draft release. It then starts the
    `release-aarch64` workflow, which re-validates the assets on an arm64
@@ -93,12 +96,38 @@ AppImage and import it by hand. The testing AppImage is a separate app,
 (`skate3recomp-testing-<version>-aarch64.AppImage`). It installs next to the
 release app, and shares its game files, settings and saves.
 
-1. Tag the commit `v<upstream version>-testing.<n>`, for example
+Testing builds are **RelWithDebInfo** (optimized, debug info kept in the
+AppImage, about 120 MB), so crash addresses from testers' devices map to
+source lines. Releases are `release` builds. Both contain the scenario
+harness, which stays idle unless it is switched on from the command line.
+
+1. Write `docs/release-notes/v2.1.0-testing.1.md` and commit it.
+2. Tag the commit `v<upstream version>-testing.<n>`, for example
    `v2.1.0-testing.1`, and push the tag to the fork.
-2. Run `tools/release/stage-prerelease.sh v2.1.0-testing.1`. It builds with
-   `SKATE3_APPIMAGE_VARIANT=testing` and uploads the AppImage to a draft
+3. Run `tools/release/stage-prerelease.sh v2.1.0-testing.1`. It builds
+   `relwithdebinfo` with `SKATE3_APPIMAGE_VARIANT=testing` and
+   `SKATE3_APPIMAGE_KEEP_DEBUG=1`, and uploads the AppImage to a draft
    pre-release. It then starts the `prerelease-aarch64` workflow, which
    validates the image and publishes it as a pre-release, never as latest.
+
+### Release notes
+
+Every release and pre-release has a curated **Notable Changes** section,
+committed at its tag as `docs/release-notes/<tag>.md`. It starts with a
+`## Notable Changes` heading, and groups the changes a player or tester would
+care about: application and game features, fixes (lead with what you saw
+before), and harness and tooling features. The stage scripts refuse to build
+without it, and the workflows refuse to publish without it.
+
+- A **pre-release** covers the changes since the newest published
+  pre-release **or** release, whichever is newer.
+- A **release** covers the changes since the last published release
+  (pre-releases in between don't count).
+
+The workflow finds that previous tag itself. It writes "Changes since
+`<tag>`" above the notes, and GitHub's generated changelog and compare link
+below them use the same range. To list the commits when writing the notes:
+`git log --oneline <previous tag>..HEAD`.
 
 `SKATE3_APPIMAGE_VARIANT=testing` also works with
 `tools/appimage/build-appimage.sh` for a local testing image.
