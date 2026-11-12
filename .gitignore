@@ -6,6 +6,7 @@
 /tools/*
 !/tools/generate_hom_spirv.py
 !/tools/generate_screen_fx_spirv.py
+!/tools/generate_native_spirv.py
 !/tools/package_linux.sh
 !/tools/package_macos.sh
 !/tools/package_windows.ps1
