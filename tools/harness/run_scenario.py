@@ -530,6 +530,8 @@ def run_windows(scenario: Path, config: str, backend: str, extra: list[str],
     stage = win_stage(config)
     (stage / "scenarios").mkdir(parents=True, exist_ok=True)
     shutil.copy2(scenario, stage / "scenarios" / scenario.name)
+    for rec in scenario_recordings(scenario):
+        shutil.copy2(rec, stage / "scenarios" / rec.name)
     current = stage / WIN_HARNESS_OUT / "current_run.txt"
     current.unlink(missing_ok=True)
     proc = win_launch(config, backend, [f"--skate3_harness_scenario=scenarios/{scenario.name}",
