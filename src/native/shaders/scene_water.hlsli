@@ -195,6 +195,18 @@ float4 ShadeWaterAlpha(VSOut i, float fog_a, float3 fog_rgb, float expo) {
   float rl = 0.3 * saturate(4.0 * wmask.y - 2.6);
   float3 refl = cube * (lml.g + rl * (1.0 - lml.g)) * wmask.y * 1.5;
   lin += spec + refl;
+  // Debug views (skate3_native_render_scene_water_debug, wa_ctl.w).
+  int dbg = int(wa_ctl.w + 0.5);
+  if (dbg > 0) {
+    float3 v = dbg == 1   ? dl
+               : dbg == 2 ? float3(wmask, 0.0)
+               : dbg == 3 ? lml
+               : dbg == 4 ? cube
+               : dbg == 5 ? N * 0.5 + 0.5
+               : dbg == 6 ? float3(saturate(kd * 0.25), s, saturate(lm.g))
+                          : float3(fog_a * wa_c18.y, expo * 0.25, 0.0);
+    return float4(v, 1.0);
+  }
   // Opaque: the canals have no bed geometry under the surface (a black
   // void; the game's murk hides it), so see-through water has nothing to
   // show.

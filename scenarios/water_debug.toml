@@ -1,0 +1,136 @@
+# Canal water debug views (skate3_native_render_scene_water_debug 0..7).
+# Same canal view as water_probe.toml; one native shot per view, 45 frames
+# after each switch. Compare the Odin 2 against Windows Vulkan.
+name = "water_debug"
+timeout_s = 600
+boot = "demo"
+
+[cvars]
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 90
+
+[[step]]
+do = "mark"
+text = "water_probe: teleporting to the canal"
+
+[[step]]
+do = "teleport"
+pos = [-176.189, 49.557, -150.73]
+yaw = -75
+
+[[step]]
+do = "wait"
+frames = 90
+
+[[step]]
+do = "state"
+tag = "canal"
+
+[[step]]
+do = "screenshot"
+tag = "v0"
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_water_debug = 1 }
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "screenshot"
+tag = "v1"
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_water_debug = 2 }
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "screenshot"
+tag = "v2"
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_water_debug = 3 }
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "screenshot"
+tag = "v3"
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_water_debug = 4 }
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "screenshot"
+tag = "v4"
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_water_debug = 5 }
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "screenshot"
+tag = "v5"
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_water_debug = 6 }
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "screenshot"
+tag = "v6"
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_water_debug = 7 }
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "screenshot"
+tag = "v7"
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_water_debug = 0 }
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "screenshot"
+tag = "v0"

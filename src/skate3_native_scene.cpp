@@ -160,6 +160,13 @@ REXCVAR_DEFINE_DOUBLE(skate3_native_render_scene_water_detile, 1.0, "Skate 3",
                       "grid (0 = the game's look, 1 = full).")
     .range(0.0, 1.0)
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_INT32(skate3_native_render_scene_water_debug, 0, "Skate 3",
+                     "Canal water (water.alpha) debug view: 0 off, 1 diffuse, "
+                     "2 masks (r spec, g reflection), 3 lightmap x shadow, "
+                     "4 cube, 5 normal, 6 (kd/4, shadow, lightmap g), "
+                     "7 (fog mult, exposure/4).")
+    .range(0, 7)
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_INT32(skate3_native_render_scene_ssr_steps, 48, "Skate 3",
                      "SSR screen-space march taps per ray (half-res pass). More "
                      "taps resolve thinner reflected geometry at proportional "

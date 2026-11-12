@@ -129,6 +129,7 @@ REXCVAR_DECLARE(bool, skate3_native_render_scene_ssao_debug);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_ssao_full_res);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_ssr);
 REXCVAR_DECLARE(double, skate3_native_render_scene_water_detile);
+REXCVAR_DECLARE(int32_t, skate3_native_render_scene_water_debug);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_tex_mips);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_tex_revalidate);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_tex_confirm);
@@ -2491,9 +2492,14 @@ bool EnsureGuestCubeTexture(const NativeGuestOutputRenderContext& context, uint8
   // chain (down to 32px: smaller levels live packed inside a shared 32x32
   // tile, see GetPackedTileOffset).
   const xenos::TextureFormat cube_base_fmt = rex::graphics::GetBaseFormat(info.format);
+  // k_5_6_5 (the canal cubes) takes the same path: copying its guest chain
+  // stopped at 32px, so the deep reflection LOD clamped to a sharp level
+  // and the canal's look depended on the GPU's cube LOD math (Turnip landed
+  // on blocky sky/black texels where D3D12 and desktop Vulkan were grey).
   const bool rgba_chain =
       (cube_base_fmt == xenos::TextureFormat::k_DXT1 ||
-       cube_base_fmt == xenos::TextureFormat::k_8_8_8_8) &&
+       cube_base_fmt == xenos::TextureFormat::k_8_8_8_8 ||
+       cube_base_fmt == xenos::TextureFormat::k_5_6_5) &&
       width >= 8 && (width & (width - 1)) == 0 && width == height;
   uint32_t mip_levels = 1;
   if (!rgba_chain && info.memory.mip_address != 0 && (width & (width - 1)) == 0 &&
@@ -2638,6 +2644,20 @@ bool EnsureGuestCubeTexture(const NativeGuestOutputRenderContext& context, uint8
               std::memcpy(&rgba[(size_t(by * 4 + r) * width + bx * 4) * 4],
                           px[r * 4], 16);
             }
+          }
+        } else if (cube_base_fmt == xenos::TextureFormat::k_5_6_5) {
+          // Post-endian-swap texel: X (red) in bits 0-4, Y 5-10, Z 11-15
+          // (the layout SwapRb565 converts for kB5G6R5). Expanded with bit
+          // replication; W = Z, like the host RGBB swizzle.
+          for (uint32_t bx = 0; bx < L0.cols; ++bx) {
+            uint16_t v;
+            std::memcpy(&v, &bc_row[size_t(bx) * 2], sizeof(v));
+            const uint32_t r5 = v & 0x1Fu, g6 = (v >> 5) & 0x3Fu, b5 = (v >> 11) & 0x1Fu;
+            uint8_t* px = &rgba[(size_t(by) * width + bx) * 4];
+            px[0] = uint8_t((r5 << 3) | (r5 >> 2));
+            px[1] = uint8_t((g6 << 2) | (g6 >> 4));
+            px[2] = uint8_t((b5 << 3) | (b5 >> 2));
+            px[3] = px[2];
           }
         } else {
           // k_8_8_8_8: post-endian-swap bytes are already component order
@@ -9123,6 +9143,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       std::memcpy(cb + 164, scene.wateralpha_rows, sizeof(scene.wateralpha_rows));
     }
     cb[230] = float(REXCVAR_GET(skate3_native_render_scene_water_detile));
+    cb[231] = float(REXCVAR_GET(skate3_native_render_scene_water_debug));
     static_assert(232 * sizeof(float) <= RendererState::kShadowCbSlice);
     cmd->SetConstantBuffer(6, g_r.shadow_cb, cb_offset);
     // b2 (character lighting) default: point at the ring base so the root

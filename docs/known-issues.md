@@ -15,7 +15,7 @@ happen. The technical details follow for whoever works on it.
 | [KI-119](#ki-119-enhanced-shadows-put-sunny-places-in-shade) | With Enhanced Shadows on, sunny places go dark and the skater loses their shadow | Mostly fixed |
 | [KI-120](#ki-120-the-skater-jitters-worse-with-speed) | The skater looks jittery, as if falling behind and catching up, worse with speed | Fixed (Odin 2) |
 | [KI-121](#ki-121-on-d3d12-the-scene-is-sometimes-drawn-in-shade) | On D3D12, a sunny scene is sometimes drawn almost all in shade, with no skater shadow | Open |
-| [KI-122](#ki-122-canal-water-reflects-orange-brown-instead-of-blue-sky) | Canal water reflects orange-brown instead of blue sky, depending on the view angle; no shadows on the canals | Fixed (Windows) |
+| [KI-122](#ki-122-canal-water-reflects-orange-brown-instead-of-blue-sky) | Canal water reflects orange-brown instead of blue sky, depending on the view angle; no shadows on the canals | Fixed |
 
 ---
 
@@ -334,7 +334,7 @@ most of the canal. Any canal water shows it.
 canal by the Villas (Plaza of Solitude) and takes the same view in the
 native and emulated renderers (`canal_nat`, `canal_emu`).
 
-**Status:** fixed (Windows, D3D12 and Vulkan) · **Severity:** medium (very
+**Status:** fixed (Windows D3D12 and Vulkan, Odin 2) · **Severity:** medium (very
 visible) · **Found:** 2026-11-12 by the user.
 
 **Follow-up, also fixed:** with the colour fixed, the canal was still a
@@ -346,6 +346,14 @@ the game's own `wateralpha_defaultPS` and matches the emulated frame closely
 (slightly brighter). Optional, on by default:
 `skate3_native_render_scene_water_detile` (0..1) breaks up the per-metre
 repeat of the ripple texture; 0 is the game's look.
+
+**Second follow-up, Odin 2:** with the port, the Odin 2 drew the canal as a
+bright, blocky sky-blue with dark specks, where Windows and the emulated
+frame show the dark murk. The canal is almost all reflection, and its
+reflection cube was the only cube kept at a partial mip chain, so the look
+depended on how each GPU picks the cube's mip level. It now gets the full
+chain like the other reflection cubes, and the Odin 2 matches the emulated
+frame.
 
 <details>
 <summary>Technical details</summary>
@@ -371,9 +379,24 @@ repeat of the ripple texture; 0 is the game's look.
   swapped endianness. Blue sky with red and blue exchanged is orange-brown.
 - Fix: `SwapRb565` in `skate3_native_scene_gpu_internal.h`, called by every
   `k_5_6_5` upload path, cubes included.
+- Odin 2: the cube upload copied the guest's own chain for `k_5_6_5`, and
+  only down to 32 px (smaller levels are packed in a shared tile). The
+  canal's reflection runs at a deep gradient LOD, so the fetch clamped to a
+  sharp level, and Turnip's cube LOD landed on blocky sky and black texels
+  where desktop GPUs returned grey. `k_5_6_5` cubes now decode to RGBA8 and
+  box-filter the full chain to 1×1, like DXT1 and 8888 cubes (the
+  `rgba_chain` path); the red/blue order is handled in the decode.
+- Debug view: `skate3_native_render_scene_water_debug` (1 diffuse, 2 masks,
+  3 lightmap × shadow, 4 cube, 5 normal, 6 kd/shadow/lightmap, 7 fog and
+  exposure) with `scenarios/water_debug.toml`, one shot per view. Comparing
+  view 4 between the Odin 2 and Windows found the cube difference.
 - Runs: before `out/harness-runs/20261112-113027_water_probe` (Vulkan);
   after `20261112-113232_water_probe` (Vulkan), `20261112-113338_water_probe`
   (D3D12); wateralpha port `20261112-160258_water_probe` (Vulkan),
-  `20261112-160347_water_probe` (D3D12).
+  `20261112-160347_water_probe` (D3D12); Odin 2 before the full chain
+  `20261112-161542_water_probe` (debug views `20261112-162653_water_debug`),
+  after `20261112-163539_water_debug`; Windows after the full chain
+  `20261112-163006_water_debug` (Vulkan), `20261112-163737_water_probe`
+  (D3D12).
 
 </details>
