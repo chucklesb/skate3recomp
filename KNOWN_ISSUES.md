@@ -1052,23 +1052,32 @@ repro steps; the entry says where the problem is and how it would show.
 - **Next step:** mark the affected locators, then compare native vs emulated
   (F5 / the harness `renderer` verb) and take a RenderDoc capture on one.
 
-### KI-119: In replays the native renderer drops the skater's ground shadow and draws long hair as a dark shape
+### KI-119: With Enhanced Shadows on, the skater loses its ground shadow and long hair draws as a dark shape
 
 - **Status:** open · **Severity:** medium
-- **Area:** native renderer, characters (skate.Reel playback)
-- **Tracking:** none yet. Found by `scenarios/reel_renderers.toml`
-  (2026-11-11, Windows Vulkan).
-- **Symptom:** on the same reel frame (replay 2 held at 8 s), the emulated
-  renderer draws the skater's shadow on the ground and long hair; the native
-  renderer draws no skater shadow there and the hair as a dark hood-like
-  shape. SSIM native vs emulated 0.906 at 8 s, 0.908 at 14 s.
-- **Emulated (F5):** correct (shadow and hair drawn), so it's a native
-  renderer bug.
-- **Not yet checked:** whether the same happens in free skate (not only in
-  replay playback), and with other hairstyles.
-- **Next step:** RenderDoc captures of that reel frame on both renderers
-  (`play_reel stills` holds the frame), then compare the hair and shadow
-  draws.
+- **Area:** native renderer, shadows (Enhanced Shadows / PCSS, static casters)
+- **Tracking:** none yet. Found by the harness's reel stills (2026-11-11);
+  likely related to KI-5 (Enhanced Shadows artifacts, shelved).
+- **Symptom:** on the same reel frame (replay 2 held at 8, 10, 14, 18 s), the
+  native renderer draws no shadow for the skater, draws long hair as a dark
+  hood-like shape, and the scene is darker, compared with the emulated
+  renderer and with the native renderer at default settings.
+- **Evidence:**
+  - `reel_renderers.toml` (Windows Vulkan, the test profile's settings):
+    native vs emulated SSIM 0.906 / 0.908, the emulated frame correct;
+  - `ab reel_stills.toml`: the Odin 2 (default settings, native) is correct,
+    and Windows differs from it by up to 54% of pixels (SSIM 0.82 at 18 s);
+  - the same Windows run with `skate3_native_render_scene_shadow_pcss = false`
+    and `skate3_native_render_scene_shadow_static_casters = false` matches the
+    Odin 2 (SSIM 0.97-0.99).
+
+  The Windows test profile also has SSAO on, MSAA x4 and 2x resolution and
+  draw distance, but turning off the two shadow options alone was enough.
+- **Emulated (F5):** correct, so it's a native renderer bug.
+- **Next step:**
+  - split PCSS from static casters (one stills run with each);
+  - check whether free skate shows it too, not only replays;
+  - take a RenderDoc capture of a held reel frame with the option on.
 
 ## Resolved
 
