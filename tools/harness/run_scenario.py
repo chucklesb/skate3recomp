@@ -313,6 +313,13 @@ def summary(run: Path) -> int:
         if crash["dump"]:
             print(f"  minidump: {run / 'crash.dmp'} (open in WinDbg or Visual Studio with "
                   f"the staged PDBs)")
+        analysis = run / "crash_analysis.txt"
+        if analysis.exists():
+            frames = [ln.strip() for ln in analysis.read_text(errors="replace").splitlines()
+                      if "skate3!" in ln or "rexruntime!" in ln][:8]
+            print(f"  cdb ({analysis.name}):")
+            for ln in frames:
+                print(f"    {ln[:160]}")
         return 5
     r = json.loads(result_path.read_text())
     print(f"{run.name}: {r['status']} (code {r['code']}) - {r['reason']}")
@@ -441,6 +448,29 @@ WIN_RENDERDOC = os.environ.get("SKATE3_WINDOWS_RENDERDOC", "")
 # Optional user-data root for Windows runs (saves, replays, settings): a test
 # copy, so harness runs never touch the player's %APPDATA%\skate3.
 WIN_USER_DATA = os.environ.get("SKATE3_WINDOWS_USER_DATA", "")
+# The Windows console debugger, for crash.dmp triage: SKATE3_WINDOWS_CDB, else
+# cdbX64.exe / cdb.exe on PATH (the WinDbg app installs a cdbX64.exe alias).
+WIN_CDB = (os.environ.get("SKATE3_WINDOWS_CDB")
+           or shutil.which("cdbX64.exe") or shutil.which("cdb.exe") or "")
+
+
+def cdb_triage(run: Path, stage: Path) -> Path | None:
+    """crash.dmp -> crash_analysis.txt: exception context, stack, !analyze.
+    Symbols come from the staged build (skate3.pdb for relwithdebinfo); no
+    network symbol server, so it stays fast."""
+    dmp = run / "crash.dmp"
+    if not dmp.exists() or not WIN_CDB:
+        return None
+    out = run / "crash_analysis.txt"
+    cmds = ".ecxr; kv 40; .echo ----; !analyze -v; q"
+    try:
+        res = subprocess.run([WIN_CDB, "-z", win_path(dmp), "-y", win_path(stage),
+                              "-i", win_path(stage), "-c", cmds],
+                             capture_output=True, text=True, errors="replace", timeout=180)
+        out.write_text(res.stdout + res.stderr)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        out.write_text(f"cdb failed: {e}\n")
+    return out
 
 
 def win_launch(config: str, backend: str, game_args: list[str],
@@ -538,6 +568,8 @@ def run_windows(scenario: Path, config: str, backend: str, extra: list[str],
         # A file still held open on the Windows side: copy what's there.
         log(f"could not move the run folder ({e}); copying it instead")
         shutil.copytree(src, dst, dirs_exist_ok=True)
+    if (dst / "crash.dmp").exists() and cdb_triage(dst, stage):
+        log(f"crash triage: {(dst / 'crash_analysis.txt').relative_to(REPO)}")
     return dst
 
 
