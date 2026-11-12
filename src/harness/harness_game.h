@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 struct PPCContext;
 
@@ -57,16 +58,26 @@ TeleportResult Teleport(const std::string& location, double timeout_s, uint64_t 
 // our own clock and no UI, then return to free skate. Harness thread: start,
 // then poll the status.
 enum class ReelPhase { kIdle, kLoading, kPlaying, kExiting, kDone, kFailed };
+struct ReelOptions {
+  bool from_marker = false;     // start at the reel's marker (the start if none)
+  std::vector<float> stills_s;  // hold at these reel times (s) for screenshots
+};
 struct ReelStatus {
   ReelPhase phase = ReelPhase::kIdle;
   int slot = 0;
   float duration_s = 0;  // the reel's length
   float t_s = 0;         // playback position
+  float start_s = 0;     // where playback started
+  float marker_s = -1;   // the reel's marker, -1 if none
   uint64_t frames = 0;   // editor frames played
+  bool holding = false;  // stopped at still hold_index, waiting for ReleaseReelHold
+  int hold_index = -1;
   std::string error;
 };
-bool StartReel(int slot, std::string* error);
+bool StartReel(int slot, const ReelOptions& options, std::string* error);
 ReelStatus GetReelStatus();
+// Harness thread: the still's screenshot is taken; continue playback.
+void ReleaseReelHold();
 
 // True while the harness wants the game's whole 2D pass (FE movies + HUD)
 // skipped, e.g. during reel playback (FrontEndManager::Render2D hook).

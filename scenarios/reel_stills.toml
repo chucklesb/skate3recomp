@@ -1,0 +1,32 @@
+# Reel stills: play saved skate.Reel replays and hold at fixed reel times for
+# screenshots. A reel held at time t shows the same recorded game state on
+# every run and every target, so these stills are what the A/B report
+# (`run_scenario.py ab`) diffs across targets, and what repeated runs of one
+# target diff to check determinism.
+#
+# Reel 2 plays from its marker (the editor's bookmark, 5.19 s in).
+# Needs the signed-in profile's saves (test user data), like
+# reel_regression.toml.
+name = "reel_stills"
+timeout_s = 900
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+clip = 2
+from = "marker"
+stills = [6.0, 10.0, 14.0, 18.0]

@@ -52,7 +52,8 @@ enum class Verb {
   kTeleport,    // location="Z_UN_ClockTower" (a registry locator) tolerance=5 timeout_s=60
                 // settle=true (false: return on arrival, e.g. a floorless locator)
   kPlayReel,    // clip=N (a saved skate.Reel replay, 1-based as listed in My Replays):
-                // plays it start to end at 1x with no UI, then returns to free skate
+                // plays it start to end at 1x with no UI, then returns to free skate;
+                // from="start"|"marker" stills=[s...] settle_frames=20 every_frames=N tag=x
 };
 
 struct Step {
@@ -112,7 +113,10 @@ struct Step {
   bool via_sequencer = false;  // path = "sequencer": the lower-level teleport (no map load)
 
   // play_reel
-  int64_t clip = 0;  // 1-based saved replay slot
+  int64_t clip = 0;            // 1-based saved replay slot
+  std::string from = "start";  // "start" | "marker"
+  std::vector<double> stills;  // reel times (s) to hold at for screenshots
+  int64_t settle_frames = 20;  // frames to wait at a still before its screenshot
 };
 
 struct Scenario {

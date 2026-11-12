@@ -39,6 +39,7 @@ REX_EXTERN(sub_82B938D8);  // post message(msg*, recipient*, priority) (queued)
 REX_EXTERN(__imp__RtlEnterCriticalSection);  // 0x82F9CB44
 REX_EXTERN(__imp__RtlLeaveCriticalSection);  // 0x82F9CB54
 REX_EXTERN(sub_824FCAD8);  // game-mode event post(gctx, ref<event>*)
+REX_EXTERN(sub_82506BE0);  // editor timeline key position(E, index) -> f1 (0..1)
 REX_EXTERN(sub_824AD240);  // FE manager singleton getter
 REX_EXTERN(sub_82627128);  // My Replays "view replay" action(this)
 REX_EXTERN(sub_82720B50);  // state transition(component, target state fn, param)
@@ -180,6 +181,21 @@ uint32_t CallGuest(PPCContext& ctx, uint8_t* base, void (*fn)(PPCContext&, uint8
   }
   fn(ctx, base);
   const uint32_t ret = ctx.r3.u32;
+  ctx = saved;
+  return ret;
+}
+
+// CallGuest for functions that return a float (f1).
+double CallGuestF(PPCContext& ctx, uint8_t* base, void (*fn)(PPCContext&, uint8_t*),
+                  std::initializer_list<uint32_t> args) {
+  const PPCContext saved = ctx;
+  PPCRegister* regs[] = {&ctx.r3, &ctx.r4, &ctx.r5, &ctx.r6, &ctx.r7, &ctx.r8, &ctx.r9};
+  size_t i = 0;
+  for (uint32_t a : args) {
+    regs[i++]->u64 = a;
+  }
+  fn(ctx, base);
+  const double ret = ctx.f1.f64;
   ctx = saved;
   return ret;
 }
@@ -457,6 +473,17 @@ std::atomic<uint32_t> g_reel_e{0};
 std::atomic<float> g_reel_t{0.0f};
 std::atomic<float> g_reel_duration{0.0f};
 std::atomic<uint64_t> g_reel_frames{0};
+// Options for the current reel (set by StartReel before the request).
+bool g_reel_from_marker = false;
+std::atomic<float> g_reel_start{0.0f};   // where playback started (s)
+std::atomic<float> g_reel_marker{-1.0f};  // the reel's marker (s), -1 if none
+// Stills: the render-thread clock stops exactly at each time and holds there
+// until the harness thread has taken its screenshot (ReleaseReelHold).
+constexpr int kMaxStills = 32;
+float g_still_t[kMaxStills] = {};
+std::atomic<int> g_still_count{0};
+std::atomic<int> g_still_next{0};
+std::atomic<bool> g_reel_hold{false};
 std::mutex g_reel_mu;
 std::string g_reel_error;
 int g_reel_slot = 0;
@@ -576,13 +603,45 @@ void ReelTick(PPCContext& ctx, uint8_t* base) {
       const bool ready = ModeState(base) != kModeStateFreeSkate && e && state == 8 && p > 0.999f &&
                          dur > 0.1f && dur < 3600.0f;
       g_reel_ready_frames = ready ? g_reel_ready_frames + 1 : 0;
-      if (g_reel_ready_frames >= 15) {
+      // The editor's timeline keys (the marker) arrive about half a second
+      // after it settles: wait until channel 0 has a key (count >= 2), or 2 s
+      // for a reel without one.
+      uint32_t keys_word = 0;
+      Read32(base, e + 556, &keys_word);
+      const bool keys = (keys_word & 0xFFFF) >= 2;
+      if (g_reel_ready_frames >= 15 && (keys || g_reel_ready_frames >= 75)) {
+        // The marker: the first key of the editor's current timeline channel,
+        // as the D-pad jump reads it: sub_82506BE0(E, 1) = key 1's normalized
+        // position (index 0 = start 0.0; past the last key = end 1.0). Keys
+        // are u16/65535 in the list at E + 556 + channel * 16.
+        const float m = static_cast<float>(CallGuestF(ctx, base, sub_82506BE0, {e, 1}));
+        const bool has_marker = m > 0.0f && m < 1.0f;
+        g_reel_marker.store(has_marker ? m * dur : -1.0f);
+        float start = 0.0f;
+        if (g_reel_from_marker) {
+          if (has_marker) {
+            start = m * dur;
+          } else {
+            REXLOG_INFO("harness: reel {}: no marker; playing from the start", g_reel_slot);
+          }
+        }
+        // Stills before the start are skipped.
+        int next = 0;
+        while (next < g_still_count.load() && g_still_t[next] < start) {
+          ++next;
+        }
+        g_still_next.store(next);
+        g_reel_hold.store(false);
         g_reel_duration.store(dur);
-        g_reel_t.store(0.0f);
-        Write32(base, e + 4, 0);  // rewind to the start
+        g_reel_start.store(start);
+        g_reel_t.store(start);
+        uint32_t pbits = 0;
+        const float p0 = start / dur;
+        std::memcpy(&pbits, &p0, 4);
+        Write32(base, e + 4, pbits);
         g_reel_e.store(e);
-        REXLOG_INFO("harness: reel {}: playing ({:.2f} s, editor time object {:08X})", g_reel_slot,
-                    dur, e);
+        REXLOG_INFO("harness: reel {}: playing from {:.2f} s ({:.2f} s long, marker {:.2f} s, editor "
+                    "time object {:08X})", g_reel_slot, start, dur, g_reel_marker.load(), e);
         SetReelPhase(ReelPhase::kPlaying);
       } else if (g_reel_wait > 30 * 90) {
         SetReelPhase(ReelPhase::kFailed, "the replay did not load within 90 s");
@@ -590,7 +649,7 @@ void ReelTick(PPCContext& ctx, uint8_t* base) {
       break;
     }
     case ReelPhase::kPlaying:
-      if (g_reel_t.load() >= g_reel_duration.load()) {
+      if (!g_reel_hold.load() && g_reel_t.load() >= g_reel_duration.load()) {
         g_reel_e.store(0);  // stop driving
         g_reel_wait = 0;
         SetReelPhase(ReelPhase::kExiting);
@@ -617,16 +676,33 @@ void ReelTick(PPCContext& ctx, uint8_t* base) {
 }
 }  // namespace
 
-bool StartReel(int slot, std::string* error) {
+bool StartReel(int slot, const ReelOptions& options, std::string* error) {
   const ReelPhase p = Phase();
   if (p == ReelPhase::kLoading || p == ReelPhase::kPlaying || p == ReelPhase::kExiting ||
       g_reel_request.load()) {
     *error = "a reel is already playing";
     return false;
   }
+  if (options.stills_s.size() > static_cast<size_t>(kMaxStills)) {
+    *error = "at most " + std::to_string(kMaxStills) + " stills per reel";
+    return false;
+  }
+  g_reel_from_marker = options.from_marker;
+  std::vector<float> stills = options.stills_s;
+  std::sort(stills.begin(), stills.end());
+  for (size_t i = 0; i < stills.size(); ++i) {
+    g_still_t[i] = stills[i];
+  }
+  g_still_count.store(static_cast<int>(stills.size()));
+  g_still_next.store(0);
+  g_reel_hold.store(false);
   g_reel_phase.store(static_cast<int>(ReelPhase::kIdle));
   g_reel_request.store(slot);
   return true;
+}
+
+void ReleaseReelHold() {
+  g_reel_hold.store(false);
 }
 
 ReelStatus GetReelStatus() {
@@ -636,6 +712,10 @@ ReelStatus GetReelStatus() {
   s.duration_s = g_reel_duration.load();
   s.t_s = g_reel_t.load();
   s.frames = g_reel_frames.load();
+  s.start_s = g_reel_start.load();
+  s.marker_s = g_reel_marker.load();
+  s.holding = g_reel_hold.load();
+  s.hold_index = g_still_next.load() - 1;
   std::lock_guard lk(g_reel_mu);
   s.error = g_reel_error;
   return s;
@@ -756,8 +836,17 @@ extern "C" REX_FUNC(sub_82C7EA50) {
       uint32_t bits = 0;
       std::memcpy(&bits, &pos, 4);
       Write32(base, e + 4, bits);
-      g_reel_t.store(t + static_cast<float>(ctx.f1.f64));
-      g_reel_frames.fetch_add(1);
+      if (!g_reel_hold.load()) {
+        float nt = t + static_cast<float>(ctx.f1.f64);
+        const int next = g_still_next.load();
+        if (next < g_still_count.load() && nt >= g_still_t[next]) {
+          nt = g_still_t[next];  // stop exactly at the still and hold there
+          g_still_next.store(next + 1);
+          g_reel_hold.store(true);
+        }
+        g_reel_t.store(nt);
+        g_reel_frames.fetch_add(1);
+      }
     }
   }
   __imp__sub_82C7EA50(ctx, base);

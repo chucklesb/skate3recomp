@@ -5,8 +5,9 @@
 #
 # Needs the signed-in profile's saves: run it against the test user data
 # (SKATE3_WINDOWS_USER_DATA, set by the harness skill's rs.sh) holding
-# rmcsave/REPLY_SKATER with at least two replays. Clip numbers are the
-# replays' positions in My Replays (oldest first).
+# rmcsave/REPLY_SKATER with at least four replays. Clip numbers are the
+# replays' positions in My Replays (oldest first). Clip 1 (90 s) is left out
+# to keep the run short.
 name = "reel_regression"
 timeout_s = 900
 boot = "demo"
@@ -23,7 +24,7 @@ timeout_s = 400
 
 [[step]]
 do = "wait"
-frames = 90
+frames = 30
 
 [[step]]
 do = "play_reel"
@@ -32,16 +33,16 @@ every_frames = 150
 
 [[step]]
 do = "wait"
-frames = 90
+frames = 30
 
 [[step]]
 do = "play_reel"
-clip = 1
+clip = 4
 every_frames = 150
 
 [[step]]
 do = "wait"
-frames = 90
+frames = 30
 
 [[step]]
 do = "state"

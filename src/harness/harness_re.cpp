@@ -492,6 +492,39 @@ extern "C" REX_FUNC(sub_82833748) {
 // (The replay editor time update sub_82C7EA50 is hooked by play_reel in
 // harness_game.cpp.)
 
+// Replay timeline lookups (vtable 0x8230EB30): slot 7/8 = previous/next point
+// from an index, 11/12 = end/start, 14 = count; and the editor's set-state
+// sub_82C83900(E, state). Logged with the return value and caller while
+// --skate3_harness_re_trace is on (finding the editor's marker).
+#define RE_TRACE_RET(addr, name)                                                                  \
+  extern "C" REX_FUNC(sub_##addr) {                                                               \
+    const bool on = REXCVAR_GET(skate3_harness_re_trace);                                         \
+    const uint32_t r3 = ctx.r3.u32, r4 = ctx.r4.u32;                                              \
+    const uint64_t lr = ctx.lr;                                                                    \
+    __imp__sub_##addr(ctx, base);                                                                 \
+    if (on) {                                                                                     \
+      REXLOG_INFO("re-trace: " name " r3={:08X} r4={:08X} -> {:08X} ({}) lr={:08X}", r3, r4,      \
+                  ctx.r3.u32, ctx.r3.s32, static_cast<uint32_t>(lr));                             \
+    }                                                                                             \
+  }
+RE_TRACE_RET(82726528, "timeline prev")
+RE_TRACE_RET(827265B0, "timeline next")
+RE_TRACE_RET(827266C0, "timeline end")
+RE_TRACE_RET(82726748, "timeline start")
+RE_TRACE_RET(82726660, "timeline count")
+RE_TRACE_RET(82C83900, "editor set-state")
+#undef RE_TRACE_RET
+
+// Editor set-position sub_82C89E90(E, f1 = normalized position, ...): logs
+// the position and the caller's backtrace while tracing.
+extern "C" REX_FUNC(sub_82C89E90) {
+  if (REXCVAR_GET(skate3_harness_re_trace)) {
+    REXLOG_INFO("re-trace: editor set-position E={:08X} pos={} r5={:08X} r6={:08X} stack: {}",
+                ctx.r3.u32, ctx.f1.f64, ctx.r5.u32, ctx.r6.u32, Backtrace(ctx, base, 8));
+  }
+  __imp__sub_82C89E90(ctx, base);
+}
+
 // Game-mode event post sub_824FCAD8(gctx, ref<event>*) (queues on the world's
 // event deque). Logs memcard requests (type 36) with the poster's backtrace
 // and the request's param object.

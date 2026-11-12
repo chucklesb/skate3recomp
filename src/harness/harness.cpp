@@ -1118,7 +1118,12 @@ Outcome Execute(Run& r, const Step& st) {
         return Fail("play_reel needs gameplay (free skate with the skater in the world)");
       }
       std::string err;
-      if (!game::StartReel(static_cast<int>(st.clip), &err)) {
+      game::ReelOptions opts;
+      opts.from_marker = st.from == "marker";
+      for (double v : st.stills) {
+        opts.stills_s.push_back(static_cast<float>(v));
+      }
+      if (!game::StartReel(static_cast<int>(st.clip), opts, &err)) {
         return Fail("play_reel: " + err);
       }
       const std::string clip = "\"clip\":" + std::to_string(st.clip);
@@ -1137,28 +1142,54 @@ Outcome Execute(Run& r, const Step& st) {
         return Fail("play_reel clip " + std::to_string(st.clip) + ": " +
                     (s.error.empty() ? "did not start before timeout_s" : s.error));
       }
-      char buf[160];
-      std::snprintf(buf, sizeof(buf), ",\"duration_s\":%.3f", s.duration_s);
+      char buf[200];
+      std::snprintf(buf, sizeof(buf),
+                    ",\"duration_s\":%.3f,\"from\":\"%s\",\"start_s\":%.3f,\"marker_s\":%.3f",
+                    s.duration_s, st.from.c_str(), s.start_s, s.marker_s);
       Event(r, "reel_start", clip + buf);
       const uint64_t start_frame = r.state.frame;
       const auto start_time = Clock::now();
-      // Optional screenshots during playback: every_frames = N (tag defaults
-      // to "reel<clip>").
+      // While playing: screenshots every `every_frames` frames (tag defaults to
+      // "reel<clip>"), and at each still (the clock holds there): wait `settle`
+      // frames, take "reel<clip>_t<seconds>", release the hold.
+      const std::string tag = st.tag.empty() ? "reel" + std::to_string(st.clip) : st.tag;
+      const bool periodic = st.every_frames_given && st.every_frames > 0;
       std::vector<std::string> shots;
-      if (st.every_frames_given && st.every_frames > 0) {
-        const std::string tag = st.tag.empty() ? "reel" + std::to_string(st.clip) : st.tag;
-        uint64_t next = start_frame + static_cast<uint64_t>(st.every_frames);
-        while (phase() == ReelPhase::kPlaying && Clock::now() < deadline && !r.stop.load()) {
-          if (r.state.frame >= next) {
+      std::string stills_json;
+      uint64_t next = start_frame + (periodic ? static_cast<uint64_t>(st.every_frames) : 0);
+      int held_index = -2;
+      uint64_t held_since = 0;
+      while (phase() == ReelPhase::kPlaying && Clock::now() < deadline && !r.stop.load()) {
+        const game::ReelStatus cur = game::GetReelStatus();
+        if (cur.holding) {
+          if (cur.hold_index != held_index) {
+            held_index = cur.hold_index;
+            held_since = r.state.frame;
+          }
+          if (r.state.frame >= held_since + static_cast<uint64_t>(st.settle_frames)) {
+            char still_tag[96];
+            std::snprintf(still_tag, sizeof(still_tag), "%s_t%.2f", tag.c_str(), cur.t_s);
             std::string shot_err;
             std::vector<std::string> names;
-            if (TakeScreenshots(r, tag, 1, 1, &names, &shot_err)) {
-              shots.insert(shots.end(), names.begin(), names.end());
-            }
-            next = r.state.frame + static_cast<uint64_t>(st.every_frames);
+            TakeScreenshots(r, still_tag, 1, 1, &names, &shot_err);
+            const std::string file = names.empty() ? "" : JsonEscape(names[0]);
+            char fields[200];
+            std::snprintf(fields, sizeof(fields), "\"t\":%.3f,\"file\":\"%s\"", cur.t_s,
+                          file.c_str());
+            stills_json += std::string(stills_json.empty() ? "" : ",") + "{" + fields + "}";
+            Event(r, "reel_still", clip + "," + fields);
+            game::ReleaseReelHold();
+            next = r.state.frame + (periodic ? static_cast<uint64_t>(st.every_frames) : 0);
           }
-          std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        } else if (periodic && r.state.frame >= next) {
+          std::string shot_err;
+          std::vector<std::string> names;
+          if (TakeScreenshots(r, tag, 1, 1, &names, &shot_err)) {
+            shots.insert(shots.end(), names.begin(), names.end());
+          }
+          next = r.state.frame + static_cast<uint64_t>(st.every_frames);
         }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
       WaitUntil(r, left(), [&] { return phase() != ReelPhase::kPlaying; });
       s = game::GetReelStatus();
@@ -1181,7 +1212,7 @@ Outcome Execute(Run& r, const Step& st) {
       }
       Event(r, "reel_exit", clip);
       Outcome o;
-      o.result_json = clip + played + ",\"shots\":[";
+      o.result_json = clip + played + ",\"stills\":[" + stills_json + "],\"shots\":[";
       for (size_t i = 0; i < shots.size(); ++i) {
         o.result_json += (i ? ",\"" : "\"") + JsonEscape(shots[i]) + "\"";
       }

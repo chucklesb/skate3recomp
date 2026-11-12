@@ -2,7 +2,7 @@
 """Run scenario-harness scenarios locally or on a DroidDeck handheld.
 
     run_scenario.py local  <scenario.toml> --exe <skate3 or AppImage> [-- args...]
-    run_scenario.py odin2  <scenario.toml> [--config release|relwithdebinfo] [--no-deploy] [-- args...]
+    run_scenario.py odin2  <scenario.toml> [--config release|relwithdebinfo] [--no-build] [--no-deploy] [-- args...]
     run_scenario.py live   [--config ...] [--no-deploy] [-- args...]  # live mode (inbox + recording)
     run_scenario.py windows <scenario.toml> [--config ...] [--backend d3d12|vulkan] [--no-build]
                            [--renderdoc [DIR]] [--timeout s] [-- args...]
@@ -838,6 +838,8 @@ def main() -> int:
     p_odin = sub.add_parser("odin2")
     p_odin.add_argument("scenario", type=Path)
     p_odin.add_argument("--no-deploy", action="store_true")
+    p_odin.add_argument("--no-build", action="store_true",
+                        help="deploy the existing linux-aarch64 build without rebuilding it")
     p_odin.add_argument("--config", choices=CONFIGS, default="release",
                         help="which linux-aarch64 build to deploy (default release)")
     p_odin.add_argument("--out", type=Path, default=REPO / "out/harness-runs")
@@ -875,6 +877,8 @@ def main() -> int:
     p_ab.add_argument("--out", type=Path, default=REPO / "out/harness-runs")
     p_live = sub.add_parser("live")
     p_live.add_argument("--target", choices=("odin2", "windows"), default="odin2")
+    p_live.add_argument("--no-build", action="store_true",
+                        help="odin2: deploy the existing linux-aarch64 build without rebuilding it")
     p_live.add_argument("--no-deploy", action="store_true",
                         help="odin2: reuse the deployed build; windows: skip the build")
     p_live.add_argument("--config", choices=CONFIGS, default="release")
@@ -1007,6 +1011,8 @@ def main() -> int:
     dev = Device()
     if a.cmd in ("odin2", "live"):
         if not a.no_deploy:
+            if not getattr(a, "no_build", False):
+                build_aarch64(a.config)  # deploy packages the build dir as it is
             deploy(dev, a.config)
         elif a.config != deployed_config():
             log(f"note: --no-deploy reuses the deployed build ({deployed_config()}), "
