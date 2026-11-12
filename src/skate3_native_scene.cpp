@@ -1265,6 +1265,15 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_ring, false, "Skate 3",
                     "frame artifacts no capture can catch")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
+REXCVAR_DEFINE_INT32(skate3_native_render_scene_dyn_stamp_mode, 1, "Skate 3",
+                     "Dynamic-entity pose timing (KI-120): 1 = stamp poses with the "
+                     "sampler time of the frame's own camera (same sim tick, any "
+                     "frame rate) and treat entities as 'slow' only relative to the "
+                     "camera's own tick; 0 = the old rules (latest camera tick if < "
+                     "20 ms old, else the render time; fixed 60 Hz character "
+                     "reference), which jitter at 30 fps")
+    .range(0, 1)
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_dyn_gap_fill, true, "Skate 3",
                     "Re-publish character/cloth/skinned items for up to two "
                     "missed publish frames (high-frame-rate body flicker)")
@@ -6526,6 +6535,19 @@ bool g_smooth_active = false;
 // synthetic-pan probe (mode 3) to measure reconstruction error against the
 // known ideal pose.
 CamPose g_smooth_pose;
+// char_track (KI-120): the guest's own view-proj before SmoothCamera replaced
+// it, and how many sampler camera poses SmoothCamera drained this frame
+// (~ guest sim ticks per rendered frame). Guest render thread only.
+float g_raw_view_proj[16] = {};
+int g_cam_drained = 0;
+// KI-120: sampler time of THIS frame's guest camera (the sampler entry whose
+// view equals the view BuildFrameScene read), i.e. when the sim wrote the
+// tick this frame's poses come from. g_frame_cam_match = 0 when no sampler
+// entry matched (the write was < ~1 ms ago; `now` is then the right time).
+double g_frame_cam_tick = 0.0;
+int g_frame_cam_match = 0;
+// SmoothCamera's EMA of the guest camera tick period (seconds).
+double g_cam_period = 1.0 / 200.0;
 
 // Synthetic-pan probe state/helpers: native/skate3_native_diag.h (the
 // engage/step orchestration stays in BuildFrameScene below; it reads the
@@ -7145,6 +7167,7 @@ bool SmoothCamera(const float view[16], const float proj[16], const float raw_vp
       }
       if (dt > 0.0005 && dt < 0.05) {
         s_period = s_period * 0.9 + dt * 0.1;
+        g_cam_period = s_period;
       }
       s_newest = (s_newest + 1) % kRing;
       s_ring[s_newest] = p;
@@ -7161,6 +7184,30 @@ bool SmoothCamera(const float view[16], const float proj[16], const float raw_vp
     {
       std::lock_guard<std::mutex> lock(g_cam_samples_mutex);
       s_pending.swap(g_cam_samples);
+    }
+    g_cam_drained = int(s_pending.size());
+    // Recent raw sampler views, to find this frame's own camera (KI-120).
+    struct RecentView {
+      double t = 0.0;
+      float view[16] = {};
+    };
+    static RecentView s_recent[16];
+    static int s_recent_next = 0;
+    for (const RawCamSample& s : s_pending) {
+      RecentView& rv = s_recent[s_recent_next];
+      s_recent_next = (s_recent_next + 1) % 16;
+      rv.t = s.t;
+      std::memcpy(rv.view, s.view, sizeof(rv.view));
+    }
+    g_frame_cam_match = 0;
+    g_frame_cam_tick = now;
+    for (int k = 1; k <= 16; ++k) {
+      const RecentView& rv = s_recent[(s_recent_next + 16 - k) % 16];
+      if (rv.t > 0.0 && std::memcmp(rv.view, view, sizeof(rv.view)) == 0) {
+        g_frame_cam_tick = rv.t;
+        g_frame_cam_match = 1;
+        break;
+      }
     }
     for (const RawCamSample& s : s_pending) {
       CamPose p;
@@ -7421,6 +7468,8 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
     int box = 0;           // took the 8-tap boxcar
     int detach = 0;        // ropa DETACH repair fired
     float sw = 0.0f;       // shape-kernel total weight (garment only)
+    float stamp_ms = -1.0f;  // now - stamp of this frame's ingest (ing=1)
+    int clamp = 0;           // boxcar taps clamped to the ring's newest pose
   };
   CharTrack trk_shirt, trk_body;
   const bool trk_on = REXCVAR_GET(skate3_native_render_scene_char_track);
@@ -7823,10 +7872,25 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
     // frame-grid timestamps alias against the sim rate once the render
     // loop is paced (the same problem the camera sampler solves). Frame
     // time otherwise.
-    const double stamp =
-        (g_latest_cam_tick > 0.0 && now - g_latest_cam_tick < 0.02)
-            ? g_latest_cam_tick
-            : now;
+    //
+    // KI-120: the 20 ms freshness gate assumed the ~200 Hz PC camera tick.
+    // At 30 fps (Odin 2) the guest camera ticks once per 33 ms frame, so
+    // the latest tick was always 17-36 ms old, the gate failed, and poses
+    // were stamped with the RENDER time while the camera kept its precise
+    // sim time: the two clocks differed by a varying ~10 ms, a speed-
+    // proportional on-screen wobble (4x the raw game's at 8+ m/s). Mode 1
+    // stamps with the sampler time of THIS frame's own camera (its poses
+    // come from the same sim tick), at any frame rate.
+    double stamp;
+    if (REXCVAR_GET(skate3_native_render_scene_dyn_stamp_mode) == 1) {
+      stamp = (g_frame_cam_match != 0 && now - g_frame_cam_tick < 0.1)
+                  ? g_frame_cam_tick
+                  : now;
+    } else {
+      stamp = (g_latest_cam_tick > 0.0 && now - g_latest_cam_tick < 0.02)
+                  ? g_latest_cam_tick
+                  : now;
+    }
     // Ingest spacing floor: past ~285 fps the pose changes every rendered
     // frame, FASTER than the ~200 Hz camera tick, so consecutive changed
     // poses would stamp with the SAME tick time (degenerate interpolation
@@ -7907,6 +7971,7 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
       }
       if (trk != nullptr) {
         trk->ing = 1;
+        trk->stamp_ms = float((now - stamp) * 1e3);
       }
       const double prev_t = h.count > 0 ? h.ring[h.newest].t : 0.0;
       h.newest = h.count == 0 ? 0 : (h.newest + 1) % kRing;
@@ -8001,9 +8066,20 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
     // motion, at the cost of that entity lagging one of ITS sim updates
     // behind the world, invisible for background traffic, and never
     // applied to 60 Hz entities (the skater/NPCs keep the shared clock).
+    // KI-120: "slower than the characters" must be relative to the guest's
+    // actual tick. At 30 fps (Odin 2) the camera AND the skater tick every
+    // 33 ms, so the fixed 60 Hz reference delayed the skater 17 ms behind
+    // the camera. Mode 1 measures against the camera's own period (never
+    // below the 60 Hz character cadence, so the PC behavior is unchanged).
+    const double char_period =
+        REXCVAR_GET(skate3_native_render_scene_dyn_stamp_mode) == 1
+            ? std::max(1.0 / 60.0, g_cam_period)
+            : 1.0 / 60.0;
     const double play_e =
         g_smooth_play -
-        (h.period > 0.020 ? std::min(h.period - 1.0 / 60.0, 0.1) : 0.0);
+        (h.period > (char_period > 1.0 / 60.0 ? char_period + 0.0035 : 0.020)
+             ? std::min(h.period - char_period, 0.1)
+             : 0.0);
     static std::vector<float> acc;  // guest render thread only
     float wacc[16] = {};
     bool ok = true;
@@ -8014,9 +8090,12 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
       constexpr int kTaps = 8;
       acc.assign(skinned ? item.bones.size() : 0, 0.0f);
       for (int tap = 0; tap < kTaps && ok; ++tap) {
-        const double tt =
-            std::min(play_e - filter_w * 0.5 + (tap + 0.5) * filter_w / kTaps,
-                     h.ring[h.newest].t);
+        const double tt_free =
+            play_e - filter_w * 0.5 + (tap + 0.5) * filter_w / kTaps;
+        const double tt = std::min(tt_free, h.ring[h.newest].t);
+        if (trk != nullptr && tt_free > h.ring[h.newest].t) {
+          ++trk->clamp;
+        }
         ok = accum_at(tt, 1.0f / kTaps, acc.data(), wacc);
       }
     } else {
@@ -8419,15 +8498,38 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
     fpos(trk_body, bi, bp);
     if (bi != nullptr) {
       const CharTrack& t = trk_body;
+      // KI-120: where the body lands on screen (NDC x,y) through the DRAWN
+      // view-proj (scr, drawn pose) and through the guest's raw one (rscr,
+      // raw pose): the skater-vs-camera wobble the eye sees, and the
+      // game's own reference for it.
+      const auto ndc = [](const float vp[16], const float p[3], float out[2]) {
+        float clip[4];
+        for (int k = 0; k < 4; ++k) {
+          clip[k] = p[0] * vp[0 * 4 + k] + p[1] * vp[1 * 4 + k] +
+                    p[2] * vp[2 * 4 + k] + vp[3 * 4 + k];
+        }
+        const float w = std::fabs(clip[3]) > 1e-6f ? clip[3] : 1e-6f;
+        out[0] = clip[0] / w;
+        out[1] = clip[1] / w;
+      };
+      float scr[2], rscr[2];
+      ndc(scene.view_proj, bp, scr);
+      ndc(g_raw_view_proj, t.raw, rscr);
       REXLOG_INFO(
           "char-track f={} body mesh={:08X} ctx={:08X} fam={} src={} cb={} "
           "rp=({:.3f},{:.3f},{:.3f}) fp=({:.3f},{:.3f},{:.3f}) ring[n={} "
           "age={:.1f} per={:.1f} ing={} rst={} clm={} hold={} raw={}] "
-          "ba={:.2f} box={} play={:.1f}",
+          "ba={:.2f} box={} play={:.1f} scr=({:.4f},{:.4f}) "
+          "rscr=({:.4f},{:.4f}) stamp={:.1f} tick={:.1f} cam_n={} clamp={} "
+          "cm={} sm={}",
           s_frame, bi->mesh, bi->ctx, bi->char_family, bi->dbg_src,
           bi->caster_bank ? 1 : 0, t.raw[0], t.raw[1], t.raw[2], bp[0], bp[1],
           bp[2], t.ring_n, t.age_ms, t.per_ms, t.ing, t.rst, t.clm, t.hold,
-          t.raw_render, t.ba, t.box, (now - g_smooth_play) * 1e3);
+          t.raw_render, t.ba, t.box, (now - g_smooth_play) * 1e3, scr[0],
+          scr[1], rscr[0], rscr[1], t.stamp_ms,
+          g_latest_cam_tick > 0.0 ? (now - g_latest_cam_tick) * 1e3 : -1.0,
+          g_cam_drained, t.clamp, g_frame_cam_match,
+          REXCVAR_GET(skate3_native_render_scene_dyn_stamp_mode));
     }
     if (si != nullptr) {
       const CharTrack& t = trk_shirt;
@@ -10671,6 +10773,7 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
       }
     }
     float smooth_vp[16], smooth_cam[3];
+    std::memcpy(g_raw_view_proj, scene.view_proj, sizeof(g_raw_view_proj));
     if (SmoothCamera(cam_view, proj, scene.view_proj, scene.cam_pos, now_s, smooth_vp,
                      smooth_cam)) {
       std::memcpy(scene.view_proj, smooth_vp, sizeof(smooth_vp));

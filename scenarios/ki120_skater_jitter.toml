@@ -1,0 +1,53 @@
+# KI-120: the skater jitters relative to the camera, worse with speed.
+#
+# Replays a recording made on the Odin 2 (2026-11-12): from Lower Campus,
+# fast straight-line skating (~54 s, often 8+ m/s). char_track logs the
+# body's on-screen position through the drawn and the raw camera each frame;
+# measure the wobble with:
+#
+#   tools/harness/char_jitter.py out/harness-runs/<run>/log.txt
+#
+#   tools/harness/run_scenario.py odin2 scenarios/ki120_skater_jitter.toml
+#   ... -- --skate3_native_render_scene_dyn_stamp_mode=0   (the old timestamps)
+name = "ki120_skater_jitter"
+timeout_s = 500
+boot = "demo"
+state_every_frames = 10
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+skate3_native_render_scene_char_track = true
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 300
+
+[[step]]
+do = "wait"
+frames = 90
+
+[[step]]
+do = "teleport"
+location = "Z_UN_LowerCampus"
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "play"
+file = "ki120_skater_jitter.s3rec"
+async = true
+
+[[step]]
+do = "screenshot"
+tag = "ride"
+count = 18
+every_frames = 90
+
+[[step]]
+do = "wait"
+frames = 120

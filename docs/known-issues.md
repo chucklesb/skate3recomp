@@ -13,7 +13,7 @@ happen. The technical details follow for whoever works on it.
 | [KI-117](#ki-117-the-skaters-feet-and-body-parts-fly-off-at-speed) | Feet and other body parts come off the skater at speed, e.g. setting up a flip | Fixed (Odin 2) |
 | [KI-118](#ki-118-the-screen-goes-black-after-spawning-at-some-locations) | Black screen (HUD only) after spawning at some places | Open |
 | [KI-119](#ki-119-enhanced-shadows-put-sunny-places-in-shade) | With Enhanced Shadows on, sunny places go dark and the skater loses their shadow | Mostly fixed |
-| [KI-120](#ki-120-the-skater-jitters-worse-with-speed) | The skater looks jittery, as if falling behind and catching up, worse with speed | Open |
+| [KI-120](#ki-120-the-skater-jitters-worse-with-speed) | The skater looks jittery, as if falling behind and catching up, worse with speed | Fixed (Odin 2) |
 
 ---
 
@@ -218,31 +218,72 @@ The Odin 2's frames also match the Windows ones for each setting (SSIM
 
 ## KI-120: The skater jitters, worse with speed
 
-**What you see:** the skater model looks slightly jittery while skating, as
-if the physics fell behind and caught up again and again. It seems
-intermittent and gets more noticeable the faster you go. Most visible on the
-Odin 2 (30 fps).
+**What you see:** while skating fast, the skater looks jittery against the
+background, as if the physics fell behind and caught up again and again. It
+gets worse the faster you go. Most visible on the Odin 2 (30 fps).
 
-**How to see it:** skate at speed on the Odin 2 and watch the skater against
-the background.
+**How to see it:** on the Odin 2, bomb a long straight run (Observatory
+Road, Lower Campus) and watch the skater. Setting
+`skate3_native_render_scene_dyn_stamp_mode=0` brings the old behaviour back
+for comparison.
 
-**Status:** open · **Severity:** low to medium · **Found:** long-standing;
-reported again 2026-11-12 while checking the KI-117 fix.
+**Status:** fixed (2026-11-12), verified on the Odin 2 by hand and with
+measurements · **Severity:** medium · **Found:** long-standing.
+
+**What was wrong:** the renderer smooths the camera and the skater
+separately and plays both back at the same moment. That only works if both
+are timed with the same clock. The camera's samples carry the exact time the
+game wrote them. The skater's poses were meant to borrow that time, but only
+if it was under 20 ms old, a limit made for a PC's ~200 Hz camera. At 30 fps
+the camera updates every 33 ms, so the check always failed and the skater
+was timed by the render loop instead. The two clocks differed by a varying
+~10 ms, which at 8 m/s is centimetres of back and forth every frame. A
+second 30 fps assumption added to it: a rule for slow-updating traffic also
+caught the skater (it updates every 33 ms too), drawing it a further 17 ms
+behind the camera.
+
+**The fix:** each frame, the skater's pose is timed with the moment the game
+wrote that frame's own camera (both come from the same simulation step), and
+"slow-updating" is judged against the camera's own update rate instead of a
+fixed 60 Hz. Both changes are behind `skate3_native_render_scene_dyn_stamp_mode`
+(default 1; 0 = the old behaviour). PCs at high frame rates behave as
+before.
+
+**Results (Odin 2, one live session, the setting switched every 12 s while
+skating; on-screen movement jitter at 8+ m/s, pixels at 1080p):**
+
+| | Typical frame | Worst 5% |
+|---|---|---|
+| Before (1422 frames) | 6.5 | 142 |
+| After (2708 frames) | 1.3 | 8.3 |
+| The game's own frames (reference) | 1.4-1.8 | 7-12 |
+
+On Windows at 30 fps (replaying the recording): before 4.2 / 42, after
+1.0 / 13.
 
 <details>
 <summary>Technical details</summary>
 
-- On its own the skater's drawn motion is fairly steady (Odin 2,
-  `repro_flip_setup_body_parts`): frames render at 33 ms, and the drawn speed
-  follows the true speed within 0.2-0.3 m/s typically, 1.7-1.9 m/s at the
-  95th percentile at 5-8+ m/s.
-- **Hypothesis:** the jitter is the skater relative to the camera. The
-  camera is smoothed from ~200 Hz samples on its own track; skater poses
-  arrive at 30 Hz and are stamped when the renderer ingests them
-  (`g_latest_cam_tick`), not when the game simulated them. Timestamp error
-  becomes position error proportional to speed (33 ms at 8 m/s = 0.26 m).
-- **Next step:** log the drawn camera position next to `char_track` and
-  measure the skater's on-screen wobble at speed; compare with the emulated
-  renderer (F5) and a fast PC.
+- **Where:** `InterpolateDynamicItems` in `skate3_native_scene.cpp`, the ring
+  pose `stamp` and the per-entity playback point `play_e`. `SmoothCamera`
+  now remembers the last 16 sampler views and finds the one equal to this
+  frame's guest view (`g_frame_cam_tick`, `g_frame_cam_match`); it also
+  exports its tick period (`g_cam_period`).
+- **Measured with** new `char_track` body fields: `scr` / `rscr` (the body's
+  NDC through the drawn and the raw camera), `stamp`, `tick`, `cam_n`,
+  `clamp`, `cm` (frame camera matched) and `sm` (the mode), plus
+  `tools/harness/char_jitter.py` (second difference of the on-screen
+  position by speed, split by mode when it changed live).
+- **Ruled out:** a starved smoothing window (no boxcar tap ever clamped to the
+  newest pose) and uneven guest stepping (exactly one camera update per
+  frame at 30 fps).
+- **Before the fix:** at 30 fps `now - g_latest_cam_tick` was 17-36 ms
+  (median 29), so poses were stamped `now` while the camera ring kept sampler
+  times.
+- **Regression scenario:** `scenarios/ki120_skater_jitter.toml` replays the
+  recording (Lower Campus, ~54 s of fast skating); check with
+  `char_jitter.py`. Input replays drift (pedestrians, timing), so compare
+  speed groups, and prefer a live session that switches the setting for
+  A/B.
 
 </details>
