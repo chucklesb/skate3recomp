@@ -1084,13 +1084,41 @@ repro steps; the entry says where the problem is and how it would show.
     shadow, including the sunlit areas. The skater stands in that shade, so
     its own ground shadow can't be seen and its hair is unlit; the "dark
     hood" and the darker scene are the same over-shadowing.
-- **Emulated (F5):** correct, so it's a native renderer bug.
-- **Next step:**
-  - look at the static caster shadow pass (`skate3_native_render_scene_shadow_static_casters`,
-    with `_shadow_static_size = 4096` in the test profile): its projection/bounds,
-    depth bias, or which casters it includes;
-  - check whether free skate shows it too, not only replays;
-  - take a RenderDoc capture of a held reel frame with the option on.
+  - **Free skate shows it too** (Peterson Pavilion spawn, cvars swept live,
+    compared with static casters off):
+
+    | Variant | SSIM |
+    |---|---|
+    | on | 0.83 |
+    | bias 0.08 → 0.5 | 0.85 |
+    | radius 180 → 60 | 0.88 |
+    | strength 0 | 0.97 (only the skater's idle pose differs) |
+
+    So it is not acne, depth precision or coverage.
+  - **The sun axis is world-fixed and sane:** the per-rebuild log
+    (`static sun rebuild … sun=… elev=… cam_fwd=…`) shows c6 at 47°
+    elevation. It doesn't follow the camera; it changes only when the reel
+    loads its own lighting (one 12° "axis jump").
+  - **The map content is correct geometry:** a RenderDoc capture (Windows
+    Vulkan; the map saved through qrenderdoc's Python) shows terrain, trees,
+    the pavilion and walkways at the right places, with no oversized or stray
+    caster.
+
+  **Conclusion:** the shadows are geometrically right for the axis the map
+  uses, c6 (the "material sun"). That axis disagrees with the sun the game's
+  baked lighting and its own renderer use; the code comments already measure
+  c6 at about 43° off the cascade axis. Spots the game shows in sun (an open
+  plaza, a skater under the pavilion's roof edge) fall in c6 shade from
+  nearby buildings. The option is off by default, so only players who turn it
+  on see this; this is the "odd extra shadows" upstream shelved it for (KI-5).
+- **Emulated (F5):** correct.
+- **Options:**
+  - derive the static map's axis from the sun the baked lightmaps were made
+    with (to find), instead of c6;
+  - only apply static shade where the baked lighting agrees (min with the
+    lightmap is already done for world receivers; characters and props have
+    no such check);
+  - leave the option off by default and document the limit (current state).
 
 ## Resolved
 

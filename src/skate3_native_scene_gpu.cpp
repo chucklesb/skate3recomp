@@ -7131,6 +7131,27 @@ static void RenderStaticSunMap(const NativeGuestOutputRenderContext& context,
   g_r.nsm_last_build_frame = frame_number;
   g_r.nsm_built_radius = radius;
   std::memcpy(g_r.nsm_sun, sun, sizeof(g_r.nsm_sun));
+  {
+    // KI-119 diagnostics: the axis each rebuild uses, next to the camera's
+    // forward (view_proj's w column), to tell a world-space sun from a
+    // view-relative one.
+    static std::atomic<uint32_t> s_build_logs{0};
+    const uint32_t n = s_build_logs.fetch_add(1, std::memory_order_relaxed);
+    if (n < 40 || (n & 63u) == 0) {
+      const float* vp = scene.view_proj;
+      float f[3] = {vp[3], vp[7], vp[11]};
+      const float fl = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+      for (float& v : f) {
+        v = fl > 1e-6f ? v / fl : 0.0f;
+      }
+      REXLOG_INFO(
+          "native-scene: static sun rebuild n={} frame={} sun=({:.3f},{:.3f},{:.3f}) "
+          "elev={:.1f} cam_fwd=({:.3f},{:.3f},{:.3f}) casters={}",
+          n + 1, frame_number, sun[0], sun[1], sun[2],
+          std::asin(std::clamp(sun[1], -1.0f, 1.0f)) * 57.29578f, f[0], f[1], f[2],
+          g_r.static_casters.size());
+    }
+  }
   float o[3] = {cam[0], cam[1], cam[2]};
   const float cx = xl[0] * o[0] + xl[1] * o[1] + xl[2] * o[2];
   const float cy = yl[0] * o[0] + yl[1] * o[1] + yl[2] * o[2];
