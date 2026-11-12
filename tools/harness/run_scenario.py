@@ -347,7 +347,18 @@ def summary(run: Path) -> int:
     if shots:
         print(f"  shots: {shots[0].name} .. {shots[-1].name}")
     renderer_diffs(run, shots)
+    perf_summary(run)
     return int(r["code"])
+
+
+def perf_summary(run: Path) -> None:
+    """CPU stage and GPU pass timings from the log -> perf.json (only when the
+    run logged them, e.g. scenarios/perf_reel.toml); see perf_report.py."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import perf_report  # noqa: E402
+    perf = perf_report.write(run)
+    if perf and perf["segments"]:
+        perf_report.print_summary(run, perf)
 
 
 def renderer_diffs(run: Path, shots: list[Path]) -> None:
@@ -698,7 +709,37 @@ def ab_compare(scenario: Path, runs: list[tuple[str, Path | None]], ab_dir: Path
                       f"changed {m['changed']:5.2f}% mae {m['mae']:6.2f}  {m['verdict']}{still}")
     if (ab_dir / "shots").is_dir():
         print(f"  paired screenshots: {(ab_dir / 'shots').relative_to(REPO)}/<tag>/")
+    ab_perf(runs)
     return 0 if all(rec.get("code") == 0 for rec in recs) else 1
+
+
+def ab_perf(runs: list[tuple[str, Path | None]]) -> None:
+    """Per-segment CPU/GPU timings side by side, for runs that logged them
+    (scenarios/perf_reel.toml); details: run_scenario.py perf <a> <b>."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import perf_report  # noqa: E402
+    perfs = []
+    for label, run in runs:
+        if run is None:
+            continue
+        p = perf_report.write(run)
+        if p and p["segments"]:
+            perfs.append((label, p))
+    if not perfs:
+        return
+    segs = sorted({s for _, p in perfs for s in p["segments"]}, key=lambda s: (s == "all", s))
+    print("  perf (fps | cpu render ms | gpu native ms: main ao shadow sun vol bloom):")
+    for seg in segs:
+        print(f"    [{seg}]")
+        for label, p in perfs:
+            d = p["segments"].get(seg)
+            if not d:
+                continue
+            c, g = d["cpu"], d["gpu"]
+            gpu = (f"{g.get('nat_total', 0) / 1000:5.2f}: " + " ".join(
+                f"{g.get(k, 0) / 1000:.2f}" for k in
+                ("NatMain", "NatAO", "NatShadow", "NatSun", "NatVol", "NatBloom"))) if g else "-"
+            print(f"      {label:<16} {c.get('guest_fps', 0):4.0f} | {c.get('render_ms', 0):5.2f} | {gpu}")
 
 
 # ------------------------------------------------------------------ symbolize
@@ -995,6 +1036,9 @@ def main() -> int:
     p_fetch.add_argument("--out", type=Path, default=REPO / "out/harness-runs")
     p_sum = sub.add_parser("summary")
     p_sum.add_argument("run", type=Path)
+    p_perf = sub.add_parser("perf", help="compare two runs' perf.json (CPU stages, GPU passes)")
+    p_perf.add_argument("base", type=Path)
+    p_perf.add_argument("new", type=Path)
     a, unknown = ap.parse_known_args()
     extra = [x for x in unknown if x != "--"]
     if extra and a.cmd not in ("local", "odin2", "live", "windows", "ab"):
@@ -1002,6 +1046,11 @@ def main() -> int:
 
     if a.cmd == "summary":
         return summary(a.run)
+
+    if a.cmd == "perf":
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import perf_report  # noqa: E402
+        return perf_report.compare(a.base, a.new)
 
     if a.cmd == "symbolize":
         config = a.config

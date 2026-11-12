@@ -1,0 +1,53 @@
+# Performance benchmark: plays saved skate.Reel replays 2 and 4 start to end
+# (~42 s, the same recorded content on every run and target) with the native
+# renderer's CPU stage log and the backend's per-pass GPU timestamps on.
+#
+# run_scenario.py collects the numbers into perf.json in the run folder
+# (averaged per reel, from the log lines between "reel N: playing" and
+# "reel N: exit posted") and prints them in the summary. Compare two runs:
+#
+#   tools/harness/run_scenario.py perf out/harness-runs/<base> out/harness-runs/<new>
+#
+# Capped at 30 fps like the other reel scenarios, so Windows and the Odin 2
+# play the same frames. GPU pass times don't depend on the cap; for CPU
+# headroom on a PC, run uncapped:
+#   ... windows scenarios/perf_reel.toml -- --skate3_guest_fps_cap=0
+# Needs the signed-in profile's saves (test user data), like
+# reel_regression.toml.
+name = "perf_reel"
+timeout_s = 900
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+skate3_native_render_scene_perf_log = true
+skate3_native_render_scene_perf_interval = 60
+d3d12_gpu_timestamp_buckets = true
+vulkan_gpu_timestamp_buckets = true
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+clip = 2
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+clip = 4
+
+[[step]]
+do = "wait"
+frames = 30

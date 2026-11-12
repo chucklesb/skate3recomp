@@ -188,6 +188,49 @@ expecting a pixel-exact path.
 `.s3rec` is text: a `# s3rec 1 {json}` header, then one line per input change:
 `<poll> <frame> <buttons hex> <lt> <rt> <lx> <ly> <rx> <ry>`.
 
+## Performance
+
+`scenarios/perf_reel.toml` is the benchmark. It plays reels 2 and 4 start to
+end (~42 s), the same recorded frames on every run and target, at a 30 fps
+cap, and turns on two existing logs:
+- `skate3_native_render_scene_perf_log` with
+  `skate3_native_render_scene_perf_interval = 60` logs the CPU time of each
+  native renderer stage (capture, scene build, render, items, shadows, 2D,
+  decodes), average and worst, every 60 frames;
+- `d3d12_gpu_timestamp_buckets` / `vulkan_gpu_timestamp_buckets` log the GPU
+  time of each pass every 120 frames. The `Nat*` buckets are the native
+  renderer's passes (`NatMain`, `NatShadow`, `NatSun`, `NatAO`, `NatSSR`,
+  `NatVol`, `NatBloom`, `NatResolve`, `Nat2D`, `NatCommit`), marked by
+  `Cmd::ProfileRegion`.
+
+After any run that logged them, `run_scenario.py` writes `perf.json` to the
+run folder and adds a line per segment to the summary: each reel ("reel2",
+"reel4", the log windows between "reel N: playing" and "exit posted", minus
+the first window) and "all":
+
+```
+reel2   fps 30 worst 33 ms, cpu render 0.89 ms build 0.74 ms | gpu native 2.54 ms (Main=1.29 AO=0.59 ...)
+```
+
+Compare two runs (builds, backends or targets) metric by metric:
+
+```
+tools/harness/run_scenario.py perf out/harness-runs/<base> out/harness-runs/<new>
+```
+
+`ab scenarios/perf_reel.toml` adds a per-target table (fps, CPU render, GPU
+native total and the main passes). Notes:
+- The graphics settings come from the user data the run uses (test user data
+  on Windows, the device config on the Odin 2); compare runs with the same
+  settings, or set the cvars in a copy of the scenario.
+- On Vulkan the frame `span` includes the idle time under the cap (it lands in
+  `ResolveGap`), so it is not GPU busy time; compare `nat_total` and the
+  `Nat*` buckets.
+- GPU pass times don't depend on the frame cap; for CPU headroom on a PC run
+  uncapped (`-- --skate3_guest_fps_cap=0`).
+- `tools/harness/perf_report.py <run>` / `<base> <new>` does the same as a
+  standalone script.
+
 ## Validation layers and RenderDoc
 
 The native renderer labels each pass for Vulkan debug tools ("native: main
