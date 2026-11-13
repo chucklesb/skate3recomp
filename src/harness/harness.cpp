@@ -25,6 +25,7 @@
 #include <vector>
 
 #include <rex/cvar.h>
+#include <rex/graphics/native_guest_renderer.h>
 
 #include "skate3_native_scene.h"
 #include <rex/kernel/guest_presence.h>
@@ -157,6 +158,35 @@ std::string FeStackJson(const std::vector<std::pair<int32_t, int32_t>>& stack) {
   return out + "]";
 }
 
+// Pass census (native_render_pass_census): the emulated draws since the last
+// census event, by surface pitch, for the screen stack they ran under.
+// pitches: [pitch, suppressed, executed under native, executed emulated,
+// and the same three as index counts].
+constexpr uint64_t kCensusEveryFrames = 60;
+std::string CensusJson(const std::vector<std::pair<int32_t, int32_t>>& fe, bool replay,
+                       uint64_t frames) {
+  rex::graphics::PassCensusEntry entries[256];
+  uint32_t native_frames = 0, emulated_frames = 0;
+  const size_t n = rex::graphics::TakePassCensus(entries, 256, &native_frames, &emulated_frames);
+  char buf[192];
+  std::snprintf(buf, sizeof(buf),
+                "\"fe\":%s,\"replay\":%s,\"frames\":%llu,\"native_frames\":%u,"
+                "\"emulated_frames\":%u,\"pitches\":[",
+                FeStackJson(fe).c_str(), replay ? "true" : "false",
+                static_cast<unsigned long long>(frames), native_frames, emulated_frames);
+  std::string out = buf;
+  for (size_t i = 0; i < n; ++i) {
+    const auto& e = entries[i];
+    std::snprintf(buf, sizeof(buf), "%s[%u,%u,%u,%u,%llu,%llu,%llu]", i ? "," : "", e.pitch,
+                  e.draws[0], e.draws[1], e.draws[2],
+                  static_cast<unsigned long long>(e.indices[0]),
+                  static_cast<unsigned long long>(e.indices[1]),
+                  static_cast<unsigned long long>(e.indices[2]));
+    out += buf;
+  }
+  return out + "]";
+}
+
 std::string StateJson(const GameState& s, std::string_view tag = {}) {
   char buf[640];
   int n = std::snprintf(
@@ -206,6 +236,7 @@ struct Run {
   uint64_t poll = 0;
   GameState state;
   int64_t state_every = 10;
+  uint64_t census_frame = 0;  // last pass-census event
   Clock::time_point last_frame_time = Clock::now();
   uint32_t last_skater = 0;
   float last_pos[3] = {};
@@ -1897,6 +1928,10 @@ void OnFrame(uint8_t* base) {
   std::string fe_event;
   const char* replay_event = nullptr;
   const char* movie_event = nullptr;
+  bool census_due = false;
+  std::vector<std::pair<int32_t, int32_t>> census_fe;
+  bool census_replay = false;
+  uint64_t census_frames = 0;
   {
     std::unique_lock lk(r->mu);
     ++r->frame;
@@ -1949,6 +1984,15 @@ void OnFrame(uint8_t* base) {
     if (s.movie_active != r->state.movie_active) {
       movie_event = s.movie_active ? "movie_start" : "movie_stop";
     }
+    if (rex::graphics::PassCensusEnabled() &&
+        (s.fe_stack != r->state.fe_stack || r->frame - r->census_frame >= kCensusEveryFrames)) {
+      // Attributed to the stack the draws ran under (the previous frame's).
+      census_due = true;
+      census_fe = r->state.fe_stack;
+      census_replay = r->state.replay_active;
+      census_frames = r->frame - r->census_frame;
+      r->census_frame = r->frame;
+    }
     r->state = s;
     if (r->state_every > 0 && r->frame % static_cast<uint64_t>(r->state_every) == 0) {
       write_state = true;
@@ -1970,6 +2014,9 @@ void OnFrame(uint8_t* base) {
     r->state_out << state_line << "\n";
   }
   // Transitions (after the run lock: Event takes it).
+  if (census_due) {
+    Event(*r, "census", CensusJson(census_fe, census_replay, census_frames));
+  }
   if (!fe_event.empty()) {
     Event(*r, "fe", fe_event);
   }
