@@ -34,12 +34,6 @@ what was done).
   - **The fix to try:** the KI-126 depth-only pass extended to family-13
     glass, using the glass's own alpha. Our haze is an addition the game
     doesn't have, so not hazing through glass is the closer match.
-- **Canal water is about twice as bright as the game's** (mean 107 vs 57
-  in the same view; found by the audit above, and not caused by haze or
-  SSAO, which change it by 1-3). KI-122 called the port "slightly brighter";
-  at the device settings the gap is larger. Next: compare the water's
-  shading terms with `skate3_native_render_scene_water_debug` against the
-  game's frame.
 - **Character shading is harsher than the game's.** Shirt folds, hair
   shadows and muscle definition are sharper and more contrasty; the hair is
   lighter than the game's in shade (KI-124 and KI-126 notes).
@@ -52,6 +46,15 @@ what was done).
 
 ## Scenario harness and tooling
 
+- **In-game debug menu** (its own feature branch). A menu in the game's UI
+  for the testing tools that today need the harness or a cvar file:
+  - record and play back saved input;
+  - record and play back repro reels;
+  - take screenshots (single or bursts);
+  - screen recording of the session;
+  - free camera, fly mode and noclip (see below);
+  - harness and cvar toggles (renderer switches, debug views, the fix
+    toggles used for A/B checks).
 - **Reel lens toggle:** hide the replay camera's fisheye and vignette for
   testing (`skate3_native_render_scene_screen_fx`, `play_reel lens = false`;
   see KI-123).

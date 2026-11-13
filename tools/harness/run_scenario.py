@@ -2,7 +2,8 @@
 """Run scenario-harness scenarios locally or on a DroidDeck handheld.
 
     run_scenario.py local  <scenario.toml> --exe <skate3 or AppImage> [-- args...]
-    run_scenario.py odin2  <scenario.toml> [--config release|relwithdebinfo] [--no-build] [--no-deploy] [-- args...]
+    run_scenario.py odin2  <scenario.toml> [--config release|relwithdebinfo] [--no-build] [--no-deploy]
+                           [--force-deploy] [-- args...]  # builds/deploys only what changed
     run_scenario.py live   [--config ...] [--no-deploy] [-- args...]  # live mode (inbox + recording)
     run_scenario.py windows <scenario.toml> [--config ...] [--backend d3d12|vulkan] [--no-build]
                            [--renderdoc [DIR]] [--timeout s] [-- args...]
@@ -36,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -265,7 +267,24 @@ def deployed_config() -> str:
         return "unknown"
 
 
-def deploy(dev: Device, config: str) -> None:
+def deployed_payload(dev: Device) -> str:
+    """The payload key the device's harness install was deployed with
+    (written next to it at deploy time), or "" if unknown."""
+    try:
+        with dev.guest_files() as run:
+            return run(f"cat {{R}}{GUEST_APP_DIR}/payload-key 2>/dev/null || true").strip()
+    except (RuntimeError, subprocess.TimeoutExpired):
+        return ""
+
+
+def deploy(dev: Device, config: str, force: bool = False) -> None:
+    """Package and install the build on the device, unless the device already
+    runs this exact payload (see payload_key; --force-deploy overrides)."""
+    key = payload_key(config)
+    if not force and dev.has_root() and deployed_payload(dev) == key:
+        log(f"the device already runs this {config} build ({key}), skipping the deploy")
+        DEPLOYED_CONFIG.write_text(config + "\n")
+        return
     image = build_testing_appimage(config)
     log(f"deploying {image.name} ({config})")
     if dev.phase()[1]:
@@ -273,10 +292,11 @@ def deploy(dev: Device, config: str) -> None:
     dev.adb_push(image, f"{SHARED}/skate3-harness.AppImage")
     dev.start_desktop()
     out = dev.guest(
-        f"mkdir -p {GUEST_APP_DIR} && cd {GUEST_APP_DIR} && rm -rf app squashfs-root && "
+        f"mkdir -p {GUEST_APP_DIR} && cd {GUEST_APP_DIR} && rm -rf app squashfs-root payload-key && "
         f"cp {SHARED}/skate3-harness.AppImage image.AppImage && chmod +x image.AppImage && "
         "./image.AppImage --appimage-extract >/dev/null 2>&1 && mv squashfs-root app && "
-        "echo skate3-harness > name && echo arm64 > arch && echo extracted",
+        f"echo skate3-harness > name && echo arm64 > arch && echo {key} > payload-key && "
+        "echo extracted",
         timeout=300)
     if "extracted" not in out:
         die(f"extraction failed: {out}")
@@ -498,6 +518,86 @@ def build_step(script: str, config: str, steps: list[str], log_name: str,
 def build_aarch64(config: str) -> None:
     # build.sh reconfigures, so the version string matches HEAD.
     build_step("tools/cross-aarch64/build.sh", config, ["build"], f"aarch64-{config}-build.log")
+
+
+# Paths that never reach the game binary: a change only here (docs, scenarios,
+# the harness's own tools, release notes/scripts, unit tests) does not need a
+# rebuild or a redeploy. Everything else in the tree (and every submodule)
+# counts as a build input.
+BUILD_EXCLUDE = ("docs", "scenarios", "tools/harness", "tools/release", ".github", ".claude",
+                 "tests", "README.md", "KNOWN_ISSUES.md", "CONTRIBUTING.md")
+
+
+def source_key(config: str) -> str:
+    """Hash of everything that can change the linux-aarch64 build: the index
+    and unstaged changes of the build-input paths, their untracked files, and
+    each submodule's commit, changes and untracked files. Commits that only
+    touch BUILD_EXCLUDE paths leave it unchanged (the binary then keeps the
+    version string of the commit it was built from)."""
+    spec = ["--", "."] + [f":(exclude){p}" for p in BUILD_EXCLUDE]
+
+    def git(*args: str, cwd: Path = REPO) -> bytes:
+        return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True,
+                              check=True).stdout
+
+    def untracked(cwd: Path, pathspec: list[str]) -> bytes:
+        names = git("ls-files", "-z", "--others", "--exclude-standard", *pathspec, cwd=cwd)
+        out = bytearray(names)
+        for n in filter(None, names.split(b"\0")):
+            p = cwd / n.decode()
+            if p.is_file():
+                out += hashlib.sha256(p.read_bytes()).digest()
+        return bytes(out)
+
+    h = hashlib.sha256(config.encode())
+    h.update(git("ls-files", "-s", *spec))           # index (incl. submodule commits)
+    h.update(git("diff", "--binary", *spec))         # unstaged edits
+    h.update(untracked(REPO, spec))
+    for line in git("submodule", "status", "--recursive").decode().splitlines():
+        sub = REPO / line[1:].split()[1]
+        if (sub / ".git").exists():
+            h.update(git("diff", "HEAD", "--binary", cwd=sub))
+            h.update(untracked(sub, []))
+    return h.hexdigest()[:20]
+
+
+def _build_record(config: str) -> Path:
+    return REPO / f"out/harness/aarch64-{config}.build-key"
+
+
+def ensure_aarch64_build(config: str) -> None:
+    """Build only when the build inputs changed since the last harness build
+    (or the binary is missing or was rebuilt outside the harness)."""
+    binary = REPO / f"out/build/linux-aarch64-{config}/skate3"
+    key = source_key(config)
+    rec = _build_record(config)
+    try:
+        saved = json.loads(rec.read_text())
+    except (OSError, ValueError):
+        saved = {}
+    if (binary.exists() and saved.get("key") == key
+            and saved.get("binary") == payload_key(config)):
+        log(f"linux-aarch64 {config}: build inputs unchanged ({key}), skipping the build")
+        return
+    build_aarch64(config)
+    rec.parent.mkdir(parents=True, exist_ok=True)
+    rec.write_text(json.dumps({"key": key, "binary": payload_key(config)}) + "\n")
+
+
+def payload_key(config: str) -> str:
+    """Fingerprint of what the testing AppImage packs from the build: the
+    binaries' sizes and modification times plus tools/appimage. Ninja only
+    rewrites a binary that changed, so equal keys mean an identical payload."""
+    build_dir = REPO / f"out/build/linux-aarch64-{config}"
+    h = hashlib.sha256(config.encode())
+    for pattern in ("skate3", "librexruntime*.so", "librexgpu-xenos*.so"):
+        for f in sorted(build_dir.glob(pattern)):
+            st = f.stat()
+            h.update(f"{f.name}:{st.st_size}:{st.st_mtime_ns};".encode())
+    for f in sorted((REPO / "tools/appimage").rglob("*")):
+        if f.is_file():
+            h.update(hashlib.sha256(f.read_bytes()).digest())
+    return h.hexdigest()[:20]
 
 
 # ------------------------------------------------------------------ windows
@@ -1094,6 +1194,8 @@ def main() -> int:
     p_odin.add_argument("--config", choices=CONFIGS, default="release",
                         help="which linux-aarch64 build to deploy (default release)")
     p_odin.add_argument("--out", type=Path, default=REPO / "out/harness-runs")
+    p_odin.add_argument("--force-deploy", action="store_true",
+                     help="package and deploy even if the device already runs this build")
     p_odin.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
                         help="session environment for this run (repeatable), e.g. "
                              "LD_PRELOAD=/root/renderdoc/librenderdoc.so")
@@ -1119,6 +1221,8 @@ def main() -> int:
                       help="skip both builds (the version check still warns on mismatches)")
     p_ab.add_argument("--no-deploy", action="store_true", help="reuse the build on the Odin 2")
     p_ab.add_argument("--no-odin2", action="store_true", help="Windows targets only")
+    p_ab.add_argument("--force-deploy", action="store_true",
+                     help="package and deploy even if the device already runs this build")
     p_ab.add_argument("--fps-cap", type=float, default=30.0,
                       help="guest frame cap on every target (default 30; 0 = leave uncapped). "
                            "Scenario frame counts (input holds, waits) only compare at equal "
@@ -1135,6 +1239,8 @@ def main() -> int:
     p_live.add_argument("--config", choices=CONFIGS, default="release")
     p_live.add_argument("--backend", choices=BACKENDS, default="d3d12", help="windows only")
     p_live.add_argument("--env", action="append", default=[], metavar="KEY=VALUE")
+    p_live.add_argument("--force-deploy", action="store_true",
+                     help="package and deploy even if the device already runs this build")
     p_sym = sub.add_parser("symbolize",
                            help="function and file:line for module+offset or bare skate3 addresses")
     p_sym.add_argument("addrs", nargs="+", metavar="ADDR",
@@ -1267,15 +1373,15 @@ def main() -> int:
                      "--skate3_guest_fps_cap_auto=false", *extra]
         if not a.no_build:
             # Both through build.sh, which reconfigures: the same commit and
-            # version string on both sides.
+            # version string on both sides (aarch64 only when its inputs changed).
             if not a.no_odin2 and not a.no_deploy:
-                build_aarch64(a.config)
+                ensure_aarch64_build(a.config)
             build_windows(a.config)
         runs: list[tuple[str, Path | None]] = []
         if not a.no_odin2:
             dev = Device()
             if not a.no_deploy:
-                deploy(dev, a.config)
+                deploy(dev, a.config, force=a.force_deploy)
             runs.append(("odin2/vulkan", run_odin2(dev, scenario, extra, a.env, out)))
         for b in backends:
             runs.append((f"win/{b}", run_windows(scenario, a.config, b, extra, out)))
@@ -1286,8 +1392,8 @@ def main() -> int:
     if a.cmd in ("odin2", "live"):
         if not a.no_deploy:
             if not getattr(a, "no_build", False):
-                build_aarch64(a.config)  # deploy packages the build dir as it is
-            deploy(dev, a.config)
+                ensure_aarch64_build(a.config)  # deploy packages the build dir as it is
+            deploy(dev, a.config, force=a.force_deploy)
         elif a.config != deployed_config():
             log(f"note: --no-deploy reuses the deployed build ({deployed_config()}), "
                 f"not {a.config}")
