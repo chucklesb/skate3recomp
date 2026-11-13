@@ -113,6 +113,15 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
   - free camera, fly mode and noclip (see below);
   - harness and cvar toggles (renderer switches, debug views, the fix
     toggles used for A/B checks).
+- **A realtime control API** next to the scenarios, for interactive
+  driving (input, screenshots, state, cvars). Live mode is a first version:
+  `send <verb>` drops a command file in the game's inbox and waits for the
+  reply, ~0.5-1 s per command through rs.sh. Ideas: a socket (TCP or
+  WebSocket; adb forward on the Odin 2) with no per-command process start,
+  batched commands ("press A, wait 15 frames, screenshot"), waits on
+  conditions (FE screen, frame count), screenshots returned directly, an
+  event stream (FE changes, census, fps), and a small client library or
+  REPL. Also fixes `live --target windows` dying when started from WSL.
 - **Better screenshots and recordings:** have the renderer(s) write an
   image for every frame of a short capture (frame-exact, no screen
   recorder), on the desktop and the Odin 2; look at what limits today's
@@ -151,8 +160,11 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
     window is open, up to ~1,160 scene draws a frame execute (My Replays'
     screen 36: 583k indices a frame; Customize, screen 63: 826 draws a
     frame; Create-a-Skater: 61). The window opens on unclassified screens
-    and for 3 s after many menu changes. **Fixed 2026-11-13** (Windows;
-    Odin 2 measurement pending): the portrait card is a 512x512 pass at
+    and for 3 s after many menu changes. **Fixed 2026-11-13.** Odin 2,
+    Pause > Edit Skaters, uncapped (`scenarios/census_menus.toml`): 52 fps,
+    worst frame 26 ms, against 29 fps and 100 ms with the old behavior;
+    emulated scene draws there 0 against ~1,265 a frame; portraits intact.
+    The portrait card is a 512x512 pass at
     pitch 560, so mode 3 now suppresses pitch >= 1152. The skater photo
     taken on leaving Create-a-Skater does render into the 1200 surface;
     new mode 4 lets it run during the skater photo window and while
