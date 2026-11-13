@@ -50,6 +50,14 @@ what was done).
   upstream's KNOWN_ISSUES.md first). Seen on the Odin 2 (2026-11-13): body
   modifications such as facial feature sizes don't apply, or only some of
   the time; various clothing and hair problems. Needs a lot of work.
+- **The team screen's skater portrait doesn't update after Create-a-Skater**
+  (Windows, 2026-11-13, `scenarios/cas_portrait.toml`): after a change and
+  "Yes", the Edit Skaters screen keeps showing the previous portrait for the
+  rest of the session, while the saved photo is right (the next boot shows
+  it). Same with the old and new portrait-window behavior. Suspect a cached
+  texture in the native 2D path (the card is re-composed at pitch 560 into
+  0x03855000 / 0x03C55000), or the game reloading the photo only on boot.
+  Check against the fully emulated renderer.
 - **Create-a-Park is jittery and slow** on the Odin 2 even though the HUD
   shows a steady 30 fps. The 2026-11-13 census run showed guest frames at an
   even 33.3 ms and almost no emulated rendering there, so it isn't the
@@ -59,7 +67,19 @@ what was done).
 - **Photo challenges show no photo** on the final showcase screen. The game
   grabs the screen as soon as the shutter fires, before the native frame
   reaches the screenshot target (the log says "no native frame ready for
-  the grab"); the reel-thumbnail prefetch only runs in the replay editor.
+  the grab"); the reel-thumbnail prefetch only ran in the replay editor.
+  **Fix written 2026-11-13, untested:** the prefetch also runs while the
+  challenge camera (FE 2) is open. Needs a photo challenge played on the
+  device.
+
+- **Native rendering for the menus' remaining emulated pieces.** Some menu
+  elements still come from the game's own (emulated) renderer: the skater
+  portraits (team menu boxes, Import Skater card, Customize and
+  Create-a-Skater), drawn into textures that the menus show. To get them,
+  the "portrait window" lets the emulated renderer run, which today also
+  runs the whole emulated scene (see Investigations). Long term, draw these
+  natively (the native renderer already refuses the portrait passes'
+  captures) so the emulated renderer can stay off in menus too.
 
 ## UI and overlays
 
@@ -93,6 +113,15 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
   - free camera, fly mode and noclip (see below);
   - harness and cvar toggles (renderer switches, debug views, the fix
     toggles used for A/B checks).
+- **Better screenshots and recordings:** have the renderer(s) write an
+  image for every frame of a short capture (frame-exact, no screen
+  recorder), on the desktop and the Odin 2; look at what limits today's
+  `screenshot` bursts and recordings.
+- **Headless desktop runs** for automated testing (Windows, Linux, macOS;
+  not needed for linux-aarch64 / the Odin 2): start the game without a
+  visible window or focus steal, so scenario runs don't interrupt the
+  user's desktop. Look into an offscreen/hidden window or swapchain-less
+  output, a virtual display, and what input and audio need.
 - **Fly and noclip mode** to move the camera or skater through geometry, for
   looking at shadows and their casters.
 - **Scripted "backwards man" speed glitch** as a timed pad sequence (find the
@@ -122,8 +151,15 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
     window is open, up to ~1,160 scene draws a frame execute (My Replays'
     screen 36: 583k indices a frame; Customize, screen 63: 826 draws a
     frame; Create-a-Skater: 61). The window opens on unclassified screens
-    and for 3 s after many menu changes. Fix needs another way to tell
-    portrait passes from the scene (both at 1200).
+    and for 3 s after many menu changes. **Fixed 2026-11-13** (Windows;
+    Odin 2 measurement pending): the portrait card is a 512x512 pass at
+    pitch 560, so mode 3 now suppresses pitch >= 1152. The skater photo
+    taken on leaving Create-a-Skater does render into the 1200 surface;
+    new mode 4 lets it run during the skater photo window and while
+    Create-a-Skater is open (checked across a reboot with
+    `gen_cas_portrait.py --only on|off`). Escape hatch:
+    `skate3_native_render_scene_portrait_scene_band`. Still to check: My
+    Replays' screen 36, Import Skater, the photo display card.
   - Aux skater passes (pitch 160) run in challenge screens (screen 1: 4–12
     draws a frame) and heavily in photo challenges (screen 2: ~95 draws,
     265k indices a frame). In a photo challenge this may be how the game
