@@ -710,6 +710,18 @@ extern "C" REX_FUNC(sub_824FD550) {
   if (skate3::native_render::Enabled()) {
     skate3::native_scene::OnTakePhoto();
   }
+  // r4 = false: the grab reads the postfx manager's main 1152x640 screenshot
+  // target (0x04911000; every grab logged on the Odin 2, the reel save's
+  // included). r4 = true: an aux target *(mgr+784). A reel save grabs the
+  // main target BEFORE the photo flow arms, so the native grab never fills
+  // it in time; PrepareGrabTarget writes the replay editor's latest native
+  // frame there first (KI-123 reel thumbnails).
+  const bool grab_aux = (ctx.r4.u32 & 0xFF) != 0;
+  REXLOG_INFO("native-render: GrabScreenshot({}) lr={:08X}", grab_aux ? "aux" : "main",
+              static_cast<uint32_t>(ctx.lr));
+  if (!grab_aux && skate3::native_render::Enabled()) {
+    skate3::native_scene::PrepareGrabTarget(base);
+  }
   __imp__sub_824FD550(ctx, base);
   // Post-call: the grab has CPU-read the shot; the card compose that
   // follows reads already-copied memory. Event-closes the shutter burst.

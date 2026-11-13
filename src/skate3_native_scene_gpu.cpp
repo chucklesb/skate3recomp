@@ -96,6 +96,7 @@ REXCVAR_DECLARE(bool, skate3_native_render_scene_perf_items);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_occlusion_cull);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_photo_display_yield);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_photo_grab_native);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_reel_thumb_native);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_photo_native);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_photo_readback);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_photo_yield);
@@ -6403,6 +6404,36 @@ std::atomic<int64_t> g_grab_last_write_ns{-1};
 std::atomic<bool> g_photo_display_yielding{false};
 std::atomic<int64_t> g_photo_display_yield_end_ns{-1};
 
+// Reel thumbnail pre-grab (KI-123, skate3_native_render_scene_reel_thumb_native).
+// Saving a reel grabs the screenshot target at once: GrabScreenshot runs
+// BEFORE the photo flow arms (logged: grab at +0 ms, flow armed +29 ms), so
+// the native grab above never fills it in time and the save encoded black or
+// an older reel's image. While the replay editor is open RenderScene keeps a
+// readback of the native frame running without writing it (one buffer READY,
+// the other in flight; the ready one is never a copy target), and
+// PrepareGrabTarget tiles the ready one into the target just before the grab.
+// The mutex covers the ready index and the CPU read of that buffer.
+std::mutex g_grab_ready_mu;
+int g_grab_ready = -1;
+
+// The replay editor (FE 12) is on the FE push-state stack.
+bool ReplayEditorOpen(uint8_t* base) {
+  constexpr uint32_t kFrontEndManagerPtr = 0x830CFE14;
+  uint32_t mgr = 0, beg = 0, end = 0;
+  if (!GuestTryLoadU32(base, kFrontEndManagerPtr, &mgr) || mgr == 0 ||
+      !GuestTryLoadU32(base, mgr + 0x210, &beg) ||
+      !GuestTryLoadU32(base, mgr + 0x214, &end) || beg >= end || end - beg > 20 * 16) {
+    return false;
+  }
+  for (uint32_t a = beg; a < end; a += 20) {
+    uint32_t id = 0;
+    if (GuestTryLoadU32(base, a, &id) && id == 12) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Validate the game-side target before writing guest memory: GrabScreenshot
 // reads its main-target dims from the postfx render manager (mgr =
 // *(0x83083C5C), width/height at mgr+380/384). The GPU address has been
@@ -12592,7 +12623,19 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
   // copy into the free readback buffer. Runs BEFORE the 2D overlay so the
   // photo never contains editor chrome / HUD, and before the blur block so
   // this scratch use of blur_tex[0] is enqueued ahead of any blur rewrite.
-  if (g_photo_grab_native_armed.load(std::memory_order_relaxed) &&
+  // Reel-thumbnail prefetch (see g_grab_ready): readbacks without writes
+  // while the replay editor is open and no photo flow owns the grab.
+  const bool grab_armed = g_photo_grab_native_armed.load(std::memory_order_relaxed);
+  const bool grab_prefetch =
+      !grab_armed && REXCVAR_GET(skate3_native_render_scene_reel_thumb_native) &&
+      REXCVAR_GET(skate3_native_render_scene_photo_grab_native) && ReplayEditorOpen(base);
+  if (!grab_prefetch) {
+    // An armed flow reuses both buffers; outside the editor the ready frame
+    // is stale. Taking the lock also waits out a PrepareGrabTarget read.
+    std::lock_guard<std::mutex> lk(g_grab_ready_mu);
+    g_grab_ready = -1;
+  }
+  if ((grab_armed || grab_prefetch) &&
       g_r.pso_blur_down != nullptr && g_r.blur_tex[0] != nullptr &&
       g_r.output_srv_allocated && !g_r.grab_failed) {
     // Lazy readback-pair creation (persistently mapped; the copy is never
@@ -12633,7 +12676,18 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       // resolve is CPU-read from the same surface, and a native frame
       // landing on top of it would become the saved portrait. Completed
       // buffers wait (unwritten) until the window closes.
-      if (newest >= 0 &&
+      if (grab_prefetch) {
+        // Prefetch: the newest completed buffer becomes READY (no write).
+        if (newest >= 0) {
+          std::lock_guard<std::mutex> lk(g_grab_ready_mu);
+          g_grab_ready = newest;
+          for (int i = 0; i < 2; ++i) {
+            if (g_r.grab_pending[i] && g_r.grab_submission[i] < grab_completed) {
+              g_r.grab_pending[i] = false;
+            }
+          }
+        }
+      } else if (newest >= 0 &&
           !g_skater_photo_window_armed.load(std::memory_order_relaxed)) {
         static bool s_grab_write_warned = false;
         const auto tile_t0 = PerfClock::now();
@@ -12676,9 +12730,17 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         }
       }
       // Produce into the free buffer (skip the frame if both are still in
-      // flight, never wait).
-      const uint32_t w = g_r.grab_write_index;
-      if (!g_r.grab_pending[w]) {
+      // flight, never wait). Prefetch never copies into the READY buffer.
+      uint32_t w = g_r.grab_write_index;
+      bool w_free = !g_r.grab_pending[w];
+      if (grab_prefetch) {
+        std::lock_guard<std::mutex> lk(g_grab_ready_mu);
+        if (g_grab_ready >= 0) {
+          w = uint32_t(1 - g_grab_ready);
+        }
+        w_free = !g_r.grab_pending[w];
+      }
+      if (w_free) {
         // (The output view g_r.output_srv_slot tracks the current output
         // texture; EnsurePipeline re-points it on output change.)
         cmd->Barrier(context.guest_output, nrhi::ResourceState::kRenderTarget,
@@ -13171,6 +13233,38 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
 
 bool SceneFailed() { return g_r.failed; }
 
+void PrepareGrabTarget(uint8_t* base) {
+  if (!REXCVAR_GET(skate3_native_render_scene_reel_thumb_native) ||
+      g_skater_photo_window_armed.load(std::memory_order_relaxed)) {
+    return;
+  }
+  // A photo flow that is already writing native frames owns the target.
+  const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                             PerfClock::now().time_since_epoch())
+                             .count();
+  const int64_t last_ns = g_grab_last_write_ns.load(std::memory_order_relaxed);
+  if (g_photo_grab_native_armed.load(std::memory_order_relaxed) && last_ns >= 0 &&
+      now_ns - last_ns < 250'000'000) {
+    return;
+  }
+  std::lock_guard<std::mutex> lk(g_grab_ready_mu);
+  if (g_grab_ready < 0 || g_r.grab_readback_ptr[g_grab_ready] == nullptr) {
+    REXLOG_INFO("native-scene: reel thumbnail - no native frame ready for the grab");
+    return;
+  }
+  const auto t0 = PerfClock::now();
+  g_r.device->InvalidateForRead(
+      g_r.grab_readback[g_grab_ready], 0,
+      uint64_t(RendererState::kGrabRowPitch) * RendererState::kBlurHeight);
+  const bool wrote =
+      GrabTargetValid(base) && WriteGrabToGuest(base, g_r.grab_readback_ptr[g_grab_ready]);
+  REXLOG_INFO(
+      "native-scene: reel thumbnail - {} the latest native frame into the "
+      "screenshot target before the grab ({} us)",
+      wrote ? "wrote" : "FAILED to write",
+      std::chrono::duration_cast<std::chrono::microseconds>(PerfClock::now() - t0).count());
+}
+
 void ResetSceneFailure() {
   if (g_r.failed) {
     g_r.failed = false;
@@ -13199,6 +13293,7 @@ void Install() {
 
 namespace skate3::native_scene {
 void Install() {}
+void PrepareGrabTarget(uint8_t*) {}
 bool SceneFailed() { return false; }
 void ResetSceneFailure() {}
 bool SuppressEmulatedDrawsOverride(bool*) {

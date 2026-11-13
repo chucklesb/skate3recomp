@@ -649,6 +649,11 @@ void OnPhotoGrabRequest();
 // GrabScreenshot COMPLETED (post-call): every card-build read from here on
 // is CPU-side of already-copied memory, closes the shutter burst.
 void OnPhotoGrabDone();
+// GrabScreenshot is about to read the main screenshot target (pre-call, any
+// guest thread): if no photo flow is writing it, tile the latest native frame
+// the replay editor keeps ready into it (KI-123 reel thumbnails; no-op
+// outside the replay editor).
+void PrepareGrabTarget(uint8_t* base);
 // SkaterPresentationPhoto::GeneratePhotoRequest (a team-member / skater
 // portrait was requested; the game renders it once the skater arena has
 // loaded): arms the skater-photo window.

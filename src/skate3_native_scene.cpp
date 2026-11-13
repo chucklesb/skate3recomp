@@ -315,6 +315,15 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_haze, true, "Skate 3",
                     "the base atmosphere, and additive terms read as extra fog "
                     "quickly. Requires the HDR intermediate.")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_reel_thumb_native, true, "Skate 3",
+                    "KI-123: a saved reel's automatic thumbnail. The game grabs "
+                    "its screenshot target (0x04911000) on save BEFORE the photo "
+                    "flow arms, so with the game's own passes suppressed it "
+                    "encoded black or an older reel's image. While the replay "
+                    "editor is open, keep a GPU readback of the native frame "
+                    "ready and write it into the target just before that grab. "
+                    "Off = the black/stale thumbnails.")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_screen_fx, true, "Skate 3",
                     "The game's final lens pass (fisheye warp and vignette, e.g. the "
                     "skate.Reel camera). Off = the pass draws a plain frame, on the "

@@ -463,6 +463,21 @@ immediate/mailbox present modes allowed).
   (`[0,12]`, presence 1) never had the window.
 - **The photo flow** fired only for the reel save (12 grabs, about 185 ms
   each), not during playback.
+- **Reel thumbnails after the fix** came out black or as another reel's
+  image (`tools/harness/reel_thumbs.py` extracts the 160x90 JPEG from each
+  `N.H` and flags byte-identical ones; slots 4 and 10, saved before the fix,
+  were black too). A logged save (session `20261113-095757_live`): the save
+  calls `GrabScreenshot(main)` (the 1152x640 target, 0x04911000) about 30
+  ms BEFORE the photo flow arms, so the native grab never fills it in time;
+  the open window used to keep the game's own passes writing it. "Take
+  Photo" arms first and was fine. **Fix:**
+  `skate3_native_render_scene_reel_thumb_native` (default on): while FE 12
+  is open, RenderScene keeps a readback of the native frame ready (no
+  writes; one buffer ready, one in flight) and the `GrabScreenshot` hook
+  tiles it into the target just before the grab (`PrepareGrabTarget`; log
+  "reel thumbnail - wrote the latest native frame"). The game's logo corner
+  is not in these thumbnails (the game composited it; "Take Photo"
+  thumbnails don't have it either).
 - **Replays vs live, harness path** (`scenarios/perf_ki123.toml`, run
   `20261113-081213_perf_ki123`; `perf_report.py` now splits `mark perf
   <name>` segments): live 61-77 fps, reels 2/4/6 at 55/48/52. GPU span
