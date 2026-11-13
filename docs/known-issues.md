@@ -16,7 +16,7 @@ happen. The technical details follow for whoever works on it.
 | [KI-120](#ki-120-the-skater-jitters-worse-with-speed) | The skater looks jittery, as if falling behind and catching up, worse with speed | Fixed (Odin 2) |
 | [KI-121](#ki-121-on-d3d12-the-scene-is-sometimes-drawn-in-shade) | On D3D12, a sunny scene is sometimes drawn almost all in shade, with no skater shadow | Open |
 | [KI-122](#ki-122-canal-water-reflects-orange-brown-instead-of-blue-sky) | Canal water reflects orange-brown instead of blue sky, depending on the view angle; no shadows on the canals | Fixed |
-| [KI-123](#ki-123-skatereel-playback-is-slow-and-uneven) | Reel playback runs in the teens with uneven pacing, where gameplay holds near 60 | Main cause fixed (to confirm on device); smaller replay cost open |
+| [KI-123](#ki-123-skatereel-playback-is-slow-and-uneven) | Reel playback runs in the teens with uneven pacing, where gameplay holds near 60 | Main cause fixed (confirmed on the Odin 2); smaller replay cost open |
 | [KI-124](#ki-124-shadows-on-the-sun-facing-side-of-the-skaters-sleeves) | A shadow flashes across the skater's shirt for one frame (Odin 2, 1x reel playback) | Fixed (Odin 2) |
 | [KI-125](#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps) | For a frame or two after a replay jumps to a new time, the skater's arms or legs are drawn detached | Open |
 | [KI-126](#ki-126-the-skaters-hair-looks-transparent) | The skater's hair looks see-through: a blue veil with the trees behind showing through | Fixed (Odin 2) |
@@ -415,8 +415,9 @@ near-steady 60 fps in most areas (30 at worst) with no noticeable stutters.
 **How to see it:** play any saved reel from My Replays on the Odin 2 and
 compare with skating live in the same area.
 
-**Status:** main cause fixed, needs a look on the device; a smaller replay
-cost remains (see below) · **Severity:** medium (testing and repro work
+**Status:** main cause fixed and confirmed on the Odin 2 (2026-11-13: a
+steady 30 at the usual cap; saved reels keep their thumbnails); a smaller
+replay cost remains (see below) · **Severity:** medium (testing and repro work
 relies on reels) · **Found:** 2026-11-12 by the user, Odin 2.
 
 **Cause:** opening the replay editor from the pause menu switched on a mode
@@ -477,7 +478,11 @@ immediate/mailbox present modes allowed).
   tiles it into the target just before the grab (`PrepareGrabTarget`; log
   "reel thumbnail - wrote the latest native frame"). The game's logo corner
   is not in these thumbnails (the game composited it; "Take Photo"
-  thumbnails don't have it either).
+  thumbnails don't have it either). Confirmed on the device (session
+  `20261113-101042_live`, slots 22 and 23). **Open:** that write took
+  116-122 ms per save (a short pause at save time), against 3-5 ms per
+  frame for the same tiling on the render thread; suspect the guest thread
+  the hook runs on, or uncached reads of the readback memory.
 - **Replays vs live, harness path** (`scenarios/perf_ki123.toml`, run
   `20261113-081213_perf_ki123`; `perf_report.py` now splits `mark perf
   <name>` segments): live 61-77 fps, reels 2/4/6 at 55/48/52. GPU span
