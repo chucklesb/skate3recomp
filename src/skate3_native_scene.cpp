@@ -329,9 +329,18 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_reel_thumb_native, true, "Skate 3
                     "its screenshot target (0x04911000) on save BEFORE the photo "
                     "flow arms, so with the game's own passes suppressed it "
                     "encoded black or an older reel's image. While the replay "
-                    "editor is open, keep a GPU readback of the native frame "
-                    "ready and write it into the target just before that grab. "
-                    "Off = the black/stale thumbnails.")
+                    "editor or a photo challenge's camera (FE 2) is open, keep a "
+                    "GPU readback of the native frame ready and write it into "
+                    "the target just before that grab (the photo challenge's "
+                    "shutter grabs at once too: its showcase photo was blank). "
+                    "Off = the black/stale images.")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_portrait_scene_band, false, "Skate 3",
+                    "Escape hatch: let the game's own main scene and postfx (surface "
+                    "pitch 1200) run emulated during the menus' portrait window, as "
+                    "before 2026-11 (suppress mode 4 instead of 3). Off = only the "
+                    "portrait passes run there; the skater photo window and "
+                    "Create-a-Skater use mode 4 either way.")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_screen_fx, true, "Skate 3",
                     "The game's final lens pass (fisheye warp and vignette, e.g. the "

@@ -97,6 +97,7 @@ REXCVAR_DECLARE(bool, skate3_native_render_scene_occlusion_cull);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_photo_display_yield);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_photo_grab_native);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_reel_thumb_native);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_portrait_scene_band);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_photo_native);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_photo_readback);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_photo_yield);
@@ -5891,6 +5892,17 @@ class SdkCvarOverride {
       view_held_.store(false, std::memory_order_release);
     }
   }
+  // Changes the forced value; applied at once while any owner holds it.
+  void SetForced(T forced) {
+    if (forced == forced_) {
+      return;
+    }
+    forced_ = forced;
+    if (owners_ != 0) {
+      written_ = saved_ != forced_ && !(keep_user_ && keep_user_(saved_));
+      storage_() = written_ ? forced_ : saved_;
+    }
+  }
   // Returns true if any owner was holding it.
   bool ReleaseAll() {
     const bool held = owners_ != 0;
@@ -5935,9 +5947,15 @@ constexpr int32_t kForceReadbackMaxLength = 0x2D0000;
 SdkCvarOverride<bool> g_ovr_suppress_draws(
     "native_render_suppress_emulated_draws",
     []() -> bool& { return REXCVAR_GET(native_render_suppress_emulated_draws); }, false);
+// SDK suppress modes: 3 = portrait window (sub-framebuffer RTTs execute; the
+// main scene band, pitch 1200, stays suppressed), 4 = scene photo (that band
+// executes too; the skater photo window only).
+constexpr int32_t kSuppressModePortrait = 3;
+constexpr int32_t kSuppressModeScenePhoto = 4;
 SdkCvarOverride<int32_t> g_ovr_suppress_mode(
     "native_render_suppress_mode",
-    []() -> int32_t& { return REXCVAR_GET(native_render_suppress_mode); }, 3);
+    []() -> int32_t& { return REXCVAR_GET(native_render_suppress_mode); },
+    kSuppressModePortrait);
 SdkCvarOverride<bool> g_ovr_async_shaders(
     "async_shader_compilation", []() -> bool& { return REXCVAR_GET(async_shader_compilation); },
     false);
@@ -6108,12 +6126,15 @@ bool YieldForMenus(const NativeGuestOutputRenderContext& context) {
         in_menus && REXCVAR_GET(skate3_native_render_scene_menu_rtt_passes) &&
         (REXCVAR_GET(skate3_native_render_scene_menu_rtt_scope) == 0 ||
          PortraitRttWindowActive());
-    // Mode 3, not 0 (g_ovr_suppress_mode): the portrait-class RTTs (census
-    // 560-1200 during the window) execute, but the 1152-wide main scene +
-    // postfx band stays suppressed; mode 0 ran the game's whole pipeline at
-    // scaled resolution for the window's duration, dropping the pause menu to
-    // ~60 fps whenever a screen push (or its 3 s transition grace) opened the
-    // window.
+    // Mode 3, not 0 (g_ovr_suppress_mode): the portrait-class RTTs (the
+    // 512x512 card at pitch 560) execute, but the main scene + postfx band
+    // (pitch 1200: 1152 rounded up to 80-pixel EDRAM tiles) stays
+    // suppressed; mode 0 ran the game's whole pipeline at scaled resolution
+    // for the window's duration, dropping the pause menu to ~60 fps whenever
+    // a screen push (or its 3 s transition grace) opened the window. Until
+    // 2026-11 mode 3 only excluded pitch 1152, so the scene still ran in
+    // every window (census: up to ~1,160 scene draws a frame on My Replays'
+    // screen 36).
     g_ovr_suppress_mode.Hold(kOvrPortraitWindow, want);
     // Same menu window: shader compilation goes SYNCHRONOUS. With
     // async_shader_compilation on, the d3d12 command processor SKIPS any
@@ -6426,8 +6447,8 @@ std::atomic<int64_t> g_photo_display_yield_end_ns{-1};
 std::mutex g_grab_ready_mu;
 int g_grab_ready = -1;
 
-// The replay editor (FE 12) is on the FE push-state stack.
-bool ReplayEditorOpen(uint8_t* base) {
+// Frontend screen `screen` is on the FE push-state stack.
+bool FeScreenOpen(uint8_t* base, uint32_t screen) {
   constexpr uint32_t kFrontEndManagerPtr = 0x830CFE14;
   uint32_t mgr = 0, beg = 0, end = 0;
   if (!GuestTryLoadU32(base, kFrontEndManagerPtr, &mgr) || mgr == 0 ||
@@ -6437,11 +6458,23 @@ bool ReplayEditorOpen(uint8_t* base) {
   }
   for (uint32_t a = beg; a < end; a += 20) {
     uint32_t id = 0;
-    if (GuestTryLoadU32(base, a, &id) && id == 12) {
+    if (GuestTryLoadU32(base, a, &id) && id == screen) {
       return true;
     }
   }
   return false;
+}
+
+// The replay editor (FE 12) is on the FE push-state stack.
+bool ReplayEditorOpen(uint8_t* base) {
+  return FeScreenOpen(base, 12);
+}
+
+// A photo challenge's camera (FE 2, under the challenge screen 1). Its
+// shutter grabs the screenshot target at once, like a reel save, so the
+// native frame must already be waiting (the showcase photo was blank).
+bool PhotoChallengeCameraOpen(uint8_t* base) {
+  return FeScreenOpen(base, 2);
 }
 
 // Validate the game-side target before writing guest memory: GrabScreenshot
@@ -6768,6 +6801,20 @@ void UpdateSkaterPhotoWindow() {
                        (done < req || now_ns - done < kGraceNs);
   const bool stepping = step >= 0 && now_ns - step < kGraceNs;
   const bool want = pending || stepping;
+  // Mode 4, not 3: the photo renders into the 1152x640 surface (pitch
+  // 1200), which mode 3 suppresses (the portrait window's main-scene band);
+  // with it suppressed the saved portrait came out blank (Windows A/B,
+  // 2026-11-13: the team screen's box empty after leaving Create-a-Skater).
+  // Create-a-Skater (FE 15) keeps mode 4 for its whole stay: with mode 4
+  // only inside the window the photo saved on exit was the previous one
+  // (it also uses scene frames from before the request). The CAS scene is
+  // small (~140 draws a frame) next to the menus' 800-1,160.
+  uint8_t* base = g_guest_base.load(std::memory_order_relaxed);
+  const bool cas_open = base != nullptr && FeScreenOpen(base, 15);
+  g_ovr_suppress_mode.SetForced(
+      want || cas_open || REXCVAR_GET(skate3_native_render_scene_portrait_scene_band)
+          ? kSuppressModeScenePhoto
+          : kSuppressModePortrait);
   g_ovr_suppress_mode.Hold(kOvrSkaterPhoto, want);
   g_ovr_async_shaders.Hold(kOvrSkaterPhoto, want);
   g_ovr_readback_len.Hold(kOvrSkaterPhoto, want);
@@ -6777,7 +6824,7 @@ void UpdateSkaterPhotoWindow() {
     if (want) {
       s_open_ns = now_ns;
       REXLOG_INFO(
-          "native-scene: skater photo window OPEN (suppress mode 3, sync "
+          "native-scene: skater photo window OPEN (suppress mode 4, sync "
           "shaders, <=0x{:X} resolves read back; the portrait resolve must "
           "reach guest memory)",
           REXCVAR_GET(native_render_force_resolve_readback_max_length));
@@ -12656,12 +12703,14 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
   // copy into the free readback buffer. Runs BEFORE the 2D overlay so the
   // photo never contains editor chrome / HUD, and before the blur block so
   // this scratch use of blur_tex[0] is enqueued ahead of any blur rewrite.
-  // Reel-thumbnail prefetch (see g_grab_ready): readbacks without writes
-  // while the replay editor is open and no photo flow owns the grab.
+  // Grab prefetch (see g_grab_ready): readbacks without writes while the
+  // replay editor or a photo challenge's camera is open and no photo flow
+  // owns the grab.
   const bool grab_armed = g_photo_grab_native_armed.load(std::memory_order_relaxed);
   const bool grab_prefetch =
       !grab_armed && REXCVAR_GET(skate3_native_render_scene_reel_thumb_native) &&
-      REXCVAR_GET(skate3_native_render_scene_photo_grab_native) && ReplayEditorOpen(base);
+      REXCVAR_GET(skate3_native_render_scene_photo_grab_native) &&
+      (ReplayEditorOpen(base) || PhotoChallengeCameraOpen(base));
   if (!grab_prefetch) {
     // An armed flow reuses both buffers; outside the editor the ready frame
     // is stale. Taking the lock also waits out a PrepareGrabTarget read.
@@ -13282,7 +13331,7 @@ void PrepareGrabTarget(uint8_t* base) {
   }
   std::lock_guard<std::mutex> lk(g_grab_ready_mu);
   if (g_grab_ready < 0 || g_r.grab_readback_ptr[g_grab_ready] == nullptr) {
-    REXLOG_INFO("native-scene: reel thumbnail - no native frame ready for the grab");
+    REXLOG_INFO("native-scene: screenshot grab - no native frame ready (prefetch not running)");
     return;
   }
   const auto t0 = PerfClock::now();
@@ -13292,7 +13341,7 @@ void PrepareGrabTarget(uint8_t* base) {
   const bool wrote =
       GrabTargetValid(base) && WriteGrabToGuest(base, g_r.grab_readback_ptr[g_grab_ready]);
   REXLOG_INFO(
-      "native-scene: reel thumbnail - {} the latest native frame into the "
+      "native-scene: screenshot grab - {} the latest native frame into the "
       "screenshot target before the grab ({} us)",
       wrote ? "wrote" : "FAILED to write",
       std::chrono::duration_cast<std::chrono::microseconds>(PerfClock::now() - t0).count());
