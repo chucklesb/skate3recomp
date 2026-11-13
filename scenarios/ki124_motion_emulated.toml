@@ -1,5 +1,5 @@
 # KI-124: the user's reel in motion from its marker on the emulated renderer,
-# a shot every 2 frames, to compare the sleeves frame by frame with the
+# a shot every frame, to compare the sleeves frame by frame with the
 # other renderer (held stills match; the patches show in motion).
 name = "ki124_motion_emulated"
 timeout_s = 900
@@ -24,4 +24,4 @@ frames = 30
 do = "play_reel"
 reel = "88a86b704bcf2d71"
 from = "marker"
-every_frames = 2
+every_frames = 1

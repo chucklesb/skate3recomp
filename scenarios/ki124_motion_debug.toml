@@ -1,6 +1,6 @@
 # KI-124: the user's reel played in motion from its marker with the
-# character debug view 3 (sun-facing-but-shadowed in red), a shot every 2
-# frames. Held stills settle the pose smoothing; this shows the moving
+# character debug view 3 (sun-facing-but-shadowed in red), a shot every
+# frame. Held stills settle the pose smoothing; this shows the moving
 # frames. Count the red with a per-frame pixel count of the upper body.
 name = "ki124_motion_debug"
 timeout_s = 900
@@ -25,4 +25,4 @@ frames = 30
 do = "play_reel"
 reel = "88a86b704bcf2d71"
 from = "marker"
-every_frames = 2
+every_frames = 1

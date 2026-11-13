@@ -18,6 +18,7 @@ happen. The technical details follow for whoever works on it.
 | [KI-122](#ki-122-canal-water-reflects-orange-brown-instead-of-blue-sky) | Canal water reflects orange-brown instead of blue sky, depending on the view angle; no shadows on the canals | Fixed |
 | [KI-123](#ki-123-skatereel-playback-is-slow-and-uneven) | Reel playback runs in the teens with uneven pacing, where gameplay holds near 60 | Open |
 | [KI-124](#ki-124-shadows-on-the-sun-facing-side-of-the-skaters-sleeves) | Shadow patches on the side of the skater's sleeves that faces the sun | Investigating (matches the game on Windows) |
+| [KI-125](#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps) | For a frame or two after a replay jumps to a new time, the skater's arms or legs are drawn detached | Open |
 
 ---
 
@@ -470,7 +471,17 @@ the user, Odin 2.
 **So far (Windows):** our frames match the game's own (emulated) frames,
 held and in motion. The darker sleeve sides are the torso's own shadow
 falling on the arm with the sun high behind the skater, and the game draws
-the same. Whether the Odin 2 draws more than that is the open question.
+the same. Whether the Odin 2 draws more than that is the open question; the
+user confirms the artifact they saw on the device does not show on Windows.
+Odin 2 runs `20261112-191628_ki124_motion_native`, `..191250_ki124_motion_emulated`
+and `..191437_ki124_motion_debug` (about every second frame from the marker;
+the device screenshots cannot keep up with every frame) did not catch it
+either; a dark notch at a sleeve hem in `f0000901` is the cloth folding and
+showing the sleeve's inside, which the emulated frames show too. Next: a
+frame-by-frame video of the moment (the user).
+
+**Related, not investigated:** on Windows the user noticed what looked like
+small areas of the skater's body poking through the shirt in this reel.
 
 <details>
 <summary>Technical details</summary>
@@ -501,5 +512,32 @@ the same. Whether the Odin 2 draws more than that is the open question.
 - Next: the same motion scenarios on the Odin 2 (the reel is on the device
   as clip 6), against Windows. A device-only difference would point at
   Turnip (shadow depth precision or compare).
+
+</details>
+
+## KI-125: The skater comes apart for a frame or two after a replay jumps
+
+**What you see:** right after a replay jumps to another time (the harness
+starting a reel from its marker; likely also scrubbing in the replay
+editor), the skater is drawn wrong for a frame or two: an arm missing from
+its sleeve, a hand or leg floating apart from the body, and no ground
+shadow. The game's own (emulated) frames at the same moment are fine.
+
+**How to see it:** `scenarios/ki124_motion_native.toml` on the Odin 2, the
+second shot after the jump: `out/harness-runs/20261112-191628_ki124_motion_native/shots/f0000764_reel_88a86b704bcf2d71_00.png`
+(found by the user). Compare `20261112-191250_ki124_motion_emulated`.
+
+**Status:** open · **Severity:** low (one or two frames; mostly hurts
+replay stills and repros) · **Found:** 2026-11-12 by the user.
+
+<details>
+<summary>Technical details</summary>
+
+Not investigated. Likely the pose smoothing (KI-117/KI-120: the body and
+cloth pose rings, and the 8-tap boxcar the drawn pose is filtered with)
+spanning the jump, so pieces are drawn from poses on either side of it,
+and the shadow casters drop out for those frames. Suspected fix: detect
+the discontinuity (a large root jump between consecutive poses, or the
+replay clock jumping) and reset the rings, as a teleport should.
 
 </details>
