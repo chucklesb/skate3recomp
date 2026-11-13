@@ -604,17 +604,49 @@ of the test saves are byte-identical), so the id is ambiguous and
 scenarios must use `clip = 8`. It is in the Windows test profile too
 (`out/reels/odin-20261112b`).
 
-**Status:** open · **Severity:** to be judged · **Found:** 2026-11-12 by
-the user, Odin 2 (live session on build `6ba2305`).
+**Status:** fixed on Windows (2026-11-12), Odin 2 check pending ·
+**Severity:** medium (the player's own hair, most of the time outdoors) ·
+**Found:** 2026-11-12 by the user, Odin 2 (live session on build
+`6ba2305`). The user noticed it mostly while the skater moves; it shows in
+held frames too, strongest looking toward the sun.
+
+**The cause:** our directional haze, not the hair. Hair blends without
+writing depth, so where it overhangs the sky or distant trees the depth
+buffer still held the background's distance, and the haze pass (which adds
+sun-scattered light by distance) hazed the hair as if it were that far away:
+a blue veil around the hair whose strength traced the trees behind it,
+which read as see-through hair. The game draws the hair solid
+(`scenarios/ki126_hair_stills.toml`), and turning the haze off removed the
+veil (`ki126_hair_post.toml`; light shafts, SSAO and MSAA made no difference).
+
+**The fix:** after its two blended passes, each hair item draws once more
+into the depth buffer only, where its strands are dense (alpha 0.4 and up),
+so the haze and shaft passes see the hair
+(`skate3_native_render_scene_hair_depth`, on by default).
+`scenarios/ki126_hair_fix.toml` shows it off and on next to the emulated
+frames. The sparsest strand tips keep a faint blue edge.
+
+**Still different (separate):** our hair is mid-brown where the game's reads
+nearly black in the same light. That is the hair's lighting, not its
+transparency; see the KI-124 note on harsh character shading.
 
 <details>
 <summary>Technical details</summary>
 
-Not investigated. First check: the reel from its marker as held stills on
-both renderers (`stills_renderers = ["native", "emulated"]`), on Windows and
-then the Odin 2, to tell whether the game draws it the same way. Hair is a
-character family with its own blend/alpha-test handling, so the suspects
-are the hair's alpha mode (blended vs alpha-tested, and draw order against
-the head and the world behind it) and its depth write.
+- Diagnosis views (`skate3_native_render_scene_char_debug`): 5 = a solid
+  color per character family at its alpha (the shell was family 4, the
+  create-a-skater hair), 6 = normal shading forced opaque (the shell stayed
+  see-through, so the cause had to come after the hair's own shading).
+  `scenarios/ki126_hair_debug.toml` runs both.
+- The haze term (`hdr.hlsl` ps_tonemap) is
+  `vs1.xyz * phase * (1 - exp(-density * depth)) * intensity`, read from the
+  shared linear depth (`ao_lin_depth`), which is built from the scene depth
+  after the blended sub-pass. The shaft upsample weights by the same depth.
+- The depth pass is `ps_hair_depth` (`scene.hlsl`) through `pso_hair_depth`
+  (the fade-depth state: no color writes, z-write, LESS_EQUAL), drawn right
+  after `pso_hair_b` for each hair item in the back-to-front blended loop.
+- Runs: `20261112-213557_ki126_hair_stills`, `..213848_ki126_hair_debug`,
+  `..214117_ki126_hair_post`, `..214515_ki126_hair_fix` (Windows Vulkan, at
+  the Odin 2's settings).
 
 </details>

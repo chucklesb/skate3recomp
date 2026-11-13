@@ -66,6 +66,7 @@ MATRIX = (
     ("ps_main", "ps_6_0", "HDR=1;SHOWCASE=1", "k_scene_ps_main_HDR_1_SHOWCASE_1"),
     ("ps_shadow_caster", "ps_6_0", "", "k_scene_ps_shadow_caster"),
     ("ps_shadow_caster_clip", "ps_6_0", "", "k_scene_ps_shadow_caster_clip"),
+    ("ps_hair_depth", "ps_6_0", "", "k_scene_ps_hair_depth"),
     ("ps_refl_gbuf", "ps_6_0", "", "k_scene_ps_refl_gbuf"),
 )
 SCENE_NAMES = {request[3] for request in MATRIX}

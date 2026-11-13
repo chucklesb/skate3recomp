@@ -1,0 +1,38 @@
+# KI-126 diagnosis: which pass makes the hair see-through. Reel
+# 511e079e9279419f (clip 8) held at 22.5 s on the native renderer, once per
+# variant with one depth-reading post effect off (haze, light shafts, SSAO)
+# and once with MSAA off. Forcing the hair's alpha to 1 (char_debug 6) left
+# it see-through, so the cause is after the hair's own shading.
+name = "ki126_hair_post"
+timeout_s = 1500
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+clip = 8
+from = "marker"
+stills = [22.50]
+settle_frames = 30
+# Variant settings carry over, so each one restores the previous effect.
+stills_variants = [
+  { tag = "base", set = { skate3_native_render_scene_haze = true } },
+  { tag = "nohaze", set = { skate3_native_render_scene_haze = false } },
+  { tag = "noshafts", set = { skate3_native_render_scene_haze = true, skate3_native_render_scene_shafts = false } },
+  { tag = "nossao", set = { skate3_native_render_scene_shafts = true, skate3_native_render_scene_ssao = false } },
+  { tag = "nomsaa", set = { skate3_native_render_scene_ssao = true, skate3_native_render_scene_msaa = 1 } },
+]
+timeout_s = 600

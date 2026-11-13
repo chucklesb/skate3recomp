@@ -1,0 +1,30 @@
+# KI-126: the skater's hair looks transparent (the outer hair layer shows the
+# trees behind it). The user's Odin 2 reel 511e079e9279419f (clip 8; clips 8
+# and 9 are identical, so the id is ambiguous) held at its marker (21.62 s)
+# and two later moments, shot on the native and the emulated renderer.
+name = "ki126_hair_stills"
+timeout_s = 1200
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+clip = 8
+from = "marker"
+stills = [21.62, 22.50, 23.50]
+settle_frames = 30
+stills_renderers = ["native", "emulated"]
+timeout_s = 900

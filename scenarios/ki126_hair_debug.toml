@@ -1,0 +1,54 @@
+# KI-126 diagnosis: reel 511e079e9279419f (clip 8) held at 22.5 and 23.5 s on
+# the native renderer, three passes: normal shading, the per-family color
+# view (char_debug 5: which family the see-through shell is drawn as, at its
+# alpha), and normal shading forced opaque (char_debug 6: the shell's color
+# without the blend).
+name = "ki126_hair_debug"
+timeout_s = 1500
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+clip = 8
+from = "marker"
+stills = [22.50, 23.50]
+settle_frames = 30
+timeout_s = 400
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_char_debug = 5 }
+
+[[step]]
+do = "play_reel"
+clip = 8
+from = "marker"
+stills = [22.50, 23.50]
+settle_frames = 30
+timeout_s = 400
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_char_debug = 6 }
+
+[[step]]
+do = "play_reel"
+clip = 8
+from = "marker"
+stills = [22.50, 23.50]
+settle_frames = 30
+timeout_s = 400

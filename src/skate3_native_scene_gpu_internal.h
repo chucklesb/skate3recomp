@@ -599,6 +599,8 @@ struct RendererState {
   // (the game's cac_hair/defaulthair two-pass draw order).
   nrhi::Pipeline* pso_hair_a = nullptr;
   nrhi::Pipeline* pso_hair_b = nullptr;
+  // KI-126: depth-only pass of a hair item's dense strands (ps_hair_depth).
+  nrhi::Pipeline* pso_hair_depth = nullptr;
   nrhi::Format rtv_format = nrhi::Format::kUnknown;
   nrhi::Texture* depth = nullptr;
   uint32_t depth_width = 0;

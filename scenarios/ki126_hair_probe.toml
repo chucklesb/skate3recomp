@@ -1,0 +1,29 @@
+# KI-126: the skater's hair looks transparent. The user's Odin 2 reel
+# (id 511e079e9279419f, saved twice: clips 8 and 9 are identical, so the id
+# is ambiguous and this uses the clip number) played from its marker with a
+# shot every 10 frames. The log's "playing from ... marker" line gives the
+# marker time for the held-stills scenario (ki126_hair_stills.toml).
+name = "ki126_hair_probe"
+timeout_s = 900
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+clip = 8
+from = "marker"
+every_frames = 10
+timeout_s = 400

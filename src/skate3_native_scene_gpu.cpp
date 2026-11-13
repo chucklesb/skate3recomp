@@ -123,6 +123,7 @@ REXCVAR_DECLARE(double, skate3_native_render_scene_shadow_static_strength);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_shadows);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_shafts);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_haze);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_hair_depth);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_showcase);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_sort_opaque);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_splines);
@@ -3192,7 +3193,7 @@ bool EnsureScenePsoFamily(const NativeGuestOutputRenderContext& context) {
   // destruction queue).
   for (nrhi::Pipeline** p :
        {&g_r.pso, &g_r.pso_cullback, &g_r.pso_transparent, &g_r.pso_fade_depth, &g_r.pso_fade,
-        &g_r.pso_hair_a, &g_r.pso_hair_b, &g_r.pso_nodepth,
+        &g_r.pso_hair_a, &g_r.pso_hair_b, &g_r.pso_hair_depth, &g_r.pso_nodepth,
         &g_r.pso_outline_mask, &g_r.pso_hom}) {
     if (*p != nullptr) {
       device->DestroyDeferred(*p);
@@ -3278,6 +3279,23 @@ bool EnsureScenePsoFamily(const NativeGuestOutputRenderContext& context) {
   fade_depth.blend = {};
   fade_depth.blend.write_mask = 0;
   g_r.pso_fade_depth = device->CreateGraphicsPipeline(fade_depth);
+  // Hair depth (KI-126, see ps_hair_depth): after a hair item's blended
+  // passes, its dense strands write depth (no color) so the depth-reading
+  // post passes stop hazing the hair at the background's distance.
+  {
+    nrhi::Shader* hair_depth_ps = device->CreateShader(
+        MakeShaderDesc(nrhi::ShaderStage::kPixel, "scene.hlsl", kShaderSource,
+                       "ps_hair_depth", nullptr, ""));
+    if (hair_depth_ps != nullptr) {
+      nrhi::GraphicsPipelineDesc hd = fade_depth;
+      hd.ps = hair_depth_ps;
+      hd.depth.func = nrhi::CompareFunc::kLessEqual;
+      g_r.pso_hair_depth = device->CreateGraphicsPipeline(hd);
+    }
+    if (g_r.pso_hair_depth == nullptr) {
+      REXLOG_WARN("native-scene: hair depth PSO creation failed (KI-126 haze on hair)");
+    }
+  }
   pso.depth.func = nrhi::CompareFunc::kEqual;
   g_r.pso_fade = device->CreateGraphicsPipeline(pso);
   pso.depth.func = nrhi::CompareFunc::kLess;
@@ -11502,6 +11520,13 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         timed_draw(*item);
         cmd->SetPipeline(g_r.pso_hair_b);
         timed_draw(*item);
+        // KI-126: then its dense strands into the depth buffer (no color),
+        // so the haze and shaft passes see the hair, not the background.
+        if (g_r.pso_hair_depth != nullptr &&
+            REXCVAR_GET(skate3_native_render_scene_hair_depth)) {
+          cmd->SetPipeline(g_r.pso_hair_depth);
+          timed_draw(*item);
+        }
         cmd->SetPipeline(blend_bound);
         continue;
       }

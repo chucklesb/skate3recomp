@@ -227,7 +227,7 @@ float4 ShadeCharacter(VSOut i, float4 albedo) {
     // KI-124 signature: N.L > 0.2 and csm < 0.5), 4 = the shadow term
     // without the static map (CSM only).
     int cdbg = int(ch_dbg.x + 0.5);
-    if (cdbg > 0) {
+    if (cdbg > 0 && cdbg < 5) {
       float3 v = cdbg == 1   ? csm.xxx
                  : cdbg == 2 ? vndl.xxx
                  : cdbg == 3 ? (vndl > 0.2 && csm < 0.5 ? float3(1.0, 0.0, 0.0)
@@ -253,6 +253,23 @@ float4 ShadeCharacter(VSOut i, float4 albedo) {
     if (ch_misc.z > 0.5) {
       out_a *= saturate(decal_art.Sample(smp, i.uv2).r);
     }
+  }
+  // Debug views for every character family (KI-126): 5 = a solid color
+  // per family at the computed alpha (1/2 red, 3 green, 4 cac hair
+  // yellow, 5 default hair magenta, 6/7 vehicles cyan, other white), 6 =
+  // normal shading forced opaque (alpha 1).
+  int cdbg_all = int(ch_dbg.x + 0.5);
+  if (cdbg_all == 5) {
+    float3 fc = fam < 2.5   ? float3(1.0, 0.0, 0.0)
+                : fam < 3.5 ? float3(0.0, 1.0, 0.0)
+                : fam < 4.5 ? float3(1.0, 1.0, 0.0)
+                : fam < 5.5 ? float3(1.0, 0.0, 1.0)
+                : fam < 7.5 ? float3(0.0, 1.0, 1.0)
+                            : float3(1.0, 1.0, 1.0);
+    return float4(fc, out_a);
+  }
+  if (cdbg_all == 6) {
+    out_a = 1.0;
   }
   // Exact tone chain: sqrt(0.5 * (max(x*E/4 + 0.75, 1) - sat(1 - x*E)^2)).
   float E = max(ch_key.w, 0.01);

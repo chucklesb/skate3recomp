@@ -1036,6 +1036,19 @@ float2 ps_shadow_caster(VSOut i) : SV_Target {
 // atlas): sampling the item's diffuse keeps the cutout silhouette instead
 // of casting the full card quad. ALPHAREF 30/255 matches the world
 // families' own opaque alpha test.
+// Hair depth (KI-126): hair blends with z-write off, so the post passes that
+// read scene depth (the directional haze, the shaft upsample) saw the
+// BACKGROUND's distance through it and added the sky's haze onto the hair,
+// a blue veil shaped by the trees behind (the "see-through hair"). After its
+// two blended passes each hair item draws once more with this PS, color
+// writes off and z-write on, so the depth buffer holds the hair wherever its
+// strand coverage (the hair branch's alpha: t4 at the raw second texcoord x
+// the strand-alpha scale) is dense. Sparse fringes keep the background depth.
+float4 ps_hair_depth(VSOut i) : SV_Target {
+  clip(saturate(decal_art.Sample(smp, i.uv2).r * ch_tintB.w) - 0.4);
+  return float4(0.0, 0.0, 0.0, 0.0);
+}
+
 float2 ps_shadow_caster_clip(VSOut i) : SV_Target {
   // +2 LOD bias: at the static sun map's ~2 cm near-cascade texels the
   // raw leaf cutout rasters as binary salt-and-pepper dapple; two mip

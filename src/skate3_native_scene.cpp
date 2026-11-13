@@ -170,8 +170,11 @@ REXCVAR_DEFINE_INT32(skate3_native_render_scene_water_debug, 0, "Skate 3",
 REXCVAR_DEFINE_INT32(skate3_native_render_scene_char_debug, 0, "Skate 3",
                      "Character (skater/CAC) debug view: 0 off, 1 sun shadow "
                      "term, 2 N.L, 3 shadow with sun-facing-but-shadowed "
-                     "pixels in red, 4 CSM shadow only (no static map).")
-    .range(0, 4)
+                     "pixels in red, 4 CSM shadow only (no static map), 5 solid "
+                     "color per character family at its alpha (1/2 red, 3 green, "
+                     "4 cac hair yellow, 5 default hair magenta, 6/7 vehicles "
+                     "cyan), 6 normal shading forced opaque.")
+    .range(0, 6)
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_INT32(skate3_native_render_scene_ssr_steps, 48, "Skate 3",
                      "SSR screen-space march taps per ray (half-res pass). More "
@@ -311,6 +314,13 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_haze, true, "Skate 3",
                     "night). Kept subtle; the game's authored sky and fog carry "
                     "the base atmosphere, and additive terms read as extra fog "
                     "quickly. Requires the HDR intermediate.")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_hair_depth, true, "Skate 3",
+                    "KI-126: after a hair item's blended passes, write its dense "
+                    "strands into the depth buffer (no color), so the haze and "
+                    "light-shaft passes see the hair instead of the background "
+                    "behind it. Off = the old see-through blue haze veil on hair "
+                    "against the sky and distant trees.")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_DOUBLE(skate3_native_render_scene_haze_intensity, 0.08,
                       "Skate 3",
