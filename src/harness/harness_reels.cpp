@@ -121,7 +121,10 @@ bool List(std::vector<Reel>* out, fs::path* dir, std::string* error) {
     Reel r;
     r.clip = static_cast<int>(out->size()) + 1;
     r.slot = slot;
-    const fs::path body = chosen / (std::to_string(slot) + ".B");
+    // The game names slot files in uppercase hex (slot 10 = A.B).
+    char name[16];
+    std::snprintf(name, sizeof(name), "%X.B", slot);
+    const fs::path body = chosen / name;
     std::vector<uint8_t> head;
     if (ReadPrefix(body, 36, &head) && head.size() >= 28 && BE32(head.data()) == kMagicMC02) {
       r.id = Hex(head.data() + 20, 8);

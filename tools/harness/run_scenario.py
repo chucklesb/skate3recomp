@@ -1144,18 +1144,44 @@ def reels_cmd(dev: Device, pull: Path | None, install_windows: bool) -> int:
         reel_dir = found[0][len(GUEST_ROOTFS):] if found[0].startswith(GUEST_ROOTFS) else found[0]
         listing = run(f"cd {{R}}{reel_dir} && for f in *.B; do echo $f $(stat -c %Y $f) "
                       f"$(od -An -tx1 -j20 -N8 $f | tr -d \" \\n\"); done")
-    rows = []
+        # INDEX (MC02): payload from +32 lists the slots, big-endian u32, in
+        # My Replays order (= play_reel clip), 0 = end (harness_reels.cpp).
+        index_hex = run(f"od -An -tx1 -v {{R}}{reel_dir}/INDEX | tr -d \" \\n\"")
+    by_slot = {}
     for line in listing.splitlines():
         parts = line.split()
+        # The game names slot files in hex (slot 10 = A.B).
         if len(parts) == 3 and parts[0].endswith(".B"):
-            rows.append((int(parts[0][:-2]), int(parts[1]), parts[2]))
-    rows.sort()
+            try:
+                by_slot[int(parts[0][:-2], 16)] = (int(parts[1]), parts[2])
+            except ValueError:
+                pass
+    order = []
+    try:
+        raw = bytes.fromhex(index_hex.strip())
+        if raw[:4] == b"MC02":
+            total = min(int.from_bytes(raw[4:8], "big"), len(raw))
+            for off in range(32, total - 3, 4):
+                slot = int.from_bytes(raw[off:off + 4], "big")
+                if slot == 0:
+                    break
+                order.append(slot)
+    except ValueError:
+        pass
+    if not order:
+        log("INDEX unreadable; listing by slot number (clip numbers may be off)")
+        order = sorted(by_slot)
+    rows = [(slot, *by_slot.get(slot, (0, "?" * 16))) for slot in order]
     ids = [r[2] for r in rows]
     print(f"{reel_dir}")
-    print("clip  saved                id                note")
+    print("clip  slot  saved                id                note")
     for n, (slot, mtime, rid) in enumerate(rows, 1):
         note = "same id as another clip: use clip = N" if ids.count(rid) > 1 else ""
-        print(f"{n:>4}  {time.strftime('%Y-%m-%d %H:%M', time.localtime(mtime))}  {rid}  {note}")
+        saved = time.strftime('%Y-%m-%d %H:%M', time.localtime(mtime)) if mtime else "(no body)       "
+        print(f"{n:>4}  {slot:>4}  {saved}  {rid}  {note}")
+    extra = sorted(set(by_slot) - set(order))
+    if extra:
+        print(f"  not in INDEX (deleted or unsaved): slots {extra}")
     if pull is None:
         return 0
     stamp = time.strftime("%Y%m%d-%H%M%S")

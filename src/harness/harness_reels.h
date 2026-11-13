@@ -5,7 +5,8 @@
 //
 // The profile's REPLY_SKATER save holds INDEX (an "MC02" container whose
 // payload lists the reel slots, big-endian u32, in My Replays order, 0 =
-// end), and per slot N.H (header with the thumbnail) and N.B (the replay).
+// end), and per slot N.H (header with the thumbnail) and N.B (the replay),
+// N in uppercase hex (slot 10 = A.B).
 // Every MC02 file carries a content hash at +20; a reel's id is the first
 // 8 bytes of N.B's (16 hex digits), stable for as long as the reel isn't
 // saved again. The list position (clip) is the slot's place in INDEX,
