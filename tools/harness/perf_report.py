@@ -14,8 +14,10 @@ Sources (both off by default; scenarios/perf_reel.toml turns them on):
     a frame cap, so span is not GPU busy time; compare the Nat* buckets.
 
 Lines are grouped into segments: "reel<N>" between the harness's "reel N: playing
-from" and "reel N: exit posted" log lines (the first line of each segment is
-dropped: its window started before playback), and "all" for every line after
+from" and "reel N: exit posted" log lines, named ones between a scenario's
+`mark text = "perf <name>"` and `"perf end"` (e.g. live gameplay to compare
+with the reels; the first line of each segment is dropped: its window started
+before it), and "all" for every line after
 the scenario's first step. Values are averaged over a segment's lines; *_max
 fields keep the worst.
 
@@ -34,6 +36,9 @@ CPU = re.compile(r"native-scene perf: (.*)$")
 GPU = re.compile(r"(D3D12|Vulkan) GPU profile \(avg us/frame over (\d+) frames\): (.*?) \|(.*)$")
 REEL_START = re.compile(r"harness: reel (\d+): playing from")
 REEL_END = re.compile(r"harness: reel (\d+): exit posted")
+# Named segments from scenario marks: `mark text = "perf <name>"` starts one
+# (e.g. a live-gameplay stretch to compare with the reels), `"perf end"` ends it.
+MARK_SEG = re.compile(r"harness: mark: perf (\S+)")
 SCENARIO_START = re.compile(r"harness: step 1 ")
 PAIR_MS = re.compile(r"(\w+)=([\d.]+)/([\d.]+)ms")
 KV = re.compile(r"(\w+)=([\d.]+)(?:\((\d+)\))?")
@@ -89,6 +94,12 @@ def collect(log: Path) -> dict:
             continue
         if REEL_END.search(line):
             reel = None
+            continue
+        m = MARK_SEG.search(line)
+        if m:
+            name = m.group(1)
+            reel = None if name == "end" else name
+            first_in_reel = {"cpu": True, "gpu": True}
             continue
         m = CPU.search(line)
         kind, values = None, None
@@ -161,7 +172,7 @@ def print_summary(run: Path, perf: dict) -> None:
             top = sorted(nat, key=lambda k: -gpu[k])[:5]
             parts.append(f"gpu native {gpu['nat_total'] / 1000:.2f} ms ("
                          + " ".join(f"{k[3:]}={gpu[k] / 1000:.2f}" for k in top) + ")")
-        print(f"    {seg:<7} " + " | ".join(parts) +
+        print(f"    {seg:<12} " + " | ".join(parts) +
               f"  [{d['cpu_windows']} cpu / {d['gpu_windows']} gpu windows]")
 
 

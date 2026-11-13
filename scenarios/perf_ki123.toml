@@ -1,0 +1,135 @@
+# KI-123: reel playback vs live gameplay, uncapped, on the Odin 2.
+#
+# Live stretches (perf segments "live_*", between `mark perf <name>` and
+# `mark perf end`) and reels 2, 4 and 6, with the native renderer's CPU stage
+# log and the GPU timestamp buckets on. run_scenario.py writes perf.json and
+# prints fps / CPU / GPU per segment.
+#
+# Uncapped: the guest cap is off here; the presenter's vsync'd FIFO mode is
+# picked before the harness starts, so allow the other present modes on the
+# command line:
+#   rs.sh odin2 scenarios/perf_ki123.toml -- --vulkan_allow_present_mode_immediate=true \
+#     --vulkan_allow_present_mode_mailbox=true
+# Needs the signed-in profile's saves (test user data).
+name = "perf_ki123"
+timeout_s = 1200
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 0.0
+skate3_guest_fps_cap_auto = false
+skate3_native_render_scene_perf_log = true
+skate3_native_render_scene_perf_interval = 60
+vulkan_gpu_timestamp_buckets = true
+d3d12_gpu_timestamp_buckets = true
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+ms = 3000
+
+# Live: standing at the spawn, then pushing along.
+[[step]]
+do = "mark"
+text = "perf live_idle"
+
+[[step]]
+do = "wait"
+ms = 12000
+
+[[step]]
+do = "mark"
+text = "perf live_push"
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 10
+
+[[step]]
+do = "wait"
+ms = 2500
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 10
+
+[[step]]
+do = "wait"
+ms = 2500
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 10
+
+[[step]]
+do = "wait"
+ms = 2500
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 10
+
+[[step]]
+do = "wait"
+ms = 2500
+
+[[step]]
+do = "mark"
+text = "perf end"
+
+[[step]]
+do = "state"
+tag = "before_reels"
+
+[[step]]
+do = "play_reel"
+clip = 2
+
+[[step]]
+do = "state"
+tag = "after_reel2"
+
+[[step]]
+do = "mark"
+text = "perf live_after2"
+
+[[step]]
+do = "wait"
+ms = 10000
+
+[[step]]
+do = "mark"
+text = "perf end"
+
+[[step]]
+do = "play_reel"
+clip = 4
+
+[[step]]
+do = "play_reel"
+clip = 6
+
+[[step]]
+do = "state"
+tag = "after_reel6"
+
+[[step]]
+do = "mark"
+text = "perf live_after6"
+
+[[step]]
+do = "wait"
+ms = 10000
+
+[[step]]
+do = "mark"
+text = "perf end"
