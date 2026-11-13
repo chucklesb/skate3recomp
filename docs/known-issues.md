@@ -497,6 +497,22 @@ So it depends on the sequence of frames, not on a frame's content:
 something in the dynamic shadow path (the caster pose, the shadow rows)
 belongs to a different moment than the drawn skater on that frame.
 
+**Candidate fix (2026-11-12, awaiting the user's check on video):** the
+shirt cast its shadow from a different shape than the one drawn. The
+shadow pass bound the newest decoded cloth state, while the main pass draws
+a blend of recent cloth states timed to the body. Measured at the Odin 2's
+settings, the shadow-casting shirt sat 1.3 to 5.5 cm from the drawn shirt on
+every frame, on both the Odin 2 and Windows. Garments now cast with the
+drawn shape (`skate3_native_render_scene_shadow_ropa_drawn_shape`, on by
+default; off restores the old caster). The trace shows no one-frame jump
+at the flash moment on either platform, so whether this removes the flash
+rests on the recording: `scenarios/ki124_ropa_caster_ab.toml` plays the
+reel with the old caster (pass A) and then the fix (pass B); Odin 2 run
+`20261112-211050_ki124_ropa_caster_ab`, video
+`C:\Users\user\Videos\ki124_ropa_caster_ab_fixed.mkv` (pass A's reel starts
+at about 0:24.2, pass B's at about 0:48.5). If pass B still flashes, the
+next suspect is the per-frame caster set (`shadow_caster_parity`).
+
 **Also noted (the user):** fabric wrinkles, hair shadows and muscle
 definition look harsher than they should. Windows held stills against the
 emulated frame (`20261112-205027_ki124_flash_stills`) agree: our shirt
@@ -516,12 +532,19 @@ small areas of the skater's body poking through the shirt in this reel.
   - **Light vs shadow direction:** the characters' light row (PS c9) equals
     the world sun c6 for every character family (0.0°; log line
     `native-scene: char light vs world sun`).
-  - **The cloth shirt casting from another shape:** the shadow caster binds
-    the resident (newest) shape while the visible shirt blends shape
-    generations; `skate3_native_render_scene_ropa_blend = false` makes no
-    difference (upper-body red pixels per frame, mean 236 vs 242).
-  - **Shadow tile size:** 512 (the Odin 2's auto size at 720p) and 1024
-    look the same.
+  - **The cloth shirt casting from another shape (on Windows only):** the
+    shadow caster bound the resident (newest) shape while the visible shirt
+    blends shape generations; `skate3_native_render_scene_ropa_blend =
+    false` made no difference on Windows (upper-body red pixels per frame,
+    mean 236 vs 242), but Windows never showed the flash, so this did not
+    rule it out for the Odin 2. Now fixed regardless (see the candidate fix
+    above); with `skate3_native_render_scene_char_track` on, the log line
+    `ropa-shadow f=... resident_vs_drawn_cm=` gives the old caster's offset
+    per frame, and `BlendRopaShape` (`skate3_native_scene_gpu.cpp`) builds
+    the one shape both passes use.
+  - **Shadow tile size:** 512 and 1024 look the same. (The Odin 2's
+    settings set 1024; the Windows test profile now matches the device's
+    settings: 1280x720, a fixed 30 fps cap, 1024 tile and static map.)
 - Native vs emulated: `20261112-185310_ki124_renderers` (held, SSIM 0.93
   "close"), `20261112-185506_ki124_motion_native` vs
   `20261112-185548_ki124_motion_emulated` (in motion): the same shading on

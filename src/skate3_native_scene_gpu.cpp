@@ -102,6 +102,8 @@ REXCVAR_DECLARE(bool, skate3_native_render_scene_photo_yield);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_refl_bias_auto);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_ring);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_ropa_blend);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_char_track);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_shadow_ropa_drawn_shape);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_ropa_inline);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_selection_outline);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_shadow_caster_parity);
@@ -7421,6 +7423,168 @@ static void RenderStaticSunMap(const NativeGuestOutputRenderContext& context,
   g_r.static_sun_valid = true;
 }
 
+// This frame's blended ROPA garment shapes, keyed by scene item (see
+// BlendRopaShape). Filled by whichever pass binds the garment first (the
+// shadow casters run before the main pass) and reused by every later pass,
+// so the shadow atlas and the main pass draw the SAME shape. Cleared with
+// the ropa upload ring at frame start. Render thread only.
+struct RopaFrameShape {
+  VbBinding vbv{};
+  uint32_t resident_bytes = 0;  // the resident decode it was built against
+  float dev_m = -1.0f;          // max |blend - newest generation| (metres)
+};
+std::unordered_map<const DrawItem*, RopaFrameShape> g_ropa_frame_shapes;
+
+// ROPA shape blend (see RendererState::ropa_shapes): combine the shape
+// generations with the kernel weights InterpolateDynamicItems computed
+// (the SAME 8-tap boxcar / pair-lerp the body bones and garment world
+// took this frame) into the per-frame ropa upload ring and draw from
+// it; the stepped cloth shape against the interpolated body was the
+// tee jelly/clip-through, and a filter-MISMATCHED blend (plain lerp vs
+// boxcar body) kept a period-scaled residue of it. Positions/normals
+// (floats 0..6) blend; packed attributes (blend words, uvs: floats
+// 7..13) copy from the newest generation present. Generations missing
+// from the ring (evicted / decode in flight) renormalize over what IS
+// present when at least half the kernel's weight survives.
+//
+// Returns the binding to draw the garment with: the blended upload, or the
+// raw resident decode when blending is off or not possible this frame.
+// KI-124: the shadow casters used to bind the raw resident decode (the
+// NEWEST cloth generation) while the main pass drew this play-clock blend,
+// so the shirt cast from a different moment than the shirt it shadowed;
+// at a sim step whose generation timing slipped against the play clock
+// (device frame pacing, 1x reel playback) the offset flashed a sleeve
+// shadow for one frame. Both passes now come through here.
+VbBinding BlendRopaShape(const DrawItem& item, const MeshBuffers& buffers,
+                         uint32_t bone_slot) {
+  const auto cached = g_ropa_frame_shapes.find(&item);
+  if (cached != g_ropa_frame_shapes.end() &&
+      cached->second.resident_bytes == buffers.vb_view.size_bytes) {
+    return cached->second.vbv;
+  }
+  RopaFrameShape shape;
+  shape.vbv = buffers.vb_view;
+  shape.resident_bytes = buffers.vb_view.size_bytes;
+  if (!item.ropa || item.shape_count <= 0 ||
+      !REXCVAR_GET(skate3_native_render_scene_ropa_blend)) {
+    g_ropa_frame_shapes[&item] = shape;
+    return shape.vbv;
+  }
+  const std::vector<float>* gv[DrawItem::kShapeGens] = {};
+  float gw[DrawItem::kShapeGens] = {};
+  int ng = 0;
+  float total = 0.0f;
+  uint64_t newest_seq = 0;
+  const std::vector<float>* newest = nullptr;
+  const std::vector<float>* ring_newest = nullptr;
+  // Generations must match the RESIDENT decode's extent exactly; the
+  // index buffer references that many vertices. After a re-stream/
+  // outfit swap the ring briefly holds stale-size generations; binding
+  // one against the current IB reads past the bound VB and collapses
+  // triangles (a momentary partial-invisible blink). Stale sizes drop
+  // out here; if too much kernel weight is stale, the raw resident VB
+  // draws instead (always self-consistent).
+  const size_t want_floats = size_t(buffers.vb_view.size_bytes) / sizeof(float);
+  const auto rit = g_r.ropa_shapes.find(item.mesh);
+  if (rit != g_r.ropa_shapes.end() && !rit->second.empty()) {
+    // Sim-sleep gate: generations grossly older than the ring's newest
+    // were recorded before a cloth-sim sleep (continuous streams span
+    // ~114 ms end to end). Blending one against the fresh drape draws
+    // the garment where/how the character USED to stand, the
+    // detached/perpendicular class. Dropped generations shed their
+    // kernel weight; if too much weight is stale the raw resident VB
+    // draws instead (self-consistent current shape).
+    const double ring_newest_t = rit->second.back().t;
+    if (rit->second.back().verts.size() == want_floats) {
+      ring_newest = &rit->second.back().verts;
+    }
+    for (int k = 0; k < item.shape_count; ++k) {
+      for (const RendererState::RopaGen& g : rit->second) {
+        if (g.seq != item.shape_seq[k]) {
+          continue;
+        }
+        if (g.verts.size() != want_floats) {
+          break;  // stale-size generation (re-stream/outfit swap)
+        }
+        if (ring_newest_t - g.t > 0.35) {
+          static std::atomic<uint32_t> s_stale{0};
+          const uint32_t ln = s_stale.fetch_add(1, std::memory_order_relaxed);
+          if (ln < 16 || (ln & 1023u) == 0) {
+            REXLOG_DEBUG(
+                "native-scene: ropa shape STALE gen dropped mesh={:08X} "
+                "age={:.2f}s seq_gap={} (n={})",
+                item.mesh, ring_newest_t - g.t, rit->second.back().seq - g.seq, ln);
+          }
+          break;
+        }
+        gv[ng] = &g.verts;
+        gw[ng] = item.shape_w[k];
+        total += item.shape_w[k];
+        ++ng;
+        if (g.seq >= newest_seq) {
+          newest_seq = g.seq;
+          newest = &g.verts;
+        }
+        break;
+      }
+    }
+  }
+  const uint32_t region = bone_slot * RendererState::kRopaRegionSize;
+  const uint32_t bytes = uint32_t(want_floats * sizeof(float));
+  if (ng > 0 && total >= 0.5f && newest != nullptr &&
+      buffers.vb_view.stride == 56 &&
+      g_r.ropa_ring_offset + bytes <= RendererState::kRopaRegionSize) {
+    float* dst =
+        reinterpret_cast<float*>(g_r.ropa_ring_cpu + region + g_r.ropa_ring_offset);
+    const float inv = 1.0f / total;
+    float dev2 = 0.0f;
+    for (size_t v = 0; v + 14 <= want_floats; v += 14) {
+      float blend7[7] = {};
+      for (int k = 0; k < ng; ++k) {
+        const float* src = gv[k]->data() + v;
+        const float wk = gw[k] * inv;
+        for (int f = 0; f < 7; ++f) {
+          blend7[f] += src[f] * wk;
+        }
+      }
+      if (ring_newest != nullptr) {
+        const float* rn = ring_newest->data() + v;
+        const float dx = blend7[0] - rn[0];
+        const float dy = blend7[1] - rn[1];
+        const float dz = blend7[2] - rn[2];
+        dev2 = std::max(dev2, dx * dx + dy * dy + dz * dz);
+      }
+      // One store per float: dst is write-combined upload memory.
+      std::memcpy(dst + v, blend7, sizeof(blend7));
+      std::memcpy(dst + v + 7, newest->data() + v + 7, 7 * sizeof(float));
+    }
+    shape.vbv.buffer = g_r.ropa_ring;
+    shape.vbv.offset = region + g_r.ropa_ring_offset;
+    shape.vbv.size_bytes = bytes;
+    shape.vbv.stride = buffers.vb_view.stride;
+    shape.dev_m = ring_newest != nullptr ? std::sqrt(dev2) : -1.0f;
+    g_r.ropa_ring_offset += (bytes + 255u) & ~255u;
+    g_ropa_blend_drawn.fetch_add(1, std::memory_order_relaxed);
+  } else {
+    // Fallback to the raw resident shape. Rate-limited detail log: an
+    // ALTERNATION of these with blended frames renders the garment
+    // hopping between the play-clock drape and the zero-lag drape.
+    g_ropa_blend_miss.fetch_add(1, std::memory_order_relaxed);
+    static std::atomic<uint32_t> s_blend_miss_log{0};
+    const uint32_t ln = s_blend_miss_log.fetch_add(1, std::memory_order_relaxed);
+    if (ln < 64 || (ln & 63u) == 0) {
+      REXLOG_DEBUG(
+          "native-scene: ropa blend MISS mesh={:08X} sc={} ng={} "
+          "total={:.2f} stride={} ring={} ring_off={} (n={})",
+          item.mesh, item.shape_count, ng, total, buffers.vb_view.stride,
+          rit != g_r.ropa_shapes.end() ? rit->second.size() : size_t(0),
+          g_r.ropa_ring_offset, ln);
+    }
+  }
+  g_ropa_frame_shapes[&item] = shape;
+  return shape.vbv;
+}
+
 bool RenderShadowAtlas(const NativeGuestOutputRenderContext& context,
                        const FrameScene& scene, uint32_t bone_region,
                        int32_t debug_mode, uint64_t frame_number,
@@ -7553,6 +7717,40 @@ bool RenderShadowAtlas(const NativeGuestOutputRenderContext& context,
       }
       casters.push_back(c);
     }
+    const bool cast_drawn_ropa =
+        REXCVAR_GET(skate3_native_render_scene_shadow_ropa_drawn_shape);
+    const uint32_t bone_slot = bone_region / RendererState::kBoneRegionSize;
+    // KI-124 trace (with char_track): per frame, how far the cast garment
+    // shape sat from the drawn one under the OLD caster binding (the newest
+    // resident generation vs the play-clock blend), worst garment. The
+    // blend is cached for the main pass, so this costs nothing extra.
+    if (REXCVAR_GET(skate3_native_render_scene_char_track)) {
+      float worst = -1.0f;
+      uint32_t worst_mesh = 0;
+      int n_ropa = 0;
+      for (const Caster& c : casters) {
+        if (!c.item->ropa) {
+          continue;
+        }
+        const auto mit = g_r.meshes.find(c.item->mesh);
+        if (mit == g_r.meshes.end()) {
+          continue;
+        }
+        ++n_ropa;
+        BlendRopaShape(*c.item, mit->second, bone_slot);
+        const auto sit = g_ropa_frame_shapes.find(c.item);
+        if (sit != g_ropa_frame_shapes.end() && sit->second.dev_m > worst) {
+          worst = sit->second.dev_m;
+          worst_mesh = c.item->mesh;
+        }
+      }
+      REXLOG_INFO(
+          "ropa-shadow f={} casters={} ropa={} worst_mesh={:08X} "
+          "resident_vs_drawn_cm={:.2f} cast={}",
+          frame_number, casters.size(), n_ropa, worst_mesh,
+          worst >= 0.0f ? worst * 100.0f : -1.0f,
+          cast_drawn_ropa ? "drawn" : "resident");
+    }
     if (!casters.empty()) {
       if (g_r.shadow_in_srv_state) {
         for (nrhi::Texture* res : {g_r.shadow_raw, g_r.shadow_mid, g_r.shadow_final}) {
@@ -7631,10 +7829,14 @@ bool RenderShadowAtlas(const NativeGuestOutputRenderContext& context,
               cmd->SetTexture(1, c.clip_srv != nullptr ? c.clip_srv
                                                        : g_r.white.srv);
             }
-            cmd->SetVertexBuffer(mit->second.vb_view.buffer,
-                                 mit->second.vb_view.offset,
-                                 mit->second.vb_view.size_bytes,
-                                 mit->second.vb_view.stride);
+            // KI-124: a garment casts with the shape the main pass draws
+            // (the play-clock blend), not the newest resident decode.
+            const VbBinding cvb =
+                c.item->ropa && cast_drawn_ropa
+                    ? BlendRopaShape(*c.item, mit->second, bone_slot)
+                    : mit->second.vb_view;
+            cmd->SetVertexBuffer(cvb.buffer, cvb.offset, cvb.size_bytes,
+                                 cvb.stride);
             cmd->SetIndexBuffer(mit->second.ib_view.buffer,
                                 mit->second.ib_view.offset,
                                 mit->second.ib_view.size_bytes);
@@ -8745,6 +8947,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
   std::memset(g_r.bone_ring_cpu + bone_region, 0, 512u);
   g_r.bone_ring_offset = 512u;
   g_r.ropa_ring_offset = 0;
+  g_ropa_frame_shapes.clear();
 
   {
     const std::string tm(REXCVAR_GET(skate3_native_render_scene_trace_mesh));
@@ -10791,125 +10994,14 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
           (v2_spec2 != nullptr ? v2_spec2 : &g_r.white)->srv, nsm_view};
       cmd->SetTextures(8, t8_views, 3);
     }
-    // ROPA shape blend (see RendererState::ropa_shapes): combine the shape
-    // generations with the kernel weights InterpolateDynamicItems computed
-    // (the SAME 8-tap boxcar / pair-lerp the body bones and garment world
-    // took this frame) into the per-frame ropa upload ring and draw from
-    // it; the stepped cloth shape against the interpolated body was the
-    // tee jelly/clip-through, and a filter-MISMATCHED blend (plain lerp vs
-    // boxcar body) kept a period-scaled residue of it. Positions/normals
-    // (floats 0..6) blend; packed attributes (blend words, uvs: floats
-    // 7..13) copy from the newest generation present. Generations missing
-    // from the ring (evicted / decode in flight) renormalize over what IS
-    // present when at least half the kernel's weight survives.
+    // ROPA shape blend: see BlendRopaShape (shared with the shadow casters,
+    // which run first this frame; the cached blend is reused here).
     VbBinding item_vbv = buffers.vb_view;
     const auto prepared_fade_vb = fade_ropa_bindings.find(&item);
     if (shared_body_uniforms && prepared_fade_vb != fade_ropa_bindings.end()) {
       item_vbv = prepared_fade_vb->second;
-    } else if (item.ropa && item.shape_count > 0 &&
-        REXCVAR_GET(skate3_native_render_scene_ropa_blend)) {
-      const std::vector<float>* gv[DrawItem::kShapeGens] = {};
-      float gw[DrawItem::kShapeGens] = {};
-      int ng = 0;
-      float total = 0.0f;
-      uint64_t newest_seq = 0;
-      const std::vector<float>* newest = nullptr;
-      // Generations must match the RESIDENT decode's extent exactly; the
-      // index buffer references that many vertices. After a re-stream/
-      // outfit swap the ring briefly holds stale-size generations; binding
-      // one against the current IB reads past the bound VB and collapses
-      // triangles (a momentary partial-invisible blink). Stale sizes drop
-      // out here; if too much kernel weight is stale, the raw resident VB
-      // draws instead (always self-consistent).
-      const size_t want_floats =
-          size_t(buffers.vb_view.size_bytes) / sizeof(float);
-      const auto rit = g_r.ropa_shapes.find(item.mesh);
-      if (rit != g_r.ropa_shapes.end() && !rit->second.empty()) {
-        // Sim-sleep gate: generations grossly older than the ring's newest
-        // were recorded before a cloth-sim sleep (continuous streams span
-        // ~114 ms end to end). Blending one against the fresh drape draws
-        // the garment where/how the character USED to stand, the
-        // detached/perpendicular class. Dropped generations shed their
-        // kernel weight; if too much weight is stale the raw resident VB
-        // draws instead (self-consistent current shape).
-        const double ring_newest_t = rit->second.back().t;
-        for (int k = 0; k < item.shape_count; ++k) {
-          for (const RendererState::RopaGen& g : rit->second) {
-            if (g.seq != item.shape_seq[k]) {
-              continue;
-            }
-            if (g.verts.size() != want_floats) {
-              break;  // stale-size generation (re-stream/outfit swap)
-            }
-            if (ring_newest_t - g.t > 0.35) {
-              static std::atomic<uint32_t> s_stale{0};
-              const uint32_t ln =
-                  s_stale.fetch_add(1, std::memory_order_relaxed);
-              if (ln < 16 || (ln & 1023u) == 0) {
-                REXLOG_DEBUG(
-                    "native-scene: ropa shape STALE gen dropped mesh={:08X} "
-                    "age={:.2f}s seq_gap={} (n={})",
-                    item.mesh, ring_newest_t - g.t,
-                    rit->second.back().seq - g.seq, ln);
-              }
-              break;
-            }
-            gv[ng] = &g.verts;
-            gw[ng] = item.shape_w[k];
-            total += item.shape_w[k];
-            ++ng;
-            if (g.seq >= newest_seq) {
-              newest_seq = g.seq;
-              newest = &g.verts;
-            }
-            break;
-          }
-        }
-      }
-      const uint32_t region = bone_slot * RendererState::kRopaRegionSize;
-      const uint32_t bytes = uint32_t(want_floats * sizeof(float));
-      if (ng > 0 && total >= 0.5f && newest != nullptr &&
-          buffers.vb_view.stride == 56 &&
-          g_r.ropa_ring_offset + bytes <= RendererState::kRopaRegionSize) {
-        float* dst = reinterpret_cast<float*>(g_r.ropa_ring_cpu + region +
-                                              g_r.ropa_ring_offset);
-        const float inv = 1.0f / total;
-        for (size_t v = 0; v + 14 <= want_floats; v += 14) {
-          float blend7[7] = {};
-          for (int k = 0; k < ng; ++k) {
-            const float* src = gv[k]->data() + v;
-            const float wk = gw[k] * inv;
-            for (int f = 0; f < 7; ++f) {
-              blend7[f] += src[f] * wk;
-            }
-          }
-          // One store per float: dst is write-combined upload memory.
-          std::memcpy(dst + v, blend7, sizeof(blend7));
-          std::memcpy(dst + v + 7, newest->data() + v + 7, 7 * sizeof(float));
-        }
-        item_vbv.buffer = g_r.ropa_ring;
-        item_vbv.offset = region + g_r.ropa_ring_offset;
-        item_vbv.size_bytes = bytes;
-        item_vbv.stride = buffers.vb_view.stride;
-        g_r.ropa_ring_offset += (bytes + 255u) & ~255u;
-        g_ropa_blend_drawn.fetch_add(1, std::memory_order_relaxed);
-      } else {
-        // Fallback to the raw resident shape. Rate-limited detail log: an
-        // ALTERNATION of these with blended frames renders the garment
-        // hopping between the play-clock drape and the zero-lag drape.
-        g_ropa_blend_miss.fetch_add(1, std::memory_order_relaxed);
-        static std::atomic<uint32_t> s_blend_miss_log{0};
-        const uint32_t ln =
-            s_blend_miss_log.fetch_add(1, std::memory_order_relaxed);
-        if (ln < 64 || (ln & 63u) == 0) {
-          REXLOG_DEBUG(
-              "native-scene: ropa blend MISS mesh={:08X} sc={} ng={} "
-              "total={:.2f} stride={} ring={} ring_off={} (n={})",
-              item.mesh, item.shape_count, ng, total, buffers.vb_view.stride,
-              rit != g_r.ropa_shapes.end() ? rit->second.size() : size_t(0),
-              g_r.ropa_ring_offset, ln);
-        }
-      }
+    } else if (item.ropa) {
+      item_vbv = BlendRopaShape(item, buffers, bone_slot);
     }
     // The visibility and color passes bind the same cloth upload.
     if (shared_body_uniforms && item.ropa) fade_ropa_bindings.try_emplace(&item, item_vbv);

@@ -1089,6 +1089,14 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_backface_cull, true, "Skate 3",
                     "slope / too-dark awning deltas. Trees/alphatest (fams "
                     "7/9/10) and mirrored instances stay uncull(ed).")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_shadow_ropa_drawn_shape, true, "Skate 3",
+                    "KI-124: ROPA garments cast into the dynamic shadow atlas with the "
+                    "shape the main pass draws (the play-clock blend of cloth "
+                    "generations) instead of the newest resident decode. Off restores "
+                    "the old caster binding, whose shirt cast from a different moment "
+                    "than the shirt it shadowed (a one-frame sleeve shadow flash at "
+                    "1x reel playback on the Odin 2).")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_mesh_revalidate, true, "Skate 3",
                     "Re-decode cached meshes when their payload fingerprint changes "
                     "(streaming arena reuse; also picks up CPU-animated buffers)")

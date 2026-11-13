@@ -1,0 +1,58 @@
+# KI-124 fix A/B at 1x: the user's second reel (id 411a7b5e..., clip 7)
+# played twice from its marker with char_track on. Pass A: the OLD caster
+# binding (garments cast with the newest resident cloth decode). Pass B: the
+# fix (garments cast with the shape the main pass draws). The log's
+# "ropa-shadow f=... resident_vs_drawn_cm=" lines give, per frame, how far
+# the old cast shirt sat from the drawn one; the flash (about 1.1 s after
+# the marker on the Odin 2) should line up with a spike there. Also good for
+# a scrcpy recording: the marks in events.jsonl say which pass is which.
+name = "ki124_ropa_caster_ab"
+timeout_s = 1500
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+skate3_native_render_scene_char_track = true
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_shadow_ropa_drawn_shape = false }
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "mark"
+text = "pass A: old caster binding (resident cloth shape)"
+
+[[step]]
+do = "play_reel"
+reel = "411a7b5e827d3d5f"
+from = "marker"
+timeout_s = 300
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_shadow_ropa_drawn_shape = true }
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "mark"
+text = "pass B: fix (drawn cloth shape)"
+
+[[step]]
+do = "play_reel"
+reel = "411a7b5e827d3d5f"
+from = "marker"
+timeout_s = 300
