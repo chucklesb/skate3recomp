@@ -1,0 +1,50 @@
+# KI-124 A/B at 1x for a scrcpy recording: the user's second reel
+# (id 411a7b5e..., clip 7) played twice from its marker, first with the
+# current settings (is the one-frame shadow flash repeatable?), then with
+# the static sun map ("Enhanced Shadows") off (is it the cause?). The
+# marks in events.jsonl say which pass is which.
+name = "ki124_realtime_ab"
+timeout_s = 1500
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "mark"
+text = "pass A: current settings"
+
+[[step]]
+do = "play_reel"
+reel = "411a7b5e827d3d5f"
+from = "marker"
+timeout_s = 300
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_shadow_static_casters = false }
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "mark"
+text = "pass B: static sun map off"
+
+[[step]]
+do = "play_reel"
+reel = "411a7b5e827d3d5f"
+from = "marker"
+timeout_s = 300

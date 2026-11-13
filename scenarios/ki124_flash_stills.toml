@@ -1,0 +1,31 @@
+# KI-124: the one-frame shadow flash on the skater's back. The user found it
+# in 1x recordings of reel 411a7b5e... (clip 7) at the same moment in two
+# passes (static sun map on and off), about 1.1 s after the marker (reel
+# time ~22.2 s). This holds the reel on each frame around that time and
+# shoots it on both renderers.
+name = "ki124_flash_stills"
+timeout_s = 1200
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+reel = "411a7b5e827d3d5f"
+from = "marker"
+stills = [22.100, 22.133, 22.167, 22.200, 22.233, 22.267, 22.300]
+settle_frames = 30
+stills_renderers = ["native", "emulated"]
+timeout_s = 900

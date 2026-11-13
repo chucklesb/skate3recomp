@@ -477,8 +477,30 @@ Odin 2 runs `20261112-191628_ki124_motion_native`, `..191250_ki124_motion_emulat
 and `..191437_ki124_motion_debug` (about every second frame from the marker;
 the device screenshots cannot keep up with every frame) did not catch it
 either; a dark notch at a sleeve hem in `f0000901` is the cloth folding and
-showing the sleeve's inside, which the emulated frames show too. Next: a
-frame-by-frame video of the moment (the user).
+showing the sleeve's inside, which the emulated frames show too.
+
+**Caught on video (Odin 2):** with a second reel, id `411a7b5e827d3d5f`
+(clip 7, marker at 21.1 s of 24.8 s), recorded with scrcpy at 1x, the user
+found it: for **one frame**, about 1.1 s after the marker (reel time ~22.2
+s), a broad dark diagonal shadow band crosses the back and left side of the
+shirt, with darker hair shadow on the shoulders, gone the next frame.
+- **Repeatable:** the same moment in two passes of `ki124_realtime_ab.toml`
+  (`C:\Users\user\Videos\ki124_realtime_ab_fixed.mkv` at 0:34.016 and
+  0:58.376), so it is tied to the reel, not random.
+- **Not the static sun map:** pass B had it off and still flashed.
+- **Only in moving 1x playback:** not at quarter speed
+  (`ki124_slowmo.toml`), and not in held stills of every frame from 22.10
+  to 22.30 s (`ki124_flash_stills.toml`) on either the Odin 2 or Windows,
+  where native also matches emulated.
+
+So it depends on the sequence of frames, not on a frame's content:
+something in the dynamic shadow path (the caster pose, the shadow rows)
+belongs to a different moment than the drawn skater on that frame.
+
+**Also noted (the user):** fabric wrinkles, hair shadows and muscle
+definition look harsher than they should. Windows held stills against the
+emulated frame (`20261112-205027_ki124_flash_stills`) agree: our shirt
+folds are sharper and more contrasty, the game's broad and soft.
 
 **Related, not investigated:** on Windows the user noticed what looked like
 small areas of the skater's body poking through the shirt in this reel.

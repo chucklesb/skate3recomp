@@ -1,0 +1,32 @@
+# KI-124: the user's second Odin 2 reel (id 411a7b5e..., clip 7 of the
+# test saves) played from its marker at normal speed, for a scrcpy screen
+# recording. The artifact shows at 1x but not at quarter speed
+# (ki124_slowmo.toml), so it depends on the frame rate.
+name = "ki124_realtime"
+timeout_s = 1200
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "mark"
+text = "ki124_realtime: reel starts (1x)"
+
+[[step]]
+do = "play_reel"
+reel = "411a7b5e827d3d5f"
+from = "marker"
+speed = 1.0
+timeout_s = 900
