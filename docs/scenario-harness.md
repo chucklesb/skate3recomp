@@ -457,6 +457,7 @@ How `play_reel` works (TU3 addresses; RE with the probe in `harness_re.cpp`):
 - **Marker:** the editor's timeline keeps keys per channel: the list for channel `c` is at `E + 556 + c*16` (`+2` u16 count, `+12` a u16 array, positions /65535). `sub_82506BE0(E, i)` returns key `i`'s normalized position on the current channel (0 = start, past the last key = end), which is what the D-pad jump uses. The marker is key 1. The keys arrive about half a second after the editor settles, so `play_reel` waits for them (2 s at most).
 - **Stills:** the clock (`sub_82C7EA50` hook) stops exactly at each still time and holds there until the harness thread has taken the screenshot.
 - **No UI:** `FrontEndManager::Render2D` (`sub_825D9168`) is skipped while a reel is active (`game::SuppressUi`).
+- **Lens effect (planned):** the reel camera's fisheye and vignette (the game's `postfx_basictex_fisheye` pass) still draw. A `lens = false` option to hide them for testing stills is planned; see [KI-123](known-issues.md#ki-123-skatereel-playback-is-slow-and-uneven), which also covers reel playback being slower than gameplay.
 - **Exit:** the editor's Finished → Exit action:
   - sets `x+52 = 1` and the byte `x+140 = 1` on `x = *(*(sub_824AD240()+8)+48)`, and clears the byte at `*(0x83067060+36)+12`;
   - posts a type-145 game event through `sub_824FCAD8(gctx, ref*)`.

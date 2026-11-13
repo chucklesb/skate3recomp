@@ -16,6 +16,7 @@ happen. The technical details follow for whoever works on it.
 | [KI-120](#ki-120-the-skater-jitters-worse-with-speed) | The skater looks jittery, as if falling behind and catching up, worse with speed | Fixed (Odin 2) |
 | [KI-121](#ki-121-on-d3d12-the-scene-is-sometimes-drawn-in-shade) | On D3D12, a sunny scene is sometimes drawn almost all in shade, with no skater shadow | Open |
 | [KI-122](#ki-122-canal-water-reflects-orange-brown-instead-of-blue-sky) | Canal water reflects orange-brown instead of blue sky, depending on the view angle; no shadows on the canals | Fixed |
+| [KI-123](#ki-123-skatereel-playback-is-slow-and-uneven) | Reel playback runs in the teens with uneven pacing, where gameplay holds near 60 | Open |
 
 ---
 
@@ -398,5 +399,54 @@ frame.
   after `20261112-163539_water_debug`; Windows after the full chain
   `20261112-163006_water_debug` (Vulkan), `20261112-163737_water_probe`
   (D3D12).
+
+</details>
+
+## KI-123: skate.Reel playback is slow and uneven
+
+**What you see:** while a saved skate.Reel replay plays, the frame rate is
+low, dipping into the teens at times, and both the frame rate and the frame
+pacing are uneven. Playing the game live at the same places holds a
+near-steady 60 fps in most areas (30 at worst) with no noticeable stutters.
+
+**How to see it:** play any saved reel from My Replays on the Odin 2 and
+compare with skating live in the same area.
+
+**Status:** open, to be looked at later · **Severity:** medium (testing and
+repro work relies on reels) · **Found:** 2026-11-12 by the user, Odin 2.
+
+**Related, planned:** a way to turn off the camera lens effect (the fisheye
+and vignette) during reel playback, so reel stills used for testing and
+repros show the plain scene. See the technical details.
+
+<details>
+<summary>Technical details</summary>
+
+Not investigated yet. Leads from reading the code:
+
+- The harness `play_reel` path runs the reel as normal gameplay (presence 1,
+  FE stack `[0,12]`); its last run held the 30 fps cap. The user's slow case
+  is the game's own My Replays flow, which can enter code paths the harness
+  never does:
+  - **Portrait window.** `PortraitRttWindowActive`
+    (`src/skate3_native_scene.cpp`, the FE id check) treats only FE ids
+    0/56/24/17/59 as safe, so the replay editor (12) reached from the pause
+    menu may keep the window open: suppress mode 3 and **synchronous shader
+    compilation** for the whole replay. Log: "portrait window", "menu
+    context - shader compilation synchronous".
+  - **Photo flow.** `PhotoEditorSignal` (`src/skate3_native_scene_gpu.cpp`)
+    fires on the `PhotoReplayController::Update` heartbeat; it arms the
+    per-frame photo grab and synchronous compiles. Log: "photo flow".
+- **To measure:** `scenarios/perf_reel.toml` uncapped, with a gameplay `wait`
+  segment added to `tools/harness/perf_report.py` (it only splits `reelN`
+  segments today), comparing `nat_total` and `guest_fps`; plus one run
+  through the real My Replays flow, grepping the log for the lines above.
+- **Lens effect:** the game's own final pass, `postfx_basictex_fisheye`
+  (fisheye warp and vignette), drawn natively by the screen-fx path
+  (`src/native/screen_fx.h`, `CaptureScreenFxState`, the apply step in
+  `RenderScene`). Nothing turns it off today. Plan: a cvar
+  `skate3_native_render_scene_screen_fx` (default on) that skips the capture
+  (still clearing `g_frame_screen_fx`), and a `play_reel` option
+  `lens = false` that sets it for the reel, like `SuppressUi()` hides the UI.
 
 </details>
