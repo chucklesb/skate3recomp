@@ -611,6 +611,7 @@ std::atomic<bool> g_reel_loading_screen{false};
 std::atomic<bool> g_reel_curtain{false};
 std::atomic<int> g_reel_preroll{0};
 bool g_reel_seen_loading = false;
+int g_reel_steady = 0;  // consecutive free-skate frames without a loading screen after an exit
 
 // Top screen of the FE stack (FrontEndManager *(0x830CFE14): records of 20
 // bytes between +0x210 and +0x214, screen id first), 0xFFFFFFFF if none.
@@ -692,6 +693,7 @@ void ReelTick(PPCContext& ctx, uint8_t* base) {
     g_reel_ready_frames = 0;
     g_reel_exit_posted = false;
     g_reel_seen_loading = false;
+    g_reel_steady = 0;
     g_reel_loading_screen.store(false);
     g_reel_curtain.store(false);
     g_reel_frames.store(0);
@@ -817,9 +819,15 @@ void ReelTick(PPCContext& ctx, uint8_t* base) {
       // a next play_reel issued then (9 ms later, back-to-back reels in
       // perf_ki123) loaded a replay into a half-loaded world and crashed in
       // the game's AddRenderInstance (Odin 2, 2026-11-13).
-      // (No loading screen seen 3 s after the exit: accept free skate.)
-      if (g_reel_exit_posted && ModeState(base) == kModeStateFreeSkate && !on_loading_screen &&
-          (g_reel_seen_loading || g_reel_wait > 15 + 90)) {
+      // (No loading screen seen 3 s after the exit: accept free skate.) The
+      // restream can show the loading screen more than once, so free skate
+      // must hold with no loading screen for 30 frames in a row.
+      g_reel_steady = (g_reel_exit_posted && ModeState(base) == kModeStateFreeSkate &&
+                       !on_loading_screen && (g_reel_seen_loading || g_reel_wait > 15 + 90))
+                          ? g_reel_steady + 1
+                          : 0;
+      if (g_reel_steady >= 30) {
+        g_reel_steady = 0;
         g_reel_curtain.store(false);
         PostSimMessage(ctx, base, 0xDDC8C41A, {0u, 11u});  // cMsgPauseSim(0)
         REXLOG_INFO("harness: reel {}: back in free skate", g_reel_slot);
