@@ -604,7 +604,9 @@ of the test saves are byte-identical), so the id is ambiguous and
 scenarios must use `clip = 8`. It is in the Windows test profile too
 (`out/reels/odin-20261112b`).
 
-**Status:** fixed on Windows (2026-11-12), Odin 2 check pending ·
+**Status:** fixed (2026-11-12, `8d240e9`), verified in held stills on
+Windows and the Odin 2 (`20261112-215130_ki126_hair_fix`); the user's
+check in play is pending ·
 **Severity:** medium (the player's own hair, most of the time outdoors) ·
 **Found:** 2026-11-12 by the user, Odin 2 (live session on build
 `6ba2305`). The user noticed it mostly while the skater moves; it shows in
