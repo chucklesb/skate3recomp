@@ -1,0 +1,92 @@
+# Emulated work and fps in a portrait-window menu: Pause > Edit Skaters (the
+# team screen, FE [0,56,63]) for 10 s, uncapped, with the pass census on.
+# Before 2026-11-13 the portrait window ran the whole emulated scene there
+# (~826 draws a frame on the Odin 2). Compare with the old behavior:
+#   ... -- --skate3_native_render_scene_portrait_scene_band=true
+# Uncapped on the Odin 2 also needs
+#   -- --vulkan_allow_present_mode_immediate=true --vulkan_allow_present_mode_mailbox=true
+# Summarise: census_report.py <run>; fps from state.jsonl per fe stack.
+name = "census_menus"
+timeout_s = 400
+boot = "demo"
+state_every_frames = 10
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 0.0
+skate3_guest_fps_cap_auto = false
+native_render_pass_census = true
+skate3_native_render_scene_perf_log = true
+skate3_native_render_scene_perf_interval = 60
+vulkan_gpu_timestamp_buckets = true
+d3d12_gpu_timestamp_buckets = true
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 300
+
+[[step]]
+do = "wait"
+frames = 300
+
+[[step]]
+do = "input"
+buttons = "start"
+frames = 6
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "input"
+ly = -1.0
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 20
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 120
+
+[[step]]
+do = "screenshot"
+tag = "team"
+
+[[step]]
+do = "mark"
+text = "perf team"
+
+[[step]]
+do = "wait"
+ms = 10000
+
+[[step]]
+do = "mark"
+text = "perf end"
+
+[[step]]
+do = "input"
+buttons = "b"
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "input"
+buttons = "b"
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 150
