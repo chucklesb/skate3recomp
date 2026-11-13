@@ -31,9 +31,14 @@ what was done).
   - **The Villas entrance glass canopy: not affected** (under 1 of 255).
   - Not reached yet: vehicle glass, the sunglasses lens, mist sheets. SSR is
     off by default and in the device settings, so it can't affect players.
-  - **The fix to try:** the KI-126 depth-only pass extended to family-13
-    glass, using the glass's own alpha. Our haze is an addition the game
-    doesn't have, so not hazing through glass is the closer match.
+  - **Deferred (2026-11-12):** the difference is too slight to see. The
+    quick fix (extending the KI-126 depth-only pass to glass) is unsafe: the
+    occlusion-culling grid is built from the same depth buffer, so props
+    entirely behind glass (shop windows) could be culled. The safe fix gives
+    the haze and shaft passes their own linear depth for blended surfaces
+    (blended items' linear depth MIN-blended into the haze depth after the
+    grid is built), leaving the depth buffer and culling untouched; the hair
+    would move onto it too (see the KI-126 caveat).
 - **Character shading is harsher than the game's.** Shirt folds, hair
   shadows and muscle definition are sharper and more contrasty; the hair is
   lighter than the game's in shade (KI-124 and KI-126 notes).

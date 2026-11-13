@@ -648,6 +648,12 @@ transparency; see the KI-124 note on harsh character shading.
 - The depth pass is `ps_hair_depth` (`scene.hlsl`) through `pso_hair_depth`
   (the fade-depth state: no color writes, z-write, LESS_EQUAL), drawn right
   after `pso_hair_b` for each hair item in the back-to-front blended loop.
+- **Caveat:** the hair's depth also reaches the occlusion-culling grid
+  (built from the scene depth after the blended sub-pass), so an item
+  entirely hidden behind the skater's hair in every grid tile it covers can
+  be culled for a frame. The hair is small and the grid conservative, so
+  this hasn't been seen; the safe design (a separate haze depth) is in
+  [open-work.md](open-work.md).
 - **The same class may hit other blended surfaces (to audit):** anything in
   the blended sub-pass (z-write off) is invisible to the passes that read
   scene depth afterwards: haze, the shaft upsample, SSAO (the AO of what is

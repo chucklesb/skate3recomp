@@ -94,6 +94,19 @@ for now.
 For `odin2` and `live`, `DROIDDECK_DIR` points at a DroidDeck checkout
 (default `~/dev/DroidDeck`), and `ADB` / `ANDROID_ADB_SERVER_PORT` select
 the adb to use. `--no-deploy` reuses the build already on the device.
+
+**Only what changed is rebuilt and redeployed.** `odin2`, `live` and `ab`
+build linux-aarch64 only when a build input changed since the harness last
+built it: anything in the tree except `docs/`, `scenarios/`,
+`tools/harness/`, `tools/release/`, `tests/` and the top-level `.md` files,
+including uncommitted edits, untracked files and submodules (the key is in
+`out/harness/aarch64-<config>.build-key`). They deploy only when the device's
+install was made from a different payload (`skate3` and the two `librex`
+libraries, by size and modification time, plus `tools/appimage`; the key is
+stored next to the install as `/root/skate3-harness/payload-key`).
+`--force-deploy` packages and installs anyway. A docs- or scenario-only
+commit therefore runs the existing build, whose version string names the
+commit it was built from.
 `--env KEY=VALUE` (repeatable) sets environment variables for that run's
 session only. Game arguments go after `--`.
 
