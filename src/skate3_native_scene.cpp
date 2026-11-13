@@ -645,9 +645,11 @@ REXCVAR_DEFINE_INT32(
     "fighting the native renderer for the GPU (the menu sluggishness at a "
     "high fps counter). 1 = only inside a PORTRAIT WINDOW: the FE "
     "push-state stack contains a screen not known steady-safe (known: 0 = "
-    "FE root, 56 = pause root, 24 = FMV, 17 = pause challenge map), OR an "
-    "unsafe screen was entered/left within the last 3 s (one-shot portrait "
-    "RTT renders fire at those transitions), OR the CAS heartbeat is "
+    "FE root, 56 = pause root, 24 = FMV, 17 = pause challenge map, 59 = "
+    "skate-reel browser, 12 = replay editor), OR an unsafe screen was "
+    "entered/left, or the replay editor opened, within the last 3 s "
+    "(one-shot portrait RTT renders fire at those transitions), OR the CAS "
+    "heartbeat is "
     "fresh, OR the stack is unreadable; everything unknown fails OPEN to "
     "mode 0. Outside the window menus run the "
     "gameplay-proven mode-2 suppression (lightmap pages + <= 512 "
@@ -3864,6 +3866,9 @@ bool PortraitRttWindowActive() {
   const uint32_t n = (end - beg) / 20;
   uint32_t ids[16] = {};
   bool unknown_screen = false;
+  // Steady-safe screens that still render one-shots when they OPEN: entering
+  // one arms the grace window, staying on one does not.
+  bool has_grace_screen = false;
   uint64_t sig = 1469598103934665603ull;
   for (uint32_t i = 0; i < n; ++i) {
     uint32_t f0 = 0;
@@ -3882,13 +3887,23 @@ bool PortraitRttWindowActive() {
     // screen pushes [0,56,59] and its panels are VIDEOS served by the
     // native FMV substitution, not portrait RTTs; the fail-open window
     // there bought only its costs, 73 fps + 167 ms sync-compile stalls).
-    if (f0 != 0 && f0 != 56 && f0 != 24 && f0 != 17 && f0 != 59) {
+    // 12 = the replay editor (KI-123): while it was unclassified the window
+    // stayed open for the whole replay, running the game's pipeline at
+    // pitch 560-1200 emulated and compiling synchronously; on the Odin 2 that
+    // locked uncapped playback to 30 fps (56 with it closed), and under vsync
+    // at a 30 cap, frames past 33 ms fell to 20 and below. Its entry one-shots
+    // (an aux skater view on open) are covered by the entry grace below.
+    if (f0 != 0 && f0 != 56 && f0 != 24 && f0 != 17 && f0 != 59 && f0 != 12) {
       unknown_screen = true;
+    }
+    if (f0 == 12) {
+      has_grace_screen = true;
     }
   }
   static uint64_t s_last_sig = 0;
   static int64_t s_change_ns = -1;
   static bool s_prev_unknown = false;
+  static bool s_prev_grace_screen = false;
   const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                              std::chrono::steady_clock::now().time_since_epoch())
                              .count();
@@ -3899,10 +3914,11 @@ bool PortraitRttWindowActive() {
     // the tail after LEAVING one (the accepted-edit portrait re-render
     // fires as the editor pops). Safe<->safe transitions (pause <->
     // challenge map flapping) must not arm it.
-    if (unknown_screen || s_prev_unknown) {
+    if (unknown_screen || s_prev_unknown || (has_grace_screen && !s_prev_grace_screen)) {
       s_change_ns = now_ns;
     }
     s_prev_unknown = unknown_screen;
+    s_prev_grace_screen = has_grace_screen;
     static uint32_t s_logs = 0;
     if (s_logs < 64) {
       ++s_logs;
@@ -3913,7 +3929,7 @@ bool PortraitRttWindowActive() {
       }
       REXLOG_INFO(
           "native-scene: FE stack changed: [{}] (portrait window {}; "
-          "steady-safe = 0/56/24/17/59)",
+          "steady-safe = 0/56/24/17/59/12)",
           buf, unknown_screen ? "OPEN - unclassified screen" : "steady");
     }
   }

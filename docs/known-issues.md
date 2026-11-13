@@ -16,7 +16,7 @@ happen. The technical details follow for whoever works on it.
 | [KI-120](#ki-120-the-skater-jitters-worse-with-speed) | The skater looks jittery, as if falling behind and catching up, worse with speed | Fixed (Odin 2) |
 | [KI-121](#ki-121-on-d3d12-the-scene-is-sometimes-drawn-in-shade) | On D3D12, a sunny scene is sometimes drawn almost all in shade, with no skater shadow | Open |
 | [KI-122](#ki-122-canal-water-reflects-orange-brown-instead-of-blue-sky) | Canal water reflects orange-brown instead of blue sky, depending on the view angle; no shadows on the canals | Fixed |
-| [KI-123](#ki-123-skatereel-playback-is-slow-and-uneven) | Reel playback runs in the teens with uneven pacing, where gameplay holds near 60 | Open |
+| [KI-123](#ki-123-skatereel-playback-is-slow-and-uneven) | Reel playback runs in the teens with uneven pacing, where gameplay holds near 60 | Main cause fixed (to confirm on device); smaller replay cost open |
 | [KI-124](#ki-124-shadows-on-the-sun-facing-side-of-the-skaters-sleeves) | A shadow flashes across the skater's shirt for one frame (Odin 2, 1x reel playback) | Fixed (Odin 2) |
 | [KI-125](#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps) | For a frame or two after a replay jumps to a new time, the skater's arms or legs are drawn detached | Open |
 | [KI-126](#ki-126-the-skaters-hair-looks-transparent) | The skater's hair looks see-through: a blue veil with the trees behind showing through | Fixed (Odin 2) |
@@ -415,8 +415,21 @@ near-steady 60 fps in most areas (30 at worst) with no noticeable stutters.
 **How to see it:** play any saved reel from My Replays on the Odin 2 and
 compare with skating live in the same area.
 
-**Status:** open, to be looked at later · **Severity:** medium (testing and
-repro work relies on reels) · **Found:** 2026-11-12 by the user, Odin 2.
+**Status:** main cause fixed, needs a look on the device; a smaller replay
+cost remains (see below) · **Severity:** medium (testing and repro work
+relies on reels) · **Found:** 2026-11-12 by the user, Odin 2.
+
+**Cause:** opening the replay editor from the pause menu switched on a mode
+meant for the menus' skater portraits, which made the game's own renderer
+draw much of every frame on top of ours. On the Odin 2 that halved the frame
+rate: uncapped, 30 fps in the editor, about 56 without it. At the usual 30
+fps cap with vsync, frames that run past 33 ms wait for the next screen
+refresh, which reads as the teens. The replay editor now skips that mode.
+
+**Still open:** replays cost more than live skating even without it: about
+50 fps against 60-77 uncapped, played by the harness. Most of the gap is a
+small second view of the skater the game draws every replay frame (about 2
+ms of GPU time); the rest is the replay camera showing more of the world.
 
 **Related, done:** the harness's `play_reel` hides the camera lens effect
 (the fisheye and vignette) by default, so reel stills used for testing and
@@ -425,25 +438,41 @@ repros show the plain scene; `lens = true` keeps it. See the technical details.
 <details>
 <summary>Technical details</summary>
 
-Not investigated yet. Leads from reading the code:
+Measured 2026-11-13 on the Odin 2 (release build, uncapped: guest cap 0,
+immediate/mailbox present modes allowed).
 
-- The harness `play_reel` path runs the reel as normal gameplay (presence 1,
-  FE stack `[0,12]`); its last run held the 30 fps cap. The user's slow case
-  is the game's own My Replays flow, which can enter code paths the harness
-  never does:
-  - **Portrait window.** `PortraitRttWindowActive`
-    (`src/skate3_native_scene.cpp`, the FE id check) treats only FE ids
-    0/56/24/17/59 as safe, so the replay editor (12) reached from the pause
-    menu may keep the window open: suppress mode 3 and **synchronous shader
-    compilation** for the whole replay. Log: "portrait window", "menu
-    context - shader compilation synchronous".
-  - **Photo flow.** `PhotoEditorSignal` (`src/skate3_native_scene_gpu.cpp`)
-    fires on the `PhotoReplayController::Update` heartbeat; it arms the
-    per-frame photo grab and synchronous compiles. Log: "photo flow".
-- **To measure:** `scenarios/perf_reel.toml` uncapped, with a gameplay `wait`
-  segment added to `tools/harness/perf_report.py` (it only splits `reelN`
-  segments today), comparing `nat_total` and `guest_fps`; plus one run
-  through the real My Replays flow, grepping the log for the lines above.
+- **The menu flow: the portrait window.** The pause menu's replay editor
+  pushes FE `[0,56,12]` (presence 0, so a menu context). 12 was not in
+  `PortraitRttWindowActive`'s steady-safe list (`src/skate3_native_scene.cpp`),
+  so the window stayed open for the whole editor session: suppress mode 3
+  (passes at pitch 560/1200/600/160 executing emulated) and synchronous
+  shader compiles. Live session `20261113-081551_live`: uncapped fps fell
+  from about 60 to a flat 30 when the editor opened, NatMain unchanged
+  (12.5 ms) but GPU span 32 ms; `skate3_native_render_scene_menu_rtt_passes
+  = false` live in the editor: 30.5 → 56 fps. At a 30 cap with immediate
+  present both settings held 30 (`tools/harness/live_cvar_ab.sh`); the
+  teens need the device's FIFO-only present: a ~33 ms frame missing a 60 Hz
+  vblank shows for 50 ms. **Fix:** 12 is steady-safe; entering it still arms
+  the 3 s grace (its entry renders an aux skater view once). The harness
+  path (`[0,12]`, presence 1) never had the window.
+- **The photo flow** fired only for the reel save (12 grabs, about 185 ms
+  each), not during playback.
+- **Replays vs live, harness path** (`scenarios/perf_ki123.toml`, run
+  `20261113-081213_perf_ki123`; `perf_report.py` now splits `mark perf
+  <name>` segments): live 61-77 fps, reels 2/4/6 at 55/48/52. GPU span
+  13-16 ms live vs 18-20 ms in reels:
+  - the emulated `Main` bucket 0.4 → 1.3-1.6 ms and **two submissions per
+    frame instead of one** (ResolveGap 0.2-0.7 ms; copies, uploads and
+    queries double): an aux perspective pass draws the skater at pitch 160
+    every replay frame (`skinned capture refused - aux perspective pass`,
+    about 77 per second), resolved mid-frame. Probably the editor's preview;
+    with the UI hidden it is never seen. **Next:** a RenderDoc capture of a
+    reel frame to identify it, then skip it under `SuppressUi()` or render it
+    natively;
+  - NatShadow +0.3-0.7 ms and NatSun +0.1 ms: replay cameras show more
+    world and sun;
+  - CPU render about doubles (1-3 ms; build, items, pre, shadow), below the
+    GPU time.
 - **Lens effect:** the game's own final pass, `postfx_basictex_fisheye`
   (fisheye warp and vignette), drawn natively by the screen-fx path
   (`src/native/screen_fx.h`, `CaptureScreenFxState`, the apply step in
