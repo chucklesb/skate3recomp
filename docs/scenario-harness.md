@@ -157,7 +157,7 @@ name = "boot_to_plaza"
 timeout_s = 300           # wall-clock limit, exit code 2 past it
 boot = "demo"             # "demo": signed-out boot straight to gameplay; "none": normal boot
 state_every_frames = 5    # state.jsonl interval (0 = only at state steps)
-start_spot = "Z_DT_Tresoutta"  # optional: teleport here after the first gameplay wait
+start_spot = "Z_DT_Tresoutta"  # optional: teleport here 90 frames after the first gameplay wait
 
 [cvars]                   # applied at startup, like --name=value
 skate3_native_render_scene = true

@@ -415,10 +415,20 @@ std::optional<Scenario> LoadScenario(const std::string& path, std::string* error
       *error = path + ": start_spot needs a `wait` step with gameplay = true to follow";
       return std::nullopt;
     }
+    // Settle first: a teleport into another district (the map path, which
+    // loads that map) issued on the very frame gameplay is reached never
+    // completes, the skater stays where the save left them (Odin 2,
+    // 2026-11-12: boot_to_plaza failed from a save in another district; the
+    // same teleport 90 frames later arrived). Same-district teleports didn't
+    // need it, which is why this only showed once the save moved.
+    Step settle;
+    settle.verb = Verb::kWait;
+    settle.frames = 90;
     Step tp;
     tp.verb = Verb::kTeleport;
     tp.location = sc.start_spot;
     tp.timeout_s = 120.0;  // a map load (Industrial) takes ~11 s on its own
+    it = sc.steps.insert(it + 1, std::move(settle));
     sc.steps.insert(it + 1, std::move(tp));
     for (size_t k = 0; k < sc.steps.size(); ++k) {
       sc.steps[k].index = k + 1;

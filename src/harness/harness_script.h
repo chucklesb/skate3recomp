@@ -154,8 +154,10 @@ struct Scenario {
   bool vulkan_validation = false;
   // The `crash` verb only runs in a scenario that opts in.
   bool allow_crash = false;
-  // Locator to teleport to right after the first `wait gameplay = true` step
-  // (docs/teleport-locations.md), so every target starts at one place.
+  // Locator to teleport to after the first `wait gameplay = true` step and a
+  // 90-frame settle (a map-loading teleport issued on the gameplay frame
+  // itself never completes), so every target starts at one place
+  // (docs/teleport-locations.md).
   std::string start_spot;
   std::vector<std::pair<std::string, std::string>> cvars;
   std::vector<Step> steps;
