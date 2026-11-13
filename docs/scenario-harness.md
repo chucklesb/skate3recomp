@@ -62,6 +62,12 @@ python3 -I tools/harness/run_scenario.py ab scenarios/boot_to_plaza.toml
 
 # Function and file:line for addresses (RelWithDebInfo gives line info)
 python3 -I tools/harness/run_scenario.py symbolize --target odin2 --config relwithdebinfo skate3+0x1de040c
+
+# Which emulated passes still run, per screen: start with the census on, visit
+# the screens, then summarise (census events: every 60 frames and at each
+# frontend-stack change; example scenarios/census_smoke.toml)
+python3 -I tools/harness/run_scenario.py live -- --native_render_pass_census=true
+python3 -I tools/harness/census_report.py out/harness-runs/<run>
 ```
 
 `--config release|relwithdebinfo` picks the build for `odin2`, `live`,

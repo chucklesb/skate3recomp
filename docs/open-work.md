@@ -47,7 +47,19 @@ what was done).
 - **Distant textures glitch or pop in** on the Odin 2 (no details yet; needs
   a spot where it happens).
 - **The skater customization screen has many renderer bugs** (check
-  upstream's KNOWN_ISSUES.md first).
+  upstream's KNOWN_ISSUES.md first). Seen on the Odin 2 (2026-11-13): body
+  modifications such as facial feature sizes don't apply, or only some of
+  the time; various clothing and hair problems. Needs a lot of work.
+- **Create-a-Park is jittery and slow** on the Odin 2 even though the HUD
+  shows a steady 30 fps. The 2026-11-13 census run showed guest frames at an
+  even 33.3 ms and almost no emulated rendering there, so it isn't the
+  emulated renderer or the guest frame rate. Suspects: frames presented with
+  a stale scene or camera, or the editor camera's update. Needs a screen
+  recording.
+- **Photo challenges show no photo** on the final showcase screen. The game
+  grabs the screen as soon as the shutter fires, before the native frame
+  reaches the screenshot target (the log says "no native frame ready for
+  the grab"); the reel-thumbnail prefetch only runs in the replay editor.
 
 ## UI and overlays
 
@@ -98,6 +110,24 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
   six meshes a frame). Method: the suppression census and `Main` GPU bucket
   per context, RenderDoc frames (`play_reel stills_capture`, `capture`), and
   for each pass, whether anything visible or the game's CPU reads its result.
+  **First census (Odin 2, 2026-11-13, run `20261113-113428_live`,
+  `native_render_pass_census` + `tools/harness/census_report.py`):**
+  - No context presents fully emulated frames any more; the pause menu,
+    loading screens, challenges and editors are all drawn natively. Outside
+    the portrait window only ~10 tiny emulated draws a frame run (pitches 80
+    and 320).
+  - **The portrait window runs the whole emulated main scene.** The scene's
+    surface pitch is 1200 (1152 rounded up to 80-pixel EDRAM tiles), not
+    1152, so suppress mode 3's 1152 exclusion never matches. While the
+    window is open, up to ~1,160 scene draws a frame execute (My Replays'
+    screen 36: 583k indices a frame; Customize, screen 63: 826 draws a
+    frame; Create-a-Skater: 61). The window opens on unclassified screens
+    and for 3 s after many menu changes. Fix needs another way to tell
+    portrait passes from the scene (both at 1200).
+  - Aux skater passes (pitch 160) run in challenge screens (screen 1: 4–12
+    draws a frame) and heavily in photo challenges (screen 2: ~95 draws,
+    265k indices a frame). In a photo challenge this may be how the game
+    checks the skater is in frame, so don't skip it there without checking.
 
 - **What in the game is tied to frame rate:** physics, animation,
   pedestrians, camera, input polling, timers. It affects how repeatable
