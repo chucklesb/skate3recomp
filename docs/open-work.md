@@ -18,12 +18,28 @@ what was done).
 
 ## Rendering
 
-- **Blended surfaces vs the depth-reading post passes** (in progress). Hair
-  was hazed as if it were the background behind it
-  ([KI-126](known-issues.md#ki-126-the-skaters-hair-looks-transparent)).
-  Other surfaces drawn blended without writing depth may show the same kind
-  of fault in haze, light shafts, SSAO or SSR: glass canopies and shop
-  windows, vehicle glass, the sunglasses lens, mist sheets, canal water.
+- **Glass hazed as if it were the sky behind it.** The KI-126 class
+  ([hair](known-issues.md#ki-126-the-skaters-hair-looks-transparent), fixed)
+  also reaches glass: blended surfaces don't write depth, so our haze pass
+  hazes them by the distance of whatever is behind. Checked 2026-11-12 with
+  `scenarios/blend_depth_audit.toml` (Windows Vulkan at the Odin 2's
+  settings, run `20261112-222142_blend_depth_audit`), measuring each surface
+  with haze and SSAO on and off against the game's own frame:
+  - **Core Plaza bus-shelter glass roof: affected.** Haze lifts it from
+    blue to a washed-out grey (blue channel 56 with haze, 48 without, the
+    game 51). SSAO doesn't touch it.
+  - **The Villas entrance glass canopy: not affected** (under 1 of 255).
+  - Not reached yet: vehicle glass, the sunglasses lens, mist sheets. SSR is
+    off by default and in the device settings, so it can't affect players.
+  - **The fix to try:** the KI-126 depth-only pass extended to family-13
+    glass, using the glass's own alpha. Our haze is an addition the game
+    doesn't have, so not hazing through glass is the closer match.
+- **Canal water is about twice as bright as the game's** (mean 107 vs 57
+  in the same view; found by the audit above, and not caused by haze or
+  SSAO, which change it by 1-3). KI-122 called the port "slightly brighter";
+  at the device settings the gap is larger. Next: compare the water's
+  shading terms with `skate3_native_render_scene_water_debug` against the
+  game's frame.
 - **Character shading is harsher than the game's.** Shirt folds, hair
   shadows and muscle definition are sharper and more contrasty; the hair is
   lighter than the game's in shade (KI-124 and KI-126 notes).

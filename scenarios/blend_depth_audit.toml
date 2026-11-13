@@ -1,0 +1,161 @@
+# Blended surfaces vs the depth-reading post passes (the KI-126 class; see
+# docs/open-work.md). Surfaces drawn in the blended sub-pass don't write
+# depth, so haze, the shaft upsample and SSAO see whatever is behind
+# them. Two spots, each shot with the post passes on, with haze and SSAO
+# each off, with both off (SSR is off by default and in the Odin 2 settings), and on the emulated renderer for reference:
+#   canal  - the Downtown canal by the Villas: canal water (over a black
+#            void) and the Villas entrance's glass canopy (top right)
+#   plaza  - Core Plaza spawn: glass towers and canopies
+# Compare base vs the "nohaze"/"nossao"/"nopost" shots on the glass and water only: a
+# difference there that the emulated frame doesn't have is this bug class.
+name = "blend_depth_audit"
+timeout_s = 1200
+boot = "demo"
+
+[cvars]
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 90
+
+# ---- canal ----
+[[step]]
+do = "teleport"
+pos = [-176.189, 49.557, -150.73]
+yaw = -75
+
+[[step]]
+do = "wait"
+frames = 90
+
+[[step]]
+do = "screenshot"
+tag = "canal_base"
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_haze = false }
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "screenshot"
+tag = "canal_nohaze"
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_haze = true, skate3_native_render_scene_ssao = false }
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "screenshot"
+tag = "canal_nossao"
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_haze = false, skate3_native_render_scene_ssao = false }
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "screenshot"
+tag = "canal_nopost"
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_haze = true, skate3_native_render_scene_ssao = true }
+
+[[step]]
+do = "renderer"
+renderer = "emulated"
+frames = 45
+
+[[step]]
+do = "screenshot"
+tag = "canal_emu"
+
+[[step]]
+do = "renderer"
+renderer = "native"
+frames = 45
+
+# ---- plaza ----
+[[step]]
+do = "teleport"
+location = "Z_DT_CorePlaza"
+
+[[step]]
+do = "wait"
+frames = 120
+
+[[step]]
+do = "screenshot"
+tag = "plaza_base"
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_haze = false }
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "screenshot"
+tag = "plaza_nohaze"
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_haze = true, skate3_native_render_scene_ssao = false }
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "screenshot"
+tag = "plaza_nossao"
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_haze = false, skate3_native_render_scene_ssao = false }
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "screenshot"
+tag = "plaza_nopost"
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_haze = true, skate3_native_render_scene_ssao = true }
+
+[[step]]
+do = "renderer"
+renderer = "emulated"
+frames = 45
+
+[[step]]
+do = "screenshot"
+tag = "plaza_emu"
+
+[[step]]
+do = "renderer"
+renderer = "native"
+frames = 30

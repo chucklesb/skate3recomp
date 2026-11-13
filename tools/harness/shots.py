@@ -2,6 +2,7 @@
 """Side-by-side comparisons of screenshots or video frames.
 
     shots.py strip OUT.jpg IMG[=LABEL] ... [--box X0,Y0,X1,Y1] [--width W] [--pixel]
+    shots.py stats IMG[=LABEL] ... [--box X0,Y0,X1,Y1]   # region colour + change vs first
 
 Each image is cropped to --box (optional, the same box for all), scaled to
 --width pixels wide (default 960; --pixel scales with nearest-neighbour for
@@ -74,10 +75,36 @@ def strip(out: Path, items: list[str], box, width: int, pixel: bool, gap: int) -
     print(f"{out} {canvas.size[0]}x{canvas.size[1]}")
 
 
+def stats(items: list[str], box) -> None:
+    """Mean RGB of a region per image, and the mean absolute difference
+    against the first image (0..255): how much a toggle changes one surface,
+    without the rest of the frame diluting it."""
+    first = None
+    for item in items:
+        path, _, text = item.partition("=")
+        im = Image.open(path).convert("RGB")
+        if box:
+            im = im.crop(box)
+        px = list(im.getdata())
+        n = len(px)
+        mean = [sum(p[c] for p in px) / n for c in range(3)]
+        if first is None:
+            first, diff = px, 0.0
+        else:
+            m = min(len(first), n)
+            diff = sum(abs(a[c] - b[c]) for a, b in zip(first[:m], px[:m]) for c in range(3)) / (3 * m)
+        print(f"{text or Path(path).name:<24} rgb=({mean[0]:6.1f},{mean[1]:6.1f},{mean[2]:6.1f})"
+              f"  |diff| vs first={diff:6.2f}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("stats", help="mean colour of a region per image, and its mean "
+                                     "absolute difference from the first image")
+    s.add_argument("items", nargs="+", metavar="IMG[=LABEL]")
+    s.add_argument("--box", help="region X0,Y0,X1,Y1 (default: whole image)")
     p = sub.add_parser("strip", help="crop, scale, label and place images side by side")
     p.add_argument("out", type=Path)
     p.add_argument("items", nargs="+", metavar="IMG[=LABEL]")
@@ -89,6 +116,9 @@ def main() -> int:
     box = tuple(int(v) for v in a.box.split(",")) if a.box else None
     if box is not None and len(box) != 4:
         ap.error("--box needs X0,Y0,X1,Y1")
+    if a.cmd == "stats":
+        stats(a.items, box)
+        return 0
     strip(a.out, a.items, box, a.width, a.pixel, a.gap)
     return 0
 

@@ -263,6 +263,7 @@ the next investigation can reuse them.
 |---|---|---|
 | `imgdiff.py` | SSIM / changed-pixel comparison of two shots (used by `ab` and `stills_renderers`) | Pillow |
 | `shots.py strip` | Crops, scales and labels shots side by side: zoomed pixel comparisons (`--box`, `--pixel`) and before/after pictures for docs | Pillow |
+| `shots.py stats` | Mean colour of one region per shot and how much it differs from the first shot: measures what a toggle does to one surface (`--box`) | Pillow |
 | `video_frames.py` | scrcpy recordings: `remux` (make seekable), `frames` (every frame of a time window), `match` (find the same moment in another pass or recording) | ffmpeg, Pillow |
 | `ropa_shadow_trace.py` | Per-reel-pass garment shadow offset from a `char_track` run's log (KI-124) | - |
 | `char_jitter.py` | Skater-vs-camera jitter from `char_track` lines (KI-120) | - |

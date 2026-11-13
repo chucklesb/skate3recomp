@@ -654,10 +654,11 @@ transparency; see the KI-124 note on harsh character shading.
   behind multiplies the surface), SSR and the occlusion grid. Candidates:
   glass canopies and shop windows (env fam 13), vehicle glass (char fam 7),
   the sunglasses lens, environment.transparent mist sheets, and the canal
-  water over its black void (possibly why KI-122's port reads slightly
-  brighter than emulated). Check native vs emulated with haze/SSAO/SSR
-  toggled; the fix is the same depth-only pass, or a coverage mask (stencil)
-  the post passes skip.
+  water over its black void. Audited 2026-11-12
+  (`scenarios/blend_depth_audit.toml`): the Core Plaza bus-shelter glass is
+  hazed this way, the Villas canopy and the canal water are not (the water
+  is too bright for another reason). Findings and next steps are in
+  [open-work.md](open-work.md).
 - Runs: `20261112-213557_ki126_hair_stills`, `..213848_ki126_hair_debug`,
   `..214117_ki126_hair_post`, `..214515_ki126_hair_fix` (Windows Vulkan, at
   the Odin 2's settings).
