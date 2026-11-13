@@ -465,8 +465,14 @@ skater). `scenarios/ki124_motion_native.toml` and
 every 2 frames on each renderer; `ki124_renderers.toml` holds five moments
 on both; `ki124_motion_debug.toml` runs the character debug view.
 
-**Status:** investigating · **Severity:** low · **Found:** 2026-11-12 by
+**Status:** fixed (2026-11-12, `6ba2305`), verified on the Odin 2 by the
+user on video and by hand · **Severity:** low · **Found:** 2026-11-12 by
 the user, Odin 2.
+
+**The fix:** the shirt cast its shadow from a different cloth shape than
+the one drawn (see "Candidate fix" below). Garments now cast with the drawn
+shape. The fabric harshness and body-through-shirt notes below are still
+open, as separate items.
 
 **So far (Windows):** our frames match the game's own (emulated) frames,
 held and in motion. The darker sleeve sides are the torso's own shadow
@@ -497,7 +503,7 @@ So it depends on the sequence of frames, not on a frame's content:
 something in the dynamic shadow path (the caster pose, the shadow rows)
 belongs to a different moment than the drawn skater on that frame.
 
-**Candidate fix (2026-11-12, awaiting the user's check on video):** the
+**Candidate fix (2026-11-12; the user confirmed it on video and by hand):** the
 shirt cast its shadow from a different shape than the one drawn. The
 shadow pass bound the newest decoded cloth state, while the main pass draws
 a blend of recent cloth states timed to the body. Measured at the Odin 2's
@@ -584,5 +590,31 @@ spanning the jump, so pieces are drawn from poses on either side of it,
 and the shadow casters drop out for those frames. Suspected fix: detect
 the discontinuity (a large root jump between consecutive poses, or the
 replay clock jumping) and reset the rings, as a teleport should.
+
+</details>
+
+## KI-126: The skater's hair looks transparent
+
+**What you see:** the skater's hair looks see-through: what is behind it
+shows through the hair.
+
+**How to see it:** the user's Odin 2 reel, id `511e079e9279419f`, saved
+with a marker at the moment. The same reel was saved twice (clips 8 and 9
+of the test saves are byte-identical), so the id is ambiguous and
+scenarios must use `clip = 8`. It is in the Windows test profile too
+(`out/reels/odin-20261112b`).
+
+**Status:** open · **Severity:** to be judged · **Found:** 2026-11-12 by
+the user, Odin 2 (live session on build `6ba2305`).
+
+<details>
+<summary>Technical details</summary>
+
+Not investigated. First check: the reel from its marker as held stills on
+both renderers (`stills_renderers = ["native", "emulated"]`), on Windows and
+then the Odin 2, to tell whether the game draws it the same way. Hair is a
+character family with its own blend/alpha-test handling, so the suspects
+are the hair's alpha mode (blended vs alpha-tested, and draw order against
+the head and the world behind it) and its depth write.
 
 </details>
