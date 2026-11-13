@@ -1,0 +1,31 @@
+# RenderDoc capture of one replay frame (KI-123: what the game's small
+# per-frame skater view in the replay editor feeds). Holds reel 511e079e
+# (clip 8 in the Windows test profile) at 22.5 s and captures a frame there.
+#
+#   rs.sh windows scenarios/reel_capture.toml --backend vulkan --renderdoc
+name = "reel_capture"
+timeout_s = 900
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+clip = 8
+from = "marker"
+stills = [22.50]
+settle_frames = 30
+stills_capture = true
+timeout_s = 600

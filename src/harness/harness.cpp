@@ -712,6 +712,54 @@ std::string StopRecording(Run& r) {
 Outcome Execute(Run& r, const Step& st);
 std::string SafeName(std::string s);
 
+// RenderDoc capture of the next `frames` game frames into
+// <run>/captures/<tag>; *path = the written .rdc. Used by `capture` and by
+// play_reel's stills_capture.
+bool CaptureFrames(Run& r, const std::string& tag, int64_t frames, std::string* path,
+                   std::string* error) {
+  if (!rex::ui::renderdoc::Attached()) {
+    *error = "RenderDoc is not attached (launch the game from RenderDoc, or preload it)";
+    return false;
+  }
+  std::error_code ec;
+  fs::create_directories(r.dir / "captures", ec);
+  const uint32_t before = rex::ui::renderdoc::NumCaptures();
+  // Explicit bracket over `frames` game frames (default 1), aligned to
+  // the guest frame boundary. TriggerCapture would wait for a present on
+  // a window RenderDoc tracks, which it does not do on every window
+  // system (Wayland under gamescope).
+  if (!WaitFrames(r, 1, 30.0)) {
+    *error = "game stopped presenting frames";
+    return false;
+  }
+  rex::ui::renderdoc::StartFrameCapture((r.dir / "captures" / tag).string());
+  const bool frames_ok = WaitFrames(r, frames, 60.0);
+  const bool written = rex::ui::renderdoc::EndFrameCapture();
+  if (!frames_ok) {
+    *error = "game stopped presenting frames during the capture";
+    return false;
+  }
+  if (!written) {
+    *error =
+        "RenderDoc did not write the capture (see its log in /tmp/RenderDoc, or "
+        "%TEMP%\\RenderDoc on Windows)";
+    return false;
+  }
+  // Writing the file can take a few seconds on a handheld.
+  const auto deadline = Clock::now() + std::chrono::seconds(60);
+  while (rex::ui::renderdoc::NumCaptures() <= before) {
+    if (Clock::now() > deadline || r.stop.load()) {
+      *error = "RenderDoc did not report the capture within 60 s";
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  *path = rex::ui::renderdoc::CapturePath(before);
+  std::lock_guard lk(r.mu);
+  r.captures.push_back(*path);
+  return true;
+}
+
 Outcome ExecuteWait(Run& r, const Step& st) {
   if (st.ms) {
     std::this_thread::sleep_for(std::chrono::milliseconds(*st.ms));
@@ -974,44 +1022,11 @@ Outcome Execute(Run& r, const Step& st) {
     }
 
     case Verb::kCapture: {
-      if (!rex::ui::renderdoc::Attached()) {
-        return Fail("RenderDoc is not attached (launch the game from RenderDoc, or preload it)");
-      }
-      std::error_code ec;
-      fs::create_directories(r.dir / "captures", ec);
       const std::string tag = st.tag.empty() ? "capture" : SafeName(st.tag);
-      const uint32_t before = rex::ui::renderdoc::NumCaptures();
-      // Explicit bracket over `frames` game frames (default 1), aligned to
-      // the guest frame boundary. TriggerCapture would wait for a present on
-      // a window RenderDoc tracks, which it does not do on every window
-      // system (Wayland under gamescope).
       const int64_t frames = st.frames ? std::max<int64_t>(1, *st.frames) : 1;
-      if (!WaitFrames(r, 1, 30.0)) {
-        return Fail("game stopped presenting frames");
-      }
-      rex::ui::renderdoc::StartFrameCapture((r.dir / "captures" / tag).string());
-      const bool frames_ok = WaitFrames(r, frames, 60.0);
-      const bool written = rex::ui::renderdoc::EndFrameCapture();
-      if (!frames_ok) {
-        return Fail("game stopped presenting frames during the capture");
-      }
-      if (!written) {
-        return Fail(
-            "RenderDoc did not write the capture (see its log in /tmp/RenderDoc, or "
-            "%TEMP%\\RenderDoc on Windows)");
-      }
-      // Writing the file can take a few seconds on a handheld.
-      const auto deadline = Clock::now() + std::chrono::seconds(60);
-      while (rex::ui::renderdoc::NumCaptures() <= before) {
-        if (Clock::now() > deadline || r.stop.load()) {
-          return Fail("RenderDoc did not report the capture within 60 s");
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-      }
-      const std::string path = rex::ui::renderdoc::CapturePath(before);
-      {
-        std::lock_guard lk(r.mu);
-        r.captures.push_back(path);
+      std::string path, err;
+      if (!CaptureFrames(r, tag, frames, &path, &err)) {
+        return Fail(err);
       }
       Outcome o;
       o.result_json = "\"file\":\"" + JsonEscape(path) + "\"";
@@ -1353,6 +1368,20 @@ Outcome Execute(Run& r, const Step& st) {
             }
             if (!st.stills_renderers.empty()) {
               SetRenderer(was_native);
+            }
+            if (st.stills_capture) {
+              // One RenderDoc frame at the held still (the editor keeps
+              // drawing every frame while the clock holds).
+              char cap_tag[112];
+              std::snprintf(cap_tag, sizeof(cap_tag), "%s_t%.2f", tag.c_str(), cur.t_s);
+              std::string cap_path, cap_err;
+              if (CaptureFrames(r, SafeName(cap_tag), 1, &cap_path, &cap_err)) {
+                Event(r, "reel_capture", clip + ",\"t\":" + std::to_string(cur.t_s) +
+                                             ",\"file\":\"" + JsonEscape(cap_path) + "\"");
+              } else {
+                Event(r, "reel_still_skipped",
+                      clip + ",\"capture\":true,\"why\":\"" + JsonEscape(cap_err) + "\"");
+              }
             }
             game::ReleaseReelHold();
             next = r.state.frame + (periodic ? static_cast<uint64_t>(st.every_frames) : 0);
