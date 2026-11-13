@@ -3848,9 +3848,11 @@ bool CasEditorActive(uint8_t* base) {
 // Render thread only (statics). Every stack change logs its ids (capped)
 // so unknown portrait screens name themselves in the session log.
 bool PortraitRttWindowActive() {
-  if (CasEditorHeartbeatFresh()) {
-    return true;
-  }
+  // The CAS heartbeat (any *_nis character shader) is checked after the
+  // stack: the replay editor draws the skater with those shaders in an aux
+  // view EVERY frame, so in the editor the heartbeat is always fresh and
+  // held the window open for the whole replay (KI-123, Odin 2: 23 fps at a
+  // 30 cap, 30 with the window closed).
   uint8_t* base = g_guest_base.load(std::memory_order_relaxed);
   if (base == nullptr) {
     return true;
@@ -3934,6 +3936,9 @@ bool PortraitRttWindowActive() {
     }
   }
   if (s_change_ns >= 0 && now_ns - s_change_ns < 3'000'000'000ll) {
+    return true;
+  }
+  if (!has_grace_screen && CasEditorHeartbeatFresh()) {
     return true;
   }
   return unknown_screen;

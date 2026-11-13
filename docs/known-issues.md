@@ -452,9 +452,15 @@ immediate/mailbox present modes allowed).
   = false` live in the editor: 30.5 → 56 fps. At a 30 cap with immediate
   present both settings held 30 (`tools/harness/live_cvar_ab.sh`); the
   teens need the device's FIFO-only present: a ~33 ms frame missing a 60 Hz
-  vblank shows for 50 ms. **Fix:** 12 is steady-safe; entering it still arms
-  the 3 s grace (its entry renders an aux skater view once). The harness
-  path (`[0,12]`, presence 1) never had the window.
+  vblank shows for 50 ms. **Fix, part 1:** 12 is steady-safe; entering it
+  still arms the 3 s grace (its entry renders an aux skater view once).
+  **Part 2:** that alone didn't close the window (session
+  `20261113-083745_live`: 23 fps at the 30 cap, emulated `Main` 16.5 ms over
+  58 passes): the CAS heartbeat (any `*_nis` character shader) also opens
+  it, and the editor's per-frame aux skater view uses those shaders, so it
+  was always fresh. The heartbeat no longer counts while 12 is on the stack
+  (live check with the window off: 23.1 → 30.0 fps). The harness path
+  (`[0,12]`, presence 1) never had the window.
 - **The photo flow** fired only for the reel save (12 grabs, about 185 ms
   each), not during playback.
 - **Replays vs live, harness path** (`scenarios/perf_ki123.toml`, run
