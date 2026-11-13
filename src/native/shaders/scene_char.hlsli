@@ -222,6 +222,20 @@ float4 ShadeCharacter(VSOut i, float4 albedo) {
       spec = saturate((ks * ch_ks.rgb * kfres + rs * ch_rs.rgb) * smask);
     }
     lin = dlin * lit + spec;
+    // Debug views (skate3_native_render_scene_char_debug): 1 = the shadow
+    // term, 2 = N.L, 3 = shadow with sun-facing-but-shadowed in red (the
+    // KI-124 signature: N.L > 0.2 and csm < 0.5), 4 = the shadow term
+    // without the static map (CSM only).
+    int cdbg = int(ch_dbg.x + 0.5);
+    if (cdbg > 0) {
+      float3 v = cdbg == 1   ? csm.xxx
+                 : cdbg == 2 ? vndl.xxx
+                 : cdbg == 3 ? (vndl > 0.2 && csm < 0.5 ? float3(1.0, 0.0, 0.0)
+                                                         : csm.xxx * 0.8)
+                             : SampleCsmShadowSoft(i.rpos + cam_pos.xyz, 0.012, vn,
+                                                   i.pos.xy).xxx;
+      return float4(v, 1.0);
+    }
     // The PS multiplies the lit color by the material multiplier
     // m_params[0].y before the tone chain (1.2 on the gameplay banks;
     // without it the jeans sit ~14% darker than the emulated reference).

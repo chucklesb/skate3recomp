@@ -1,0 +1,27 @@
+# KI-124: the user's reel in motion from its marker on the emulated renderer,
+# a shot every 2 frames, to compare the sleeves frame by frame with the
+# other renderer (held stills match; the patches show in motion).
+name = "ki124_motion_emulated"
+timeout_s = 900
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "renderer"
+renderer = "emulated"
+frames = 30
+
+[[step]]
+do = "play_reel"
+reel = "88a86b704bcf2d71"
+from = "marker"
+every_frames = 2

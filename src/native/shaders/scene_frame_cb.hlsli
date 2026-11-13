@@ -112,6 +112,9 @@ cbuffer S : register(b1) {
   float4 wa_c22;  // x = g_fAnimationTime
   float4 wa_sun;  // the shader's own c6 sun direction
   // Water enhancements (cvars): z = ripple de-tiling strength (0 = the
-  // game's look); xyw spare.
+  // game's look); w = water debug view; xy spare.
   float4 wa_ctl;
+  // Character debug (skate3_native_render_scene_char_debug in x; see
+  // ShadeCharacter); yzw spare.
+  float4 ch_dbg;
 };

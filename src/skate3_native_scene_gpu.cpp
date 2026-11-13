@@ -130,6 +130,7 @@ REXCVAR_DECLARE(bool, skate3_native_render_scene_ssao_full_res);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_ssr);
 REXCVAR_DECLARE(double, skate3_native_render_scene_water_detile);
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_water_debug);
+REXCVAR_DECLARE(int32_t, skate3_native_render_scene_char_debug);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_tex_mips);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_tex_revalidate);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_tex_confirm);
@@ -1477,6 +1478,36 @@ bool DecodeMesh(nrhi::Device* device, uint8_t* base, const DrawItem& item,
 // The 3D path reads the words from renderengine::Texture objects; the 2D
 // path passes the device fetch-shadow words directly.
 // BC1/DXT1 block decode (both color modes) into 16 RGBA8 texels.
+// KI-124 diagnostic: the world sun (PS c6) of the frame being drawn; the
+// CSM footprint is projected along it, while characters light with their
+// own c9 row (ch_light). Logs the angle between the two whenever it moves
+// by 5 degrees or more (per character family), so a light/shadow mismatch
+// on the skater shows up in the log.
+float g_frame_world_sun[3] = {0.0f, 0.0f, 0.0f};
+
+void LogCharLightVsWorldSun(const DrawItem& item) {
+  static int last_bucket[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
+  const uint32_t fam = item.char_family & 7u;
+  const float* l = item.char_rows;  // row 0 = ch_light
+  const float* s = g_frame_world_sun;
+  const float ll = std::sqrt(l[0] * l[0] + l[1] * l[1] + l[2] * l[2]);
+  const float sl = std::sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
+  if (ll < 0.5f || sl < 0.5f) {
+    return;
+  }
+  const float c = std::clamp((l[0] * s[0] + l[1] * s[1] + l[2] * s[2]) / (ll * sl), -1.0f, 1.0f);
+  const float deg = std::acos(c) * 57.29578f;
+  const int bucket = int(deg / 5.0f);
+  if (bucket == last_bucket[fam]) {
+    return;
+  }
+  last_bucket[fam] = bucket;
+  REXLOG_INFO(
+      "native-scene: char light vs world sun fam={} angle={:.1f} deg "
+      "ch_light=({:.3f},{:.3f},{:.3f}) c6=({:.3f},{:.3f},{:.3f})",
+      fam, deg, l[0], l[1], l[2], s[0], s[1], s[2]);
+}
+
 void DecodeBc1Block(const uint8_t* b, uint8_t px[16][4]) {
   const uint16_t c0 = uint16_t(b[0] | (b[1] << 8));
   const uint16_t c1 = uint16_t(b[2] | (b[3] << 8));
@@ -9075,6 +9106,9 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       cb[28] = sh[24];  // sun direction (PS c6), for the normal-map kd (v2)
       cb[29] = sh[25];
       cb[30] = sh[26];
+      g_frame_world_sun[0] = sh[24];
+      g_frame_world_sun[1] = sh[25];
+      g_frame_world_sun[2] = sh[26];
       cb[31] = sh[40];  // scene exposure (PS c10.x)
       cb[32] = sh[45];  // material multiplier (PS c11.y)
       cb[33] = scene.family_rows[0];  // tree lightmap scale (tree PS c0.x)
@@ -9144,7 +9178,10 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
     }
     cb[230] = float(REXCVAR_GET(skate3_native_render_scene_water_detile));
     cb[231] = float(REXCVAR_GET(skate3_native_render_scene_water_debug));
-    static_assert(232 * sizeof(float) <= RendererState::kShadowCbSlice);
+    // ch_dbg (cb[232..235]): x = the character debug view.
+    cb[232] = float(REXCVAR_GET(skate3_native_render_scene_char_debug));
+    cb[233] = cb[234] = cb[235] = 0.0f;
+    static_assert(236 * sizeof(float) <= RendererState::kShadowCbSlice);
     cmd->SetConstantBuffer(6, g_r.shadow_cb, cb_offset);
     // b2 (character lighting) default: point at the ring base so the root
     // CBV is never left unset; character draws re-point it per item.
@@ -10118,6 +10155,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         }
         constants[39] = item.char_rows[14 * 4 + 1];
         g_char_drawn.fetch_add(1, std::memory_order_relaxed);
+        LogCharLightVsWorldSun(item);
       }
       WriteCharacterBodyFadeOverride(body_fade, rows + 72);
       if (fade_uniform == nullptr) g_r.bone_ring_offset = offset + 512u;

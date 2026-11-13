@@ -1,0 +1,29 @@
+# KI-124 deciding check: the user's reel (id 88a86b70...) held at the
+# moments the char_debug=3 motion runs flagged sun-facing-but-shadowed
+# pixels on the shirt, shot on the native and the emulated renderer.
+# Same patches on both = the game's own self-shadowing.
+name = "ki124_renderers"
+timeout_s = 900
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+reel = "88a86b704bcf2d71"
+from = "marker"
+stills = [20.2, 23.9, 24.3, 24.7, 25.0]
+settle_frames = 45
+stills_renderers = ["native", "emulated"]

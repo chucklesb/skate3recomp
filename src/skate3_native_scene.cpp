@@ -167,6 +167,12 @@ REXCVAR_DEFINE_INT32(skate3_native_render_scene_water_debug, 0, "Skate 3",
                      "7 (fog mult, exposure/4).")
     .range(0, 7)
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_INT32(skate3_native_render_scene_char_debug, 0, "Skate 3",
+                     "Character (skater/CAC) debug view: 0 off, 1 sun shadow "
+                     "term, 2 N.L, 3 shadow with sun-facing-but-shadowed "
+                     "pixels in red, 4 CSM shadow only (no static map).")
+    .range(0, 4)
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_INT32(skate3_native_render_scene_ssr_steps, 48, "Skate 3",
                      "SSR screen-space march taps per ray (half-res pass). More "
                      "taps resolve thinner reflected geometry at proportional "

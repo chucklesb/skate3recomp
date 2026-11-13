@@ -17,6 +17,7 @@ happen. The technical details follow for whoever works on it.
 | [KI-121](#ki-121-on-d3d12-the-scene-is-sometimes-drawn-in-shade) | On D3D12, a sunny scene is sometimes drawn almost all in shade, with no skater shadow | Open |
 | [KI-122](#ki-122-canal-water-reflects-orange-brown-instead-of-blue-sky) | Canal water reflects orange-brown instead of blue sky, depending on the view angle; no shadows on the canals | Fixed |
 | [KI-123](#ki-123-skatereel-playback-is-slow-and-uneven) | Reel playback runs in the teens with uneven pacing, where gameplay holds near 60 | Open |
+| [KI-124](#ki-124-shadows-on-the-sun-facing-side-of-the-skaters-sleeves) | Shadow patches on the side of the skater's sleeves that faces the sun | Investigating (matches the game on Windows) |
 
 ---
 
@@ -448,5 +449,57 @@ Not investigated yet. Leads from reading the code:
   `skate3_native_render_scene_screen_fx` (default on) that skips the capture
   (still clearing `g_frame_screen_fx`), and a `play_reel` option
   `lens = false` that sets it for the reel, like `SuppressUi()` hides the UI.
+
+</details>
+
+## KI-124: Shadows on the sun-facing side of the skater's sleeves
+
+**What you see:** with the skater's back to the sun, dark shadow patches
+sometimes appear on the back of the shirt sleeves, the side facing the sun.
+
+**How to see it:** the user's Odin 2 reel, id `88a86b704bcf2d71` (clip 6
+of the test saves; marker at 19.5 s of 25.2 s, sun high and behind the
+skater). `scenarios/ki124_motion_native.toml` and
+`scenarios/ki124_motion_emulated.toml` play it from the marker with a shot
+every 2 frames on each renderer; `ki124_renderers.toml` holds five moments
+on both; `ki124_motion_debug.toml` runs the character debug view.
+
+**Status:** investigating · **Severity:** low · **Found:** 2026-11-12 by
+the user, Odin 2.
+
+**So far (Windows):** our frames match the game's own (emulated) frames,
+held and in motion. The darker sleeve sides are the torso's own shadow
+falling on the arm with the sun high behind the skater, and the game draws
+the same. Whether the Odin 2 draws more than that is the open question.
+
+<details>
+<summary>Technical details</summary>
+
+- Character shading (`ShadeCharacter`, fam 1/2) is the key light
+  `ch_key * saturate(N·ch_light) * csm`; pixels facing away from the light
+  already get no key light, so sun-side patches can only come from the
+  shadow term.
+- Ruled out on Windows Vulkan:
+  - **Light vs shadow direction:** the characters' light row (PS c9) equals
+    the world sun c6 for every character family (0.0°; log line
+    `native-scene: char light vs world sun`).
+  - **The cloth shirt casting from another shape:** the shadow caster binds
+    the resident (newest) shape while the visible shirt blends shape
+    generations; `skate3_native_render_scene_ropa_blend = false` makes no
+    difference (upper-body red pixels per frame, mean 236 vs 242).
+  - **Shadow tile size:** 512 (the Odin 2's auto size at 720p) and 1024
+    look the same.
+- Native vs emulated: `20261112-185310_ki124_renderers` (held, SSIM 0.93
+  "close"), `20261112-185506_ki124_motion_native` vs
+  `20261112-185548_ki124_motion_emulated` (in motion): the same shading on
+  the sleeves.
+- Debug view `skate3_native_render_scene_char_debug`: 1 shadow term, 2 N·L,
+  3 shadow with sun-facing-but-shadowed pixels in red, 4 the dynamic
+  shadow map only. View 3 marks legitimate self-shadow too (an arm inside
+  the torso's shadow faces the sun but is occluded), so compare its red
+  against the emulated frame, not against zero.
+- Next: the same motion scenarios on the Odin 2 (the reel is on the device
+  as clip 6), against Windows. A device-only difference would point at
+  Turnip (shadow depth precision or compare).
 
 </details>
