@@ -9,9 +9,10 @@ upstream as possible.
 | Page | What it covers |
 |---|---|
 | [known-issues.md](known-issues.md) | Issues found in this fork, each starting with what you see on screen |
+| [open-work.md](open-work.md) | What's planned or waiting: open issues at a glance, rendering, harness and tooling, investigations |
 | [linux-aarch64.md](linux-aarch64.md) | Cross-compiling for linux-aarch64, the DroidDeck AppImage, releases and testing pre-releases |
 | [windows-cross-build.md](windows-cross-build.md) | Building the Windows x64 version from Linux/WSL (for testing and A/B comparisons) |
-| [scenario-harness.md](scenario-harness.md) | The scenario test harness: scenario format, verbs, live mode, run folders, A/B runs, replay playback |
+| [scenario-harness.md](scenario-harness.md) | The scenario test harness: scenario format, verbs, live mode, run folders, A/B runs, replay playback, helper tools |
 | [teleport-locations.md](teleport-locations.md) | Vetted teleport locations for scenarios |
 
 ## Differences from upstream that players notice

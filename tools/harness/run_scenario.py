@@ -12,6 +12,8 @@
     run_scenario.py symbolize [--target odin2|windows] [--config ...] <module+0xoff | 0xaddr>...
     run_scenario.py send   <verb> [key=value ...]          # one live command, prints the reply
     run_scenario.py fetch                                  # copy the device's latest run folder
+    run_scenario.py pull   <guest path> [--to dir]         # copy any guest file/folder off the device
+    run_scenario.py reels  [--pull [DIR]] [--install-windows]  # list / copy the device's reels
     run_scenario.py install-renderdoc                      # push an arm64 RenderDoc to the device
     run_scenario.py summary <run-folder>
 
@@ -33,6 +35,7 @@ ended" dialog is dismissed with Back. Run folders live in the guest under
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -51,6 +54,16 @@ GUEST_HARNESS = "/root/.local/share/skate3/harness"
 GUEST_RENDERDOC = "/root/renderdoc"
 SHARED = "/storage/emulated/0/Download/skate3-harness"
 DEFAULT_ADB_PORT_HINT = "ANDROID_ADB_SERVER_PORT"
+# DroidDeck's guest root filesystem as Android sees it (guest /root is
+# <GUEST_ROOTFS>/root). adb can read it only as root: the app is not
+# debuggable, so `run-as` fails. On a rooted device (the Odin 2 has Magisk
+# with shell root granted) guest files are read without a DroidDeck session,
+# in well under a second instead of ~20 s for a desktop session. Writes still
+# go through the guest (`guest`), so files keep the app's owner and SELinux
+# label. SKATE3_ADB_ROOT=0 forces the session path.
+DROIDDECK_PACKAGE = os.environ.get("DROIDDECK_PACKAGE", "com.droiddeck.launcher")
+GUEST_ROOTFS = f"/data/data/{DROIDDECK_PACKAGE}/files/linuxfs"
+GUEST_DATA = "/root/.local/share/skate3"
 
 
 def log(msg: str) -> None:
@@ -153,6 +166,70 @@ class Device:
         subprocess.run([self.adb, "pull", src, self.host_path(dst)], env=self.env, check=True,
                        stdout=subprocess.DEVNULL)
 
+    def adb_shell(self, cmd: str, timeout: float = 60) -> str:
+        proc = subprocess.run([self.adb, "shell", cmd], capture_output=True, text=True,
+                              env=self.env, timeout=timeout)
+        if proc.returncode != 0:
+            raise RuntimeError(f"adb shell failed ({proc.returncode}): "
+                               f"{(proc.stdout + proc.stderr).strip()[-300:]}")
+        return proc.stdout
+
+    _root: bool | None = None
+
+    def has_root(self) -> bool:
+        """Whether `adb shell su` works (see GUEST_ROOTFS). Checked once."""
+        if self._root is None:
+            self._root = False
+            if os.environ.get("SKATE3_ADB_ROOT", "1") != "0":
+                try:
+                    self._root = "uid=0(" in self.adb_shell("su -c id", timeout=20)
+                except (RuntimeError, subprocess.TimeoutExpired):
+                    pass
+        return self._root
+
+    @contextlib.contextmanager
+    def guest_files(self):
+        """Read-only access to guest files. Yields run(script, timeout=120) ->
+        stdout, where the script writes guest paths as {R}/root/... . Through
+        adb root when available (an Android toybox shell: cp, ls, cat, find,
+        od, stat; no single quotes in the script), else inside the guest,
+        starting and stopping a desktop session if none is running."""
+        if self.has_root():
+            def run_root(script: str, timeout: float = 120) -> str:
+                s = script.replace("{R}", GUEST_ROOTFS)
+                if "'" in s:
+                    raise ValueError("guest_files scripts cannot contain single quotes")
+                return self.adb_shell(f"su -c '{s}'", timeout=timeout)
+            yield run_root
+            return
+        started = False
+        if not self.phase()[1]:
+            self.start_desktop()
+            started = True
+        try:
+            yield lambda script, timeout=120: self.guest(script.replace("{R}", ""),
+                                                         timeout=int(timeout))
+        finally:
+            if started:
+                self.stop()
+
+    def pull_guest(self, guest_path: str, dst: Path) -> Path:
+        """Copy a guest file or folder to dst (replaced) via shared storage."""
+        stage = f"{SHARED}/pull/{Path(guest_path).name}"
+        with self.guest_files() as run:
+            run(f"rm -rf {SHARED}/pull && mkdir -p {SHARED}/pull && cp -r {{R}}{guest_path} {stage}")
+        if dst.exists():
+            shutil.rmtree(dst) if dst.is_dir() else dst.unlink()
+        tmp = Path(tempfile.mkdtemp(prefix="harness-pull-", dir=dst.parent if dst.parent.exists() else None))
+        try:
+            self.adb_pull(stage, tmp / "x")
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(tmp / "x"), str(dst))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+            self.adb_shell(f"rm -rf {SHARED}/pull")
+        return dst
+
 
 CONFIGS = ("release", "relwithdebinfo")
 DEPLOYED_CONFIG = REPO / "out/harness/deployed-config"
@@ -239,19 +316,15 @@ def wait_for_exit(dev: Device, timeout_s: float) -> None:
 
 
 def fetch(dev: Device, out_root: Path) -> Path:
-    """Copy the guest's latest run folder to out_root; works after exit."""
-    if not dev.phase()[1]:
-        dev.start_desktop()
-        started = True
-    else:
-        started = False
-    run_dir = dev.guest(f"cat {GUEST_HARNESS}/current_run.txt").strip()
-    if not run_dir:
-        die("no harness run on the device")
+    """Copy the guest's latest run folder to out_root; works after exit
+    (through adb root without a session when possible, see guest_files)."""
+    with dev.guest_files() as run:
+        run_dir = run(f"cat {{R}}{GUEST_HARNESS}/current_run.txt").strip()
+        if not run_dir or "'" in run_dir or " " in run_dir:
+            die(f"no usable harness run on the device ({run_dir!r})")
+        run(f"rm -rf {SHARED}/run && mkdir -p {SHARED} && cp -r {{R}}{run_dir} {SHARED}/run",
+            timeout=120)
     name = Path(run_dir).name
-    dev.guest(f"rm -rf {SHARED}/run && mkdir -p {SHARED} && cp -r '{run_dir}' {SHARED}/run", timeout=120)
-    if started:
-        dev.stop()
     local = out_root / name
     if local.exists():
         shutil.rmtree(local)
@@ -959,6 +1032,51 @@ def crash_frames(run: Path, crash: dict, limit: int = 12) -> list[str]:
 # ------------------------------------------------------------------ main
 
 
+def reels_cmd(dev: Device, pull: Path | None, install_windows: bool) -> int:
+    """List the device's saved reels; optionally copy them off and into the
+    Windows test profile. Reel id = bytes 20..28 of N.B (what `play_reel
+    reel=` matches); byte-identical saves share an id, so `play_reel` needs
+    `clip = N` for those."""
+    with dev.guest_files() as run:
+        found = run(f"find {{R}}{GUEST_DATA} -maxdepth 5 -type d -name REPLY_SKATER").split()
+        if not found:
+            die(f"no REPLY_SKATER folder under {GUEST_DATA} on the device")
+        reel_dir = found[0][len(GUEST_ROOTFS):] if found[0].startswith(GUEST_ROOTFS) else found[0]
+        listing = run(f"cd {{R}}{reel_dir} && for f in *.B; do echo $f $(stat -c %Y $f) "
+                      f"$(od -An -tx1 -j20 -N8 $f | tr -d \" \\n\"); done")
+    rows = []
+    for line in listing.splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[0].endswith(".B"):
+            rows.append((int(parts[0][:-2]), int(parts[1]), parts[2]))
+    rows.sort()
+    ids = [r[2] for r in rows]
+    print(f"{reel_dir}")
+    print("clip  saved                id                note")
+    for n, (slot, mtime, rid) in enumerate(rows, 1):
+        note = "same id as another clip: use clip = N" if ids.count(rid) > 1 else ""
+        print(f"{n:>4}  {time.strftime('%Y-%m-%d %H:%M', time.localtime(mtime))}  {rid}  {note}")
+    if pull is None:
+        return 0
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    dst = (REPO / f"out/reels/odin-{stamp}") if str(pull) == "auto" else pull.resolve()
+    dev.pull_guest(reel_dir, dst)
+    log(f"copied the device's reels to {dst}")
+    if install_windows:
+        if not WIN_USER_DATA:
+            die("--install-windows needs SKATE3_WINDOWS_USER_DATA (rs.sh sets it)")
+        rel = Path(reel_dir).relative_to(GUEST_DATA)
+        win = Path(WIN_USER_DATA) / rel
+        if win.exists():
+            backup = REPO / f"out/reels/windows-REPLY_SKATER-backup-{stamp}"
+            shutil.copytree(win, backup)
+            shutil.rmtree(win)
+            log(f"backed up the Windows test profile's reels to {backup}")
+        shutil.copytree(dst, win)
+        log(f"installed into the Windows test profile: {win}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1037,6 +1155,21 @@ def main() -> int:
     p_rd.add_argument("--from", dest="rd_from", type=Path, default=REPO / "out/renderdoc-aarch64")
     p_fetch = sub.add_parser("fetch")
     p_fetch.add_argument("--out", type=Path, default=REPO / "out/harness-runs")
+    p_pull = sub.add_parser("pull", help="copy a guest file or folder off the device "
+                                         "(read-only; no session needed with adb root)")
+    p_pull.add_argument("guest_path", help="absolute guest path, e.g. "
+                                           "/root/.local/share/skate3/settings.toml")
+    p_pull.add_argument("--to", type=Path, help="destination (default out/device-files/<name>)")
+    p_reels = sub.add_parser("reels", help="list the device's saved reels (slot, date, id); "
+                                           "optionally copy them off, or into the Windows "
+                                           "test profile")
+    p_reels.add_argument("--pull", type=Path, nargs="?", const=Path("auto"), metavar="DIR",
+                         help="copy the device's REPLY_SKATER folder (default "
+                              "out/reels/odin-<stamp>)")
+    p_reels.add_argument("--install-windows", action="store_true",
+                         help="with --pull: replace the Windows test profile's REPLY_SKATER "
+                              "($SKATE3_WINDOWS_USER_DATA) with the device's, after a backup "
+                              "under out/reels/")
     p_sum = sub.add_parser("summary")
     p_sum.add_argument("run", type=Path)
     p_perf = sub.add_parser("perf", help="compare two runs' perf.json (CPU stages, GPU passes)")
@@ -1180,6 +1313,15 @@ def main() -> int:
                 return 0 if json.loads(reply).get("ok") else 1
             time.sleep(1)
         die(f"no reply within {a.wait:.0f} s (is the game running in live mode?)")
+
+    if a.cmd == "pull":
+        dst = (a.to or REPO / "out/device-files" / Path(a.guest_path).name).resolve()
+        dev.pull_guest(a.guest_path, dst)
+        log(f"pulled {a.guest_path} -> {dst}")
+        return 0
+
+    if a.cmd == "reels":
+        return reels_cmd(dev, a.pull, a.install_windows)
 
     if a.cmd == "install-renderdoc":
         src = a.rd_from.resolve()

@@ -47,6 +47,9 @@ python3 -I tools/harness/run_scenario.py send query what=state
 
 python3 -I tools/harness/run_scenario.py fetch          # latest run folder from the device
 python3 -I tools/harness/run_scenario.py summary <run>  # print a run's result
+python3 -I tools/harness/run_scenario.py pull /root/.local/share/skate3/settings.toml  # any guest file
+python3 -I tools/harness/run_scenario.py reels          # the device's saved reels: clip, date, id
+python3 -I tools/harness/run_scenario.py reels --pull --install-windows  # ...copied to Windows too
 
 # Windows x64 build on the WSL host (tools/cross-windows/build.sh; builds
 # and stages first unless --no-build)
@@ -93,6 +96,17 @@ For `odin2` and `live`, `DROIDDECK_DIR` points at a DroidDeck checkout
 the adb to use. `--no-deploy` reuses the build already on the device.
 `--env KEY=VALUE` (repeatable) sets environment variables for that run's
 session only. Game arguments go after `--`.
+
+**Reading device files without a session.** DroidDeck's guest filesystem is
+`/data/data/com.droiddeck.launcher/files/linuxfs` on the Android side (guest
+`/root` is `.../linuxfs/root`). The app isn't debuggable, so adb can read it
+only as root; on a rooted device (the Odin 2: Magisk, shell root granted)
+`fetch`, `pull` and `reels` copy files out through `adb shell su` in about a
+second, instead of starting a DroidDeck desktop session (~20 s). Without
+root they fall back to the session. Writes into the guest (deploying,
+`send`, saves) always go through the guest, so files keep the app's owner
+and SELinux label. `SKATE3_ADB_ROOT=0` forces the session path;
+`DROIDDECK_PACKAGE` names another DroidDeck package.
 
 Exit codes: 0 pass, 1 a step or expectation failed, 2 the scenario timed
 out, 3 the scenario file did not parse, 4 no `result.json` and no crash
@@ -217,7 +231,8 @@ the id as ambiguous, so use `clip` for those.
    `send teleport location=...`).
 2. The player skates, saves a new Reel in the game's replay editor, and
    optionally places a marker where the problem starts.
-3. `send query what=reels` shows the new reel (the last clip); note its id.
+3. `run_scenario.py reels` (no game needed) or `send query what=reels`
+   shows the new reel (the last clip); note its id.
 4. Write a scenario: `play_reel reel = "<id>" from = "marker"` (from the
    marker when there is one, else the start), with `stills` or
    `every_frames` at the moment, and the cvar variants to compare.
@@ -229,7 +244,34 @@ another target, copy the whole REPLY_SKATER folder (INDEX, DDATA and every
 `N.B`/`N.H`) into that target's profile save: INDEX is hashed too, so
 single reels can't be spliced into another folder. On Windows that's the
 test user data (`C:\Users\user\skate3-ab\userdata\<xuid>\454108E6\00000001\REPLY_SKATER`);
-positions may change, ids don't.
+positions may change, ids don't. `run_scenario.py reels --pull
+--install-windows` does it from the Odin 2: it copies the device's folder to
+`out/reels/odin-<stamp>`, backs up the Windows one to
+`out/reels/windows-REPLY_SKATER-backup-<stamp>`, and installs the copy.
+
+`stills` times are absolute reel seconds. For a new reel, find the marker
+first: a quick `play_reel from = "marker"` (e.g. with `every_frames = 10`)
+logs `harness: reel N: playing from X s (... marker X s ...)`.
+
+## Helper tools
+
+Small scripts for looking at results, in `tools/harness/` next to
+`run_scenario.py`. New helpers go there too, not in a temporary folder, so
+the next investigation can reuse them.
+
+| Tool | What it does | Needs |
+|---|---|---|
+| `imgdiff.py` | SSIM / changed-pixel comparison of two shots (used by `ab` and `stills_renderers`) | Pillow |
+| `shots.py strip` | Crops, scales and labels shots side by side: zoomed pixel comparisons (`--box`, `--pixel`) and before/after pictures for docs | Pillow |
+| `video_frames.py` | scrcpy recordings: `remux` (make seekable), `frames` (every frame of a time window), `match` (find the same moment in another pass or recording) | ffmpeg, Pillow |
+| `ropa_shadow_trace.py` | Per-reel-pass garment shadow offset from a `char_track` run's log (KI-124) | - |
+| `char_jitter.py` | Skater-vs-camera jitter from `char_track` lines (KI-120) | - |
+| `perf_report.py` | `perf.json` comparison behind `run_scenario.py perf` | - |
+
+Pillow and ffmpeg come from nix in WSL, for example
+`nix shell nixpkgs#ffmpeg nixpkgs#python3Packages.pillow -c python3 tools/harness/video_frames.py ...`.
+Recording the Odin 2's screen (scrcpy on Windows) is described in
+`video_frames.py --help`.
 
 ## Performance
 
