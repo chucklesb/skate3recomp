@@ -60,9 +60,6 @@ what was done).
   - free camera, fly mode and noclip (see below);
   - harness and cvar toggles (renderer switches, debug views, the fix
     toggles used for A/B checks).
-- **Reel lens toggle:** hide the replay camera's fisheye and vignette for
-  testing (`skate3_native_render_scene_screen_fx`, `play_reel lens = false`;
-  see KI-123).
 - **Fly and noclip mode** to move the camera or skater through geometry, for
   looking at shadows and their casters.
 - **Scripted "backwards man" speed glitch** as a timed pad sequence (find the

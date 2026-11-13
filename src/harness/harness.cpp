@@ -66,6 +66,7 @@ uint32_t MainViewCamera();
 }  // namespace skate3::native_scene
 
 REXCVAR_DECLARE(bool, skate3_native_render_scene);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_screen_fx);
 
 namespace skate3::harness {
 namespace {
@@ -1207,6 +1208,15 @@ Outcome Execute(Run& r, const Step& st) {
                                       std::to_string(clip_n) + ",\"slot\":" +
                                       std::to_string(found.slot));
       }
+      // The reel camera's lens effect: off for the reel unless lens = true;
+      // the cvar's value is put back when the step ends, however it ends.
+      struct LensGuard {
+        bool prev = REXCVAR_GET(skate3_native_render_scene_screen_fx);
+        ~LensGuard() {
+          rex::cvar::SetFlagByName("skate3_native_render_scene_screen_fx", prev ? "true" : "false");
+        }
+      } lens_guard;
+      rex::cvar::SetFlagByName("skate3_native_render_scene_screen_fx", st.lens ? "true" : "false");
       game::ReelOptions opts;
       opts.from_marker = st.from == "marker";
       opts.speed = static_cast<float>(st.speed);
@@ -1225,6 +1235,25 @@ Outcome Execute(Run& r, const Step& st) {
       };
       auto phase = [] { return game::GetReelStatus().phase; };
       using game::ReelPhase;
+      // With every_frames, the load is shot too ("<tag>_load"): the game's
+      // loading screen, as the guest draws it.
+      if (st.every_frames_given && st.every_frames > 0) {
+        const std::string load_tag =
+            (!st.tag.empty() ? st.tag
+             : !st.reel.empty() ? "reel_" + st.reel
+                                : "reel" + std::to_string(clip_n)) + "_load";
+        uint64_t next_shot = r.state.frame + static_cast<uint64_t>(st.every_frames);
+        while ((phase() == ReelPhase::kIdle || phase() == ReelPhase::kLoading) &&
+               Clock::now() < deadline && !r.stop.load()) {
+          if (r.state.frame >= next_shot) {
+            std::string shot_err;
+            std::vector<std::string> names;
+            TakeScreenshots(r, load_tag, 1, 1, &names, &shot_err);
+            next_shot = r.state.frame + static_cast<uint64_t>(st.every_frames);
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+      }
       WaitUntil(r, left(), [&] { return phase() != ReelPhase::kIdle && phase() != ReelPhase::kLoading; });
       game::ReelStatus s = game::GetReelStatus();
       if (s.phase == ReelPhase::kFailed || s.phase == ReelPhase::kIdle ||

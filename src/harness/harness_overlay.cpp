@@ -5,16 +5,20 @@
 #include <imgui.h>
 
 #include "harness/harness.h"
+#include "harness/harness_game.h"
 
 namespace skate3::harness {
 
 bool HarnessOverlay::WantsContinuousRepaint() const {
   const Status st = CurrentStatus();
-  return st.recording || st.playing || st.scripted || st.paused;
+  return st.recording || st.playing || st.scripted || st.paused || game::ReelCurtain();
 }
 
 void HarnessOverlay::OnDraw(ImGuiIO& io) {
-  (void)io;
+  if (game::ReelCurtain()) {
+    ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0.0f, 0.0f), io.DisplaySize,
+                                                  IM_COL32(0, 0, 0, 255));
+  }
   const Status st = CurrentStatus();
   if (!st.enabled || !(st.recording || st.playing || st.scripted || st.paused)) {
     return;

@@ -601,6 +601,27 @@ int g_reel_wait = 0;
 int g_reel_ready_frames = 0;
 bool g_reel_exit_posted = false;
 uint32_t g_event_block = 0;
+// The game's loading screen (FE 52) shows as in the menu flow: the 2D pass
+// runs while it is the top FE screen. Between it and the first played frame
+// (the editor opens on the reel's last frame), and from the exit until the
+// loading screen is up, a black curtain covers the picture (harness overlay).
+constexpr uint32_t kFeLoadingScreen = 52;
+constexpr int kReelPrerollFrames = 4;  // editor frames at the start position before the clock runs
+std::atomic<bool> g_reel_loading_screen{false};
+std::atomic<bool> g_reel_curtain{false};
+std::atomic<int> g_reel_preroll{0};
+bool g_reel_seen_loading = false;
+
+// Top screen of the FE stack (FrontEndManager *(0x830CFE14): records of 20
+// bytes between +0x210 and +0x214, screen id first), 0xFFFFFFFF if none.
+uint32_t FeTop(uint8_t* base) {
+  uint32_t mgr = 0, beg = 0, end = 0, id = 0xFFFFFFFF;
+  if (Read32(base, 0x830CFE14, &mgr) && mgr && Read32(base, mgr + 0x210, &beg) &&
+      Read32(base, mgr + 0x214, &end) && end >= beg + 20 && end - beg < 20 * 64) {
+    Read32(base, end - 20, &id);
+  }
+  return id;
+}
 
 void SetReelPhase(ReelPhase p, const std::string& error = {}) {
   if (!error.empty()) {
@@ -670,6 +691,9 @@ void ReelTick(PPCContext& ctx, uint8_t* base) {
     g_reel_wait = 0;
     g_reel_ready_frames = 0;
     g_reel_exit_posted = false;
+    g_reel_seen_loading = false;
+    g_reel_loading_screen.store(false);
+    g_reel_curtain.store(false);
     g_reel_frames.store(0);
     g_reel_t.store(0.0f);
     g_reel_e.store(0);
@@ -694,9 +718,13 @@ void ReelTick(PPCContext& ctx, uint8_t* base) {
     SetReelPhase(ReelPhase::kLoading);
     return;
   }
+  const bool on_loading_screen = FeTop(base) == kFeLoadingScreen;
+  g_reel_loading_screen.store(on_loading_screen);
   switch (Phase()) {
     case ReelPhase::kLoading: {
       ++g_reel_wait;
+      g_reel_seen_loading |= on_loading_screen;
+      g_reel_curtain.store(g_reel_seen_loading && !on_loading_screen);
       uint32_t holder = 0, e = 0, state = 0, scale_obj = 0, pos = 0, dur_bits = 0;
       Read32(base, kEditorTimePtr, &holder);
       Read32(base, holder, &e);
@@ -719,7 +747,11 @@ void ReelTick(PPCContext& ctx, uint8_t* base) {
       uint32_t keys_word = 0;
       Read32(base, e + 556, &keys_word);
       const bool keys = (keys_word & 0xFFFF) >= 2;
-      if (g_reel_ready_frames >= 15 && (keys || g_reel_ready_frames >= 75)) {
+      // Playing from the start needs no marker: go as soon as the editor has
+      // settled (the marker is then reported only if its key is already in).
+      const bool keys_needed = g_reel_from_marker;
+      if (g_reel_ready_frames >= 5 &&
+          (keys || !keys_needed || g_reel_ready_frames >= 75)) {
         // The marker: the first key of the editor's current timeline channel,
         // as the D-pad jump reads it: sub_82506BE0(E, 1) = key 1's normalized
         // position (index 0 = start 0.0; past the last key = end 1.0). Keys
@@ -749,6 +781,7 @@ void ReelTick(PPCContext& ctx, uint8_t* base) {
         const float p0 = start / dur;
         std::memcpy(&pbits, &p0, 4);
         Write32(base, e + 4, pbits);
+        g_reel_preroll.store(kReelPrerollFrames);
         g_reel_e.store(e);
         REXLOG_INFO("harness: reel {}: playing from {:.2f} s ({:.2f} s long, marker {:.2f} s, editor "
                     "time object {:08X})", g_reel_slot, start, dur, g_reel_marker.load(), e);
@@ -759,6 +792,7 @@ void ReelTick(PPCContext& ctx, uint8_t* base) {
       break;
     }
     case ReelPhase::kPlaying:
+      g_reel_curtain.store(g_reel_preroll.load() > 0);
       if (!g_reel_hold.load() && g_reel_t.load() >= g_reel_duration.load()) {
         g_reel_e.store(0);  // stop driving
         g_reel_wait = 0;
@@ -770,9 +804,16 @@ void ReelTick(PPCContext& ctx, uint8_t* base) {
       if (!g_reel_exit_posted && g_reel_wait > 15) {  // hold the last frame for 0.5 s
         PostReelExit(ctx, base);
         g_reel_exit_posted = true;
+        g_reel_seen_loading = false;
         REXLOG_INFO("harness: reel {}: exit posted", g_reel_slot);
       }
+      if (g_reel_exit_posted) {
+        // Black from the exit until the game's loading screen is up.
+        g_reel_seen_loading |= on_loading_screen;
+        g_reel_curtain.store(!g_reel_seen_loading);
+      }
       if (g_reel_exit_posted && ModeState(base) == kModeStateFreeSkate) {
+        g_reel_curtain.store(false);
         PostSimMessage(ctx, base, 0xDDC8C41A, {0u, 11u});  // cMsgPauseSim(0)
         REXLOG_INFO("harness: reel {}: back in free skate", g_reel_slot);
         SetReelPhase(ReelPhase::kDone);
@@ -884,7 +925,17 @@ void DoRePoke(uint8_t* base) {
 
 bool SuppressUi() {
   const ReelPhase p = Phase();
-  return p == ReelPhase::kLoading || p == ReelPhase::kPlaying || p == ReelPhase::kExiting;
+  if (p == ReelPhase::kPlaying) {
+    return true;
+  }
+  // Loading and exiting: the game's loading screen shows, nothing else.
+  return (p == ReelPhase::kLoading || p == ReelPhase::kExiting) && !g_reel_loading_screen.load();
+}
+
+bool ReelCurtain() {
+  const ReelPhase p = Phase();
+  return (p == ReelPhase::kLoading || p == ReelPhase::kPlaying || p == ReelPhase::kExiting) &&
+         g_reel_curtain.load();
 }
 
 void OnGuestFrame(PPCContext& ctx, uint8_t* base) {  // main (simulation) thread
@@ -959,7 +1010,9 @@ extern "C" REX_FUNC(sub_82C7EA50) {
       uint32_t bits = 0;
       std::memcpy(&bits, &pos, 4);
       Write32(base, e + 4, bits);
-      if (!g_reel_hold.load()) {
+      if (g_reel_preroll.load() > 0) {
+        g_reel_preroll.fetch_sub(1);  // the start frame is being drawn behind the curtain
+      } else if (!g_reel_hold.load()) {
         float nt = t + static_cast<float>(ctx.f1.f64) * g_reel_speed.load();
         const int next = g_still_next.load();
         if (next < g_still_count.load() && nt >= g_still_t[next]) {

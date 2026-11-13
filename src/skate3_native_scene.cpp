@@ -315,6 +315,12 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_haze, true, "Skate 3",
                     "the base atmosphere, and additive terms read as extra fog "
                     "quickly. Requires the HDR intermediate.")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_screen_fx, true, "Skate 3",
+                    "The game's final lens pass (fisheye warp and vignette, e.g. the "
+                    "skate.Reel camera). Off = the pass draws a plain frame, on the "
+                    "native and the emulated renderer (testing stills; play_reel "
+                    "lens = false sets it for the reel).")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_hair_depth, true, "Skate 3",
                     "KI-126: after a hair item's blended passes, write its dense "
                     "strands into the depth buffer (no color), so the haze and "
@@ -3567,9 +3573,41 @@ void TryCaptureWaterRows(uint8_t* base, uint32_t ps_bank, int water_fam) {
   }
 }
 
+namespace {
+// skate3_native_render_scene_screen_fx off: the lens pass still draws, with
+// neutral constants. In postfx_basictex_fisheye*PS the warp scale is
+// c1.x * r^4 + c1.y and the vignette (sat(tex + c0.w) - 1) * c2.y + 1, so
+// c1.x = 0, c1.y = 1, c2.y = 0 is a plain copy. Rewritten in the device's
+// shadow bank before the game uploads it, so the emulated renderer and the
+// native capture (CaptureScreenFxState, at the draw) both get the plain frame.
+void NeutralizeLensUpload(uint8_t* base, uint32_t ptr) {
+  // The trackers' labels are swapped: g_cur_vs_obj holds the pixel shader.
+  const uint32_t ps_obj = g_cur_vs_obj.load(std::memory_order_relaxed);
+  if (ps_obj < 0x10000 || ptr < 0x10000) return;
+  char path[160] = {};
+  if (!GuestTryCopy(path, base + ps_obj + kScreenFxPsPathOffset, sizeof(path) - 1)) return;
+  if (ClassifyScreenFxPixelShader(path) == ScreenFxVariant::kNone) return;
+  uint32_t probe[12];
+  if (!GuestTryCopy(probe, base + ptr, sizeof(probe))) return;  // readable = mapped
+  const uint32_t zero = 0, one = BSwap32(std::bit_cast<uint32_t>(1.0f));
+  std::memcpy(base + ptr + 16, &zero, 4);  // c1.x
+  std::memcpy(base + ptr + 20, &one, 4);   // c1.y
+  std::memcpy(base + ptr + 36, &zero, 4);  // c2.y
+  static bool s_logged = false;
+  if (!s_logged) {
+    s_logged = true;
+    REXLOG_INFO("native-scene: lens effect off (screen_fx = false): fisheye/vignette "
+                "constants neutralized at upload");
+  }
+}
+}  // namespace
+
 void OnVsConstantUpload(uint8_t* base, uint64_t mask, uint32_t bank, uint32_t ptr,
                         uint32_t device) {
   (void)mask;
+  if (bank == 0x4400 && !REXCVAR_GET(skate3_native_render_scene_screen_fx)) {
+    NeutralizeLensUpload(base, ptr);  // before SceneEnabled: emulated frames too
+  }
   if (device != 0) {
     g_device.store(device, std::memory_order_relaxed);
   }

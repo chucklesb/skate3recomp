@@ -418,9 +418,9 @@ compare with skating live in the same area.
 **Status:** open, to be looked at later · **Severity:** medium (testing and
 repro work relies on reels) · **Found:** 2026-11-12 by the user, Odin 2.
 
-**Related, planned:** a way to turn off the camera lens effect (the fisheye
-and vignette) during reel playback, so reel stills used for testing and
-repros show the plain scene. See the technical details.
+**Related, done:** the harness's `play_reel` hides the camera lens effect
+(the fisheye and vignette) by default, so reel stills used for testing and
+repros show the plain scene; `lens = true` keeps it. See the technical details.
 
 <details>
 <summary>Technical details</summary>
@@ -447,10 +447,10 @@ Not investigated yet. Leads from reading the code:
 - **Lens effect:** the game's own final pass, `postfx_basictex_fisheye`
   (fisheye warp and vignette), drawn natively by the screen-fx path
   (`src/native/screen_fx.h`, `CaptureScreenFxState`, the apply step in
-  `RenderScene`). Nothing turns it off today. Plan: a cvar
-  `skate3_native_render_scene_screen_fx` (default on) that skips the capture
-  (still clearing `g_frame_screen_fx`), and a `play_reel` option
-  `lens = false` that sets it for the reel, like `SuppressUi()` hides the UI.
+  `RenderScene`). The cvar `skate3_native_render_scene_screen_fx` (default
+  on) turns it off by neutralizing the pass's constants before the game
+  uploads them, on both renderers; `play_reel` sets it off for the reel
+  unless `lens = true` (`docs/scenario-harness.md`, "skate.Reel playback").
 
 </details>
 

@@ -170,6 +170,7 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
   s.clip = Integer(t, "clip").value_or(0);
   s.reel = t["reel"].value_or(std::string());
   s.from = t["from"].value_or(std::string("start"));
+  s.lens = t["lens"].value_or(false);
   s.settle_frames = std::max<int64_t>(0, Integer(t, "settle_frames").value_or(20));
   s.speed = Number(t, "speed").value_or(1.0);
   if (!(s.speed > 0.0 && s.speed <= 4.0)) {

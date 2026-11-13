@@ -99,8 +99,14 @@ ReelStatus GetReelStatus();
 void ReleaseReelHold();
 
 // True while the harness wants the game's whole 2D pass (FE movies + HUD)
-// skipped, e.g. during reel playback (FrontEndManager::Render2D hook).
+// skipped: during reel playback, and around it except while the game's
+// loading screen is up (FrontEndManager::Render2D hook).
 bool SuppressUi();
+
+// True while the picture should be black: between the reel's loading screen
+// and its first played frame, and from the exit until the loading screen
+// (drawn by the harness overlay over the guest output; not in screenshots).
+bool ReelCurtain();
 
 // Main-thread game tick hook, after the original: runs the queued request, if any.
 void OnGuestFrame(PPCContext& ctx, uint8_t* base);

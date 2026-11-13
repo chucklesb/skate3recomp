@@ -1,0 +1,43 @@
+# play_reel look check (clip 8, reel 511e079e9279419f): the game's loading
+# screen shows during the load (the "<tag>_load" shots), playback starts on
+# the marker frame, and the camera's fisheye/vignette are off by default on
+# both renderers ("plain"); lens = true keeps them ("lens").
+name = "reel_lens"
+timeout_s = 1500
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+clip = 8
+from = "marker"
+tag = "plain"
+every_frames = 15
+stills = [22.50]
+settle_frames = 30
+stills_renderers = ["native", "emulated"]
+timeout_s = 600
+
+[[step]]
+do = "play_reel"
+clip = 8
+from = "marker"
+tag = "lens"
+lens = true
+stills = [22.50]
+settle_frames = 30
+stills_renderers = ["native", "emulated"]
+timeout_s = 600
