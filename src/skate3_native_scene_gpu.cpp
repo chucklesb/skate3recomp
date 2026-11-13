@@ -159,6 +159,8 @@ REXCVAR_DECLARE(double, skate3_native_render_scene_ssr_thickness);
 REXCVAR_DECLARE(double, skate3_native_render_scene_world_v2_tan_sign);
 REXCVAR_DECLARE(int32_t, native_render_force_resolve_readback_max_length);
 REXCVAR_DECLARE(int32_t, native_render_suppress_mode);
+REXCVAR_DECLARE(int32_t, native_render_suppress_extra_pitch);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_replay_aux_skip);
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_2d_async_px);
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_debug);
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_detail_hold);
@@ -5830,6 +5832,7 @@ enum YieldOverrideOwner : uint32_t {
   kOvrPhotoBurst = 1u << 4,    // UpdatePhotoGrabWindow: shutter burst
   kOvrPhotoDisplay = 1u << 5,  // YieldForPhotoDisplay: pre-roll + yield
   kOvrSkaterPhoto = 1u << 6,   // UpdateSkaterPhotoWindow: portrait render
+  kOvrReplayAux = 1u << 7,     // UpdateReplayAuxSkip: replay aux skater passes
 };
 
 template <typename T>
@@ -5945,6 +5948,12 @@ SdkCvarOverride<int32_t> g_ovr_readback_len(
 SdkCvarOverride<bool> g_ovr_readback_halfpx(
     "readback_resolve_half_pixel_offset",
     []() -> bool& { return REXCVAR_GET(readback_resolve_half_pixel_offset); }, true);
+// The replay's per-frame aux skater passes (KI-123): surface pitch 160.
+constexpr int32_t kReplayAuxPitch = 160;
+SdkCvarOverride<int32_t> g_ovr_suppress_extra_pitch(
+    "native_render_suppress_extra_pitch",
+    []() -> int32_t& { return REXCVAR_GET(native_render_suppress_extra_pitch); },
+    kReplayAuxPitch);
 
 // RenderScene's early-out (native scene off / unsupported backend): the gates
 // that own these overrides stop running, so hand every cvar back to the
@@ -5955,6 +5964,7 @@ void RestoreAllYieldOverrides() {
   any |= g_ovr_async_shaders.ReleaseAll();
   any |= g_ovr_readback_len.ReleaseAll();
   any |= g_ovr_readback_halfpx.ReleaseAll();
+  any |= g_ovr_suppress_extra_pitch.ReleaseAll();
   g_skater_photo_window_armed.store(false, std::memory_order_relaxed);
   if (any) {
     REXLOG_INFO(
@@ -6696,6 +6706,28 @@ void UpdatePhotoGrabWindow(uint8_t* base) {
   // Level-triggered re-sync: re-acquires whatever RestoreAllYieldOverrides
   // dropped while the native scene was off.
   sync_overrides();
+}
+
+// Replay aux skater passes (KI-123, skate3_native_render_scene_replay_aux_skip):
+// while a replay plays, the game renders each skater mesh alone into a
+// 128x128 target (surface pitch 160) and runs a quad pass over it, six meshes
+// a frame, resolving each (RenderDoc, Windows Vulkan: a held replay frame).
+// Nothing displayed samples the result, and under the native renderer the
+// resolves never reach CPU memory, so any CPU reader already gets nothing; it
+// cost about 1 ms of emulated GPU time and a second submission per replay
+// frame on the Odin 2. While the replay editor (FE 12) is open, pitch 160 is
+// added to the suppression filter (draws and resolves): no other pass uses it
+// there (it never appears in the gameplay census).
+void UpdateReplayAuxSkip(uint8_t* base) {
+  const bool want =
+      REXCVAR_GET(skate3_native_render_scene_replay_aux_skip) && ReplayEditorOpen(base);
+  static bool s_on = false;
+  g_ovr_suppress_extra_pitch.Hold(kOvrReplayAux, want);
+  if (want != s_on) {
+    s_on = want;
+    REXLOG_INFO("native-scene: replay aux skater passes (pitch {}) {}", kReplayAuxPitch,
+                want ? "suppressed" : "restored");
+  }
 }
 
 // Skater-photo window (KI-35, team-member portraits saved as old event
@@ -8859,6 +8891,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
     // read-fault recovery (POSIX; no-op on Windows).
     ArmGuestReadRecoveryForThread(base);
     UpdatePhotoGrabWindow(base);
+    UpdateReplayAuxSkip(base);
   }
   UpdateSkaterPhotoWindow();
   if (YieldForMenus(context)) {

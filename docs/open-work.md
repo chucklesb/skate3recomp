@@ -70,6 +70,14 @@ what was done).
 
 ## Investigations
 
+- **Where else the game's own (emulated) renderer still runs** under the
+  native renderer, e.g. photo and video challenges, the photo editor, the
+  replay editor's one-shots, menus. KI-123 found two such cases in replays:
+  the portrait window (fixed) and per-frame aux skater passes (128x128,
+  six meshes a frame). Method: the suppression census and `Main` GPU bucket
+  per context, RenderDoc frames (`play_reel stills_capture`, `capture`), and
+  for each pass, whether anything visible or the game's CPU reads its result.
+
 - **What in the game is tied to frame rate:** physics, animation,
   pedestrians, camera, input polling, timers. It affects how repeatable
   repros are and how 30 fps play feels.
