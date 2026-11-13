@@ -49,6 +49,27 @@ what was done).
 - **The skater customization screen has many renderer bugs** (check
   upstream's KNOWN_ISSUES.md first).
 
+## UI and overlays
+
+Plan these together, and with the in-game debug menu below in mind (where
+fly mode, recorders and toggles will live), so the overlays share one layout.
+
+- **Renderer indicator inside the performance HUD.** Today the
+  NATIVE/EMULATED badge overlaps and hides the performance HUD. Make it the
+  HUD's top row: still boxed, its bottom border shared with the HUD's top
+  border (the HUD moves down to fit it). Make the HUD fixed-width so it stops
+  resizing. The indicator always shows with the HUD, so remove its in-game
+  menu setting, recomp menu setting and cvar.
+- **Recorder indicators attach to the HUD.** The input record/playback
+  indicator (top-left today) attaches below the performance HUD when the HUD
+  is on, sharing the HUD's bottom border. With the HUD off it stays a
+  standalone badge as today, moved to the top-right.
+- **MangoHud support** alongside our performance HUD (feasibility first).
+  MangoHud sits top-left, clear of our HUD and indicators.
+- **Remove the recomp settings menu** if the in-game settings menu covers
+  every option it offers. Check parity first; remove it only if nothing is
+  lost and there are no major drawbacks.
+
 ## Scenario harness and tooling
 
 - **In-game debug menu** (its own feature branch). A menu in the game's UI
