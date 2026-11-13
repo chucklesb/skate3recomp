@@ -489,12 +489,18 @@ immediate/mailbox present modes allowed).
   13-16 ms live vs 18-20 ms in reels:
   - the emulated `Main` bucket 0.4 → 1.3-1.6 ms and **two submissions per
     frame instead of one** (ResolveGap 0.2-0.7 ms; copies, uploads and
-    queries double): an aux perspective pass draws the skater at pitch 160
-    every replay frame (`skinned capture refused - aux perspective pass`,
-    about 77 per second), resolved mid-frame. Probably the editor's preview;
-    with the UI hidden it is never seen. **Next:** a RenderDoc capture of a
-    reel frame to identify it, then skip it under `SuppressUi()` or render it
-    natively;
+    queries double): **aux skater passes.** A RenderDoc capture of a held
+    replay frame (`scenarios/reel_capture.toml`, Windows Vulkan) shows the
+    game drawing each skater mesh alone (six a frame: 9222/7440/810/9024/
+    1188/16482 indices) into a 128x128 target (surface pitch 160), resolving
+    it to one 128x128 texture, then a quad pass over it, resolved again.
+    Nothing displayed samples it, and under the native renderer its
+    resolves never reach CPU memory. Likely a skater-visibility measure for
+    the replay/photo controller (unconfirmed). **Fix:**
+    `skate3_native_render_scene_replay_aux_skip` (default on) suppresses
+    pitch 160 while the replay editor is open (SDK
+    `native_render_suppress_extra_pitch`); a second capture shows none of
+    those passes and the same frame;
   - NatShadow +0.3-0.7 ms and NatSun +0.1 ms: replay cameras show more
     world and sun;
   - CPU render about doubles (1-3 ms; build, items, pre, shadow), below the

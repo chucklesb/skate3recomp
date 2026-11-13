@@ -812,7 +812,14 @@ void ReelTick(PPCContext& ctx, uint8_t* base) {
         g_reel_seen_loading |= on_loading_screen;
         g_reel_curtain.store(!g_reel_seen_loading);
       }
-      if (g_reel_exit_posted && ModeState(base) == kModeStateFreeSkate) {
+      // Done only once the free-skate restream's loading screen has closed
+      // too: the mode state flips to free skate while FE 52 is still up, and
+      // a next play_reel issued then (9 ms later, back-to-back reels in
+      // perf_ki123) loaded a replay into a half-loaded world and crashed in
+      // the game's AddRenderInstance (Odin 2, 2026-11-13).
+      // (No loading screen seen 3 s after the exit: accept free skate.)
+      if (g_reel_exit_posted && ModeState(base) == kModeStateFreeSkate && !on_loading_screen &&
+          (g_reel_seen_loading || g_reel_wait > 15 + 90)) {
         g_reel_curtain.store(false);
         PostSimMessage(ctx, base, 0xDDC8C41A, {0u, 11u});  // cMsgPauseSim(0)
         REXLOG_INFO("harness: reel {}: back in free skate", g_reel_slot);
