@@ -1209,6 +1209,7 @@ Outcome Execute(Run& r, const Step& st) {
       }
       game::ReelOptions opts;
       opts.from_marker = st.from == "marker";
+      opts.speed = static_cast<float>(st.speed);
       for (double v : st.stills) {
         opts.stills_s.push_back(static_cast<float>(v));
       }
@@ -1233,8 +1234,9 @@ Outcome Execute(Run& r, const Step& st) {
       }
       char buf[200];
       std::snprintf(buf, sizeof(buf),
-                    ",\"duration_s\":%.3f,\"from\":\"%s\",\"start_s\":%.3f,\"marker_s\":%.3f",
-                    s.duration_s, st.from.c_str(), s.start_s, s.marker_s);
+                    ",\"duration_s\":%.3f,\"from\":\"%s\",\"start_s\":%.3f,\"marker_s\":%.3f,"
+                    "\"speed\":%.3f",
+                    s.duration_s, st.from.c_str(), s.start_s, s.marker_s, st.speed);
       Event(r, "reel_start", clip + buf);
       const uint64_t start_frame = r.state.frame;
       const auto start_time = Clock::now();

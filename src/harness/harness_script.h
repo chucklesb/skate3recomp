@@ -128,6 +128,7 @@ struct Step {
   std::string from = "start";  // "start" | "marker"
   std::vector<double> stills;  // reel times (s) to hold at for screenshots
   int64_t settle_frames = 20;  // frames to wait at a still before its screenshot
+  double speed = 1.0;          // replay clock rate (0 < speed <= 4; 0.25 = quarter)
   std::vector<std::string> stills_renderers;  // shoot each still on these renderers
   // Shoot each still once per variant: set its cvars, settle, screenshot
   // tagged _<tag>. Values persist (a last variant can reset them).

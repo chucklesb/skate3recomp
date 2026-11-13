@@ -581,6 +581,7 @@ std::atomic<int> g_reel_request{0};
 std::atomic<uint32_t> g_reel_e{0};
 std::atomic<float> g_reel_t{0.0f};
 std::atomic<float> g_reel_duration{0.0f};
+std::atomic<float> g_reel_speed{1.0f};  // replay clock rate (play_reel speed)
 std::atomic<uint64_t> g_reel_frames{0};
 // Options for the current reel (set by StartReel before the request).
 bool g_reel_from_marker = false;
@@ -797,6 +798,7 @@ bool StartReel(int slot, const ReelOptions& options, std::string* error) {
     return false;
   }
   g_reel_from_marker = options.from_marker;
+  g_reel_speed.store(options.speed > 0.0f ? options.speed : 1.0f);
   std::vector<float> stills = options.stills_s;
   std::sort(stills.begin(), stills.end());
   for (size_t i = 0; i < stills.size(); ++i) {
@@ -958,7 +960,7 @@ extern "C" REX_FUNC(sub_82C7EA50) {
       std::memcpy(&bits, &pos, 4);
       Write32(base, e + 4, bits);
       if (!g_reel_hold.load()) {
-        float nt = t + static_cast<float>(ctx.f1.f64);
+        float nt = t + static_cast<float>(ctx.f1.f64) * g_reel_speed.load();
         const int next = g_still_next.load();
         if (next < g_still_count.load() && nt >= g_still_t[next]) {
           nt = g_still_t[next];  // stop exactly at the still and hold there

@@ -1,0 +1,32 @@
+# KI-124: the user's second Odin 2 reel (id 411a7b5e..., clip 7 of the
+# test saves) played from its marker at quarter speed, for a screen
+# recording (scrcpy --record on the Odin 2) to step through frame by frame.
+# No screenshots: they would stall frames in the recording.
+name = "ki124_slowmo"
+timeout_s = 1200
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "mark"
+text = "ki124_slowmo: reel starts (quarter speed)"
+
+[[step]]
+do = "play_reel"
+reel = "411a7b5e827d3d5f"
+from = "marker"
+speed = 0.25
+timeout_s = 900

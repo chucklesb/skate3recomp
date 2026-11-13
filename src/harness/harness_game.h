@@ -79,6 +79,7 @@ enum class ReelPhase { kIdle, kLoading, kPlaying, kExiting, kDone, kFailed };
 struct ReelOptions {
   bool from_marker = false;     // start at the reel's marker (the start if none)
   std::vector<float> stills_s;  // hold at these reel times (s) for screenshots
+  float speed = 1.0f;           // replay clock rate (0.25 = quarter speed)
 };
 struct ReelStatus {
   ReelPhase phase = ReelPhase::kIdle;

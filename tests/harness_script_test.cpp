@@ -1,6 +1,6 @@
 // Unit test for src/harness/harness_script.cpp: the teleport step's forms
 // (locator, coordinates, both) and their validation, through the live-command
-// parser (scenario steps use the same per-step parser).
+// parser (scenario steps use the same per-step parser), and play_reel speed.
 
 #include "harness/harness_script.h"
 
@@ -54,6 +54,16 @@ yaw = -35.5)",
   CHECK(!ParseCommand("do = \"teleport\"\nlocation = \"Z_UN_ClockTower\"\nyaw = 10", "test",
                       &error)
              .has_value());
+
+  // play_reel speed: default 1, quarter speed, out of range rejected.
+  s = ParseCommand("do = \"play_reel\"\nclip = 2", "test", &error);
+  CHECK(s && s->verb == Verb::kPlayReel && s->speed == 1.0);
+  s = ParseCommand("do = \"play_reel\"\nclip = 2\nspeed = 0.25", "test", &error);
+  CHECK(s && s->speed == 0.25);
+  s = ParseCommand("do = \"play_reel\"\nclip = 2\nspeed = 2", "test", &error);
+  CHECK(s && s->speed == 2.0);
+  CHECK(!ParseCommand("do = \"play_reel\"\nclip = 2\nspeed = 0", "test", &error).has_value());
+  CHECK(!ParseCommand("do = \"play_reel\"\nclip = 2\nspeed = 5", "test", &error).has_value());
 
   return skate3_test::TestExit("PASS: harness_script_test");
 }
