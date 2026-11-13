@@ -1,0 +1,50 @@
+# Emulated pass census across a few contexts: free skate, the pause menu,
+# a reel (clip 8) and back. Summarise with
+#   tools/harness/census_report.py out/harness-runs/<run>
+name = "census_smoke"
+timeout_s = 900
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+native_render_pass_census = true
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 180
+
+# Pause menu, then back to free skate.
+[[step]]
+do = "input"
+buttons = "start"
+frames = 6
+
+[[step]]
+do = "wait"
+frames = 150
+
+[[step]]
+do = "input"
+buttons = "b"
+frames = 6
+
+[[step]]
+do = "wait"
+frames = 150
+
+[[step]]
+do = "play_reel"
+clip = 8
+from = "marker"
+timeout_s = 600
+
+[[step]]
+do = "wait"
+frames = 120
