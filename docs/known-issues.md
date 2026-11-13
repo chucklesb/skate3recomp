@@ -17,8 +17,9 @@ happen. The technical details follow for whoever works on it.
 | [KI-121](#ki-121-on-d3d12-the-scene-is-sometimes-drawn-in-shade) | On D3D12, a sunny scene is sometimes drawn almost all in shade, with no skater shadow | Open |
 | [KI-122](#ki-122-canal-water-reflects-orange-brown-instead-of-blue-sky) | Canal water reflects orange-brown instead of blue sky, depending on the view angle; no shadows on the canals | Fixed |
 | [KI-123](#ki-123-skatereel-playback-is-slow-and-uneven) | Reel playback runs in the teens with uneven pacing, where gameplay holds near 60 | Open |
-| [KI-124](#ki-124-shadows-on-the-sun-facing-side-of-the-skaters-sleeves) | Shadow patches on the side of the skater's sleeves that faces the sun | Investigating (matches the game on Windows) |
+| [KI-124](#ki-124-shadows-on-the-sun-facing-side-of-the-skaters-sleeves) | A shadow flashes across the skater's shirt for one frame (Odin 2, 1x reel playback) | Fixed (Odin 2) |
 | [KI-125](#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps) | For a frame or two after a replay jumps to a new time, the skater's arms or legs are drawn detached | Open |
+| [KI-126](#ki-126-the-skaters-hair-looks-transparent) | The skater's hair looks see-through: a blue veil with the trees behind showing through | Fixed (Odin 2) |
 
 ---
 
@@ -647,6 +648,16 @@ transparency; see the KI-124 note on harsh character shading.
 - The depth pass is `ps_hair_depth` (`scene.hlsl`) through `pso_hair_depth`
   (the fade-depth state: no color writes, z-write, LESS_EQUAL), drawn right
   after `pso_hair_b` for each hair item in the back-to-front blended loop.
+- **The same class may hit other blended surfaces (to audit):** anything in
+  the blended sub-pass (z-write off) is invisible to the passes that read
+  scene depth afterwards: haze, the shaft upsample, SSAO (the AO of what is
+  behind multiplies the surface), SSR and the occlusion grid. Candidates:
+  glass canopies and shop windows (env fam 13), vehicle glass (char fam 7),
+  the sunglasses lens, environment.transparent mist sheets, and the canal
+  water over its black void (possibly why KI-122's port reads slightly
+  brighter than emulated). Check native vs emulated with haze/SSAO/SSR
+  toggled; the fix is the same depth-only pass, or a coverage mask (stencil)
+  the post passes skip.
 - Runs: `20261112-213557_ki126_hair_stills`, `..213848_ki126_hair_debug`,
   `..214117_ki126_hair_post`, `..214515_ki126_hair_fix` (Windows Vulkan, at
   the Odin 2's settings).
