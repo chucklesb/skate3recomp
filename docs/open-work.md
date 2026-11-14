@@ -42,6 +42,21 @@ what was done).
 - **Character shading is harsher than the game's.** Shirt folds, hair
   shadows and muscle definition are sharper and more contrasty; the hair is
   lighter than the game's in shade (KI-124 and KI-126 notes).
+- **A multiple-exposure challenge photo had one skater without an upper
+  body** (Odin 2, 2026-11-13; the Private Parking rail sign photo
+  challenge, skater facing away from the camera): the seventh of eight
+  exposures showed only legs, board and an arm. The exposures are captured
+  during the showcase animation, not while skating. Seen once; two more
+  attempts (one facing the camera, one recorded with scrcpy) were clean.
+  Intermittent: if it comes back, record the showcase
+  (`tools/harness/odin2_record.ps1`) and check whether that exposure's
+  frame is drawn natively or by the emulated display-card path.
+- **Hair loses its colour in shadow** (Odin 2, 2026-11-13): dyed hair
+  (pink) looks mostly desaturated when the skater is in shade, in normal
+  play. Seen first in a multiple-exposure challenge photo, where the
+  exposures in shade had dark hair and the sunlit ones pink. Possibly
+  related to the KI-126 hair notes (hair lighter than the game's in shade).
+  Needs its own repro: the same spot in sun and shade, native vs emulated.
 - **The skater's body may poke through the shirt** in small spots (seen once
   on Windows, reel `88a86b704bcf2d71`).
 - **Distant textures glitch or pop in** on the Odin 2 (no details yet; needs
