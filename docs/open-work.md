@@ -80,7 +80,10 @@ what was done).
   - **Can't compare against the fully emulated renderer:** with
     `skate3_native_render_scene=false` the saved photos come out blank (no
     readback window arms).
-  - Odin 2 (Vulkan) not checked: the check writes the device's save.
+  - **The Odin 2 has it too** (2026-11-13, `gen_cas_portrait.py --watch`):
+    there not even the first edit shows; the box stays on the boot photo
+    for 10 s after each exit. The saved photos themselves are right (next
+    boot).
   - Related: photos made on D3D12 come out lighter than photos made on
     Vulkan.
 - **Create-a-Park is jittery and slow** on the Odin 2 even though the HUD

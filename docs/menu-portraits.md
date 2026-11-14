@@ -126,8 +126,9 @@ would need the photo's own camera and skater, not the screen's.
   editor; it never saves): **55 -> 85 fps** (old behaviour:
   `--skate3_native_render_scene_cas_scene_photo_hold=true
   --skate3_native_render_scene_replay_aux_skip=false`). The saved photo
-  was checked on Windows only; checking it on the device writes the
-  device's save.
+  is right on the device too (2026-11-13, `gen_cas_portrait.py --only
+  on|off` across restarts: the next boot's box showed the helmet, then no
+  hat).
 
 So a native skater photo (old step 2) is no longer needed for
 performance: the one-shot emulated photo render costs ~1.6 s of mode 4
