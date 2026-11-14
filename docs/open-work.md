@@ -57,6 +57,19 @@ what was done).
   exposures in shade had dark hair and the sunlit ones pink. Possibly
   related to the KI-126 hair notes (hair lighter than the game's in shade).
   Needs its own repro: the same spot in sun and shade, native vs emulated.
+  **Measured 2026-11-13** (`scenarios/hair_shade_stills.toml`, device reel
+  b363c5f2700483f3, Tresoutta Plaza arch; hair patch lightness /
+  saturation): shade native 0.08 / 0.14, emulated 0.06 / 0.12 (match); sun
+  native 0.24 / 0.35, emulated 0.11 / 0.32. So the dark hair in shade is
+  the game's own shading (cac_hair gets only a flat `key * c14.w * 0.25`
+  ambient; the body gets SH sky light, so the shirt keeps its colour). The
+  difference is in sun: native hair is ~2x brighter than emulated, the same
+  "native hair lighter" difference seen with brown hair, which then makes
+  the drop into shade look extreme. Which sun brightness is right is open:
+  native is closer to the Create-a-Skater swatch, and the console should
+  decide. Suspects for the native brightness: the strand highlight's
+  screen-space tangent (the skinned layout has no vertex tangent), the
+  wrapped key ramp, or the static-sun stand-in for shadowWorld.
 - **The skater's body may poke through the shirt** in small spots (seen once
   on Windows, reel `88a86b704bcf2d71`).
 - **Distant textures glitch or pop in** on the Odin 2 (no details yet; needs
@@ -111,6 +124,11 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
   indicator (top-left today) attaches below the performance HUD when the HUD
   is on, sharing the HUD's bottom border. With the HUD off it stays a
   standalone badge as today, moved to the top-right.
+- **Capture indicators:** show on screen when the harness is taking
+  screenshots, a RenderDoc capture or a screen recording (and when a
+  scenario or live session is driving the game), in the same indicator
+  stack as the recorder badges. The indicator must stay out of the captured
+  images themselves (drawn after the grab, or skipped on capture frames).
 - **MangoHud support** alongside our performance HUD (feasibility first).
   MangoHud sits top-left, clear of our HUD and indicators.
 - **Remove the recomp settings menu** if the in-game settings menu covers
@@ -128,6 +146,12 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
   - free camera, fly mode and noclip (see below);
   - harness and cvar toggles (renderer switches, debug views, the fix
     toggles used for A/B checks).
+- **The real Xbox 360 as reference** (the user's modded console, once it's
+  set up): learn to drive it (screenshots, saves, maybe input) so the
+  original look can settle native-vs-emulated questions; the emulated
+  renderer has its own errors (e.g. whether brown hair should be as dark as
+  emulated or as light as native, which is closer to the Create-a-Skater
+  swatch).
 - **A realtime control API** next to the scenarios, for interactive
   driving (input, screenshots, state, cvars). Live mode is a first version:
   `send <verb>` drops a command file in the game's inbox and waits for the

@@ -1,0 +1,30 @@
+# Hair colour in sun vs shade (2026-11-13): the user's pink-haired skater
+# rides from direct sun into shade (device reel b363c5f2700483f3, marker a
+# couple of seconds before the shade). Pass 1 (this file): screenshots every
+# 15 frames from the marker, to find the sun and shade moments. The stills
+# pass (both renderers) is hair_shade_stills.toml.
+name = "hair_shade"
+timeout_s = 900
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+reel = "b363c5f2700483f3"
+from = "marker"
+tag = "pass"
+every_frames = 15
+timeout_s = 600
