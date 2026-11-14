@@ -340,6 +340,13 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_replay_aux_skip, true, "Skate 3",
                     "frame). They still run inside the skater-photo window. Off = "
                     "they run as before.")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_photo_atlas, true, "Skate 3",
+                    "Skater-photo window: let the game rebuild the team photo atlas "
+                    "(1536x512 at surface pitch 1600, which the team screen's skater "
+                    "boxes are composed from). Without it the atlas resolve is dropped "
+                    "on Vulkan and after an edit the box keeps the previous photo until "
+                    "a restart.")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_cas_scene_photo_hold, false, "Skate 3",
                     "Create-a-Skater: keep the game's own main scene (surface pitch "
                     "1200) running emulated for the editor's whole stay (suppress "

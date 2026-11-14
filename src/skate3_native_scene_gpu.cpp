@@ -164,6 +164,8 @@ REXCVAR_DECLARE(int32_t, native_render_suppress_mode);
 REXCVAR_DECLARE(int32_t, native_render_suppress_extra_pitch);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_replay_aux_skip);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_cas_scene_photo_hold);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_photo_atlas);
+REXCVAR_DECLARE(int32_t, native_render_suppress_exempt_pitch);
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_2d_async_px);
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_debug);
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_detail_hold);
@@ -6009,6 +6011,18 @@ SdkCvarOverride<int32_t> g_ovr_suppress_extra_pitch(
     "native_render_suppress_extra_pitch",
     []() -> int32_t& { return REXCVAR_GET(native_render_suppress_extra_pitch); },
     kReplayAuxPitch);
+// The team photo atlas (Vulkan in-session portrait refresh): when a skater
+// photo is (re)generated the game rebuilds a 1536x512 atlas of the team's
+// photos (pitch 1600), resolved to 0x03555000 / 0x03955000, which the
+// team-screen card compose samples. Pitch 1600 is also the shadow-cascade
+// band (suppressed in every mode), so the atlas resolve was dropped on
+// Vulkan and the card kept the boot photos until a restart. The skater-photo
+// window lets pitch 1600 execute (its depth-only shadow draws stay dropped).
+constexpr int32_t kPhotoAtlasPitch = 1600;
+SdkCvarOverride<int32_t> g_ovr_suppress_exempt_pitch(
+    "native_render_suppress_exempt_pitch",
+    []() -> int32_t& { return REXCVAR_GET(native_render_suppress_exempt_pitch); },
+    kPhotoAtlasPitch);
 
 // RenderScene's early-out (native scene off / unsupported backend): the gates
 // that own these overrides stop running, so hand every cvar back to the
@@ -6017,6 +6031,7 @@ void RestoreAllYieldOverrides() {
   bool any = g_ovr_suppress_draws.ReleaseAll();
   any |= g_ovr_suppress_mode.ReleaseAll();
   any |= g_ovr_async_shaders.ReleaseAll();
+  any |= g_ovr_suppress_exempt_pitch.ReleaseAll();
   any |= g_ovr_readback_len.ReleaseAll();
   any |= g_ovr_readback_halfpx.ReleaseAll();
   any |= g_ovr_suppress_extra_pitch.ReleaseAll();
@@ -6863,6 +6878,8 @@ void UpdateSkaterPhotoWindow() {
   g_ovr_suppress_mode.Hold(kOvrSkaterPhoto, want);
   g_ovr_async_shaders.Hold(kOvrSkaterPhoto, want);
   g_ovr_readback_len.Hold(kOvrSkaterPhoto, want);
+  g_ovr_suppress_exempt_pitch.Hold(kOvrSkaterPhoto,
+                                   want && REXCVAR_GET(skate3_native_render_scene_photo_atlas));
   g_skater_photo_window_armed.store(want, std::memory_order_relaxed);
   if (want != s_armed) {
     s_armed = want;
