@@ -1,0 +1,82 @@
+# Create-a-Skater frame rate, uncapped: Pause > Edit Skaters > Edit Skater,
+# then 10 s idle in the editor with the pass census on. Never saves: the
+# scenario ends (and the game exits) inside the editor, so it is safe on
+# the device's profile.
+# Old behaviour (the editor's scene also rendered emulated):
+#   ... -- --skate3_native_render_scene_cas_scene_photo_hold=true --skate3_native_render_scene_replay_aux_skip=false
+# Uncapped on the Odin 2 also needs
+#   -- --vulkan_allow_present_mode_immediate=true --vulkan_allow_present_mode_mailbox=true
+# fps: state.jsonl per fe stack ([0,56,63,15] = the editor); census_report.py <run>.
+name = "cas_perf"
+timeout_s = 400
+boot = "demo"
+state_every_frames = 10
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 0.0
+skate3_guest_fps_cap_auto = false
+native_render_pass_census = true
+skate3_native_render_scene_perf_log = true
+skate3_native_render_scene_perf_interval = 60
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 300
+
+[[step]]
+do = "wait"
+frames = 150
+
+[[step]]
+do = "input"
+buttons = "start"
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "input"
+ly = -1.0
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 15
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 180
+
+[[step]]
+do = "screenshot"
+tag = "cas"
+
+[[step]]
+do = "mark"
+text = "perf cas"
+
+[[step]]
+do = "wait"
+ms = 10000
+
+[[step]]
+do = "mark"
+text = "perf end"

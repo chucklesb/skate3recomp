@@ -85,9 +85,11 @@ what was done).
   captures) so the emulated renderer can stay off in menus too.
   **Researched 2026-11-13** ([menu-portraits.md](menu-portraits.md)): the
   team screen draws no 3D skater (its boxes are saved photos); the real
-  remaining cost is Create-a-Skater, which renders its whole scene
-  emulated every frame only so the photo saved on exit comes out right.
-  Next: a native skater photo, then drop that.
+  remaining cost was Create-a-Skater, which rendered its whole scene
+  emulated every frame. **Fixed 2026-11-13** (46d93c9): Odin 2,
+  Create-a-Skater uncapped 55 -> 85 fps (`scenarios/cas_perf.toml`).
+  Left: the team-screen card compose (small), and the photo itself
+  (a one-shot emulated render per accepted edit).
 
 ## UI and overlays
 

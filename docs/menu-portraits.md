@@ -100,25 +100,48 @@ would need the photo's own camera and skater, not the screen's.
   stand in for any menu quad that samples `0x03855000` / `0x03C55000`,
   with no CPU readback.
 
-## Proposed order
+## Done (2026-11-13, commit 46d93c9)
 
-1. **The pitch-160 pass in Create-a-Skater.** Find its consumer (RenderDoc,
-   or suppress it and compare the screen). If nothing uses it, add FE 15
-   to the pitch-160 filter. Small and safe.
-2. **A native skater photo.** On the photo request, render the photo
-   natively (the game's photo camera and lighting, the skater only) and
-   write it into `0x04911000` before `GeneratePhoto` reads it. Then
-   Create-a-Skater no longer needs mode 4, and finding 2 goes away. To
-   verify:
-   - `scenarios/cas_portrait.toml`: the team box changes with the helmet,
-     on Windows and the Odin 2;
-   - `--only on|off`: the saved photo survives a restart;
-   - the census: pitch 1200 executes 0 draws in Create-a-Skater.
-3. **The card compose natively** (team screen, Import Skater card). These
+**Create-a-Skater's hidden emulated copy is gone.**
+- **The pitch-1200 scene:** the editor-wide mode-4 hold was not needed.
+  The stale team box that motivated it is the box not refreshing within a
+  session (see open-work). Across restarts (`gen_cas_portrait.py --only
+  on|off`, four runs), the photo saved with mode 4 held only inside the
+  skater-photo window is pixel-identical to the one saved with the hold.
+  The hold is now off by default
+  (`skate3_native_render_scene_cas_scene_photo_hold`).
+- **The pitch-160 aux skater pass** is now skipped in Create-a-Skater too.
+  With it suppressed, the editor and team-screen shots are unchanged:
+  the team box is identical, and the only differences elsewhere are
+  sub-pixel shifts of a sliding panel's edge. It still runs inside the
+  photo window.
+- **Census in Create-a-Skater (Windows Vulkan), indices a frame:**
+
+  | Pitch | Before | After |
+  |---|---|---|
+  | 1200 | 68,889 | 951 (the photo windows only) |
+  | 160 | 26,177 | 244 |
+
+- **Odin 2, uncapped** (`scenarios/cas_perf.toml`, 10 s idle in the
+  editor; it never saves): **55 -> 85 fps** (old behaviour:
+  `--skate3_native_render_scene_cas_scene_photo_hold=true
+  --skate3_native_render_scene_replay_aux_skip=false`). The saved photo
+  was checked on Windows only; checking it on the device writes the
+  device's save.
+
+So a native skater photo (old step 2) is no longer needed for
+performance: the one-shot emulated photo render costs ~1.6 s of mode 4
+once per accepted edit.
+
+## Remaining options
+
+1. **The card compose natively** (team screen, Import Skater card). These
    are 2D quads the native 2D pass drops today as "offscreen 2D compose
    draws". Composing them into a native card texture and substituting it
    by address (finding 5) would let the portrait window close for good.
    Low priority: the measured cost is small.
+2. **A native skater photo:** only for independence from the emulated
+   renderer, not speed.
 
 ## Still open
 
