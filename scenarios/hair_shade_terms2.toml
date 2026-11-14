@@ -1,7 +1,8 @@
 # Round 2 of the hair A/B (after the raw-N.L + normal-map fix): what's left
 # of the sunlit gap to emulated (lightness 0.169 vs 0.111)? Same frames as
-# hair_shade_terms.toml. 1 = no strand highlight, 8 = view-fresnel
-# highlight (the older stand-in), 2 = plain N.L key.
+# hair_shade_terms.toml. 1 = no strand highlight, 128 = the screen-space
+# strand tangent instead of the mesh's own (skinned usage-6, packed by
+# DecodeMesh since 2026-11-13).
 name = "hair_shade_terms2"
 timeout_s = 1200
 boot = "demo"
@@ -28,10 +29,11 @@ stills = [22.80]
 settle_frames = 30
 stills_variants = [
   { tag = "fixed", set = { skate3_native_render_scene_hair_debug = 0 } },
+  { tag = "screentan", set = { skate3_native_render_scene_hair_debug = 128 } },
   { tag = "nohl", set = { skate3_native_render_scene_hair_debug = 1 } },
-  { tag = "fresnel", set = { skate3_native_render_scene_hair_debug = 8 } },
-  { tag = "nowrap", set = { skate3_native_render_scene_hair_debug = 2 } },
-  { tag = "vaxis", set = { skate3_native_render_scene_hair_debug = 64 } },
+  { tag = "binormal", set = { skate3_native_render_scene_hair_debug = 512 } },
+  { tag = "hlview", set = { skate3_native_render_scene_hair_debug = 256 } },
+  { tag = "hlview_binormal", set = { skate3_native_render_scene_hair_debug = 768 } },
   { tag = "emulated", set = { skate3_native_render_scene_hair_debug = 0, skate3_native_render_scene = false } },
   { tag = "end", set = { skate3_native_render_scene = true } },
 ]

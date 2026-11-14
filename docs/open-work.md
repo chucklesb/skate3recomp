@@ -82,6 +82,19 @@ what was done).
   Proper fix: carry the hair's tangent through skinning. A/B knobs:
   `skate3_native_render_scene_hair_debug` (bits documented in the cvar),
   scenarios `hair_shade_terms.toml` / `hair_shade_terms2.toml`.
+  **Done 2026-11-13:** skinned hair now carries its usage-6 tangent (packed
+  into the unused decal-UV slot, skinned in vs_main, `tanb` w = 1) and the
+  highlight runs along it. Hair constants on this skater: power c11.w = 5,
+  highlight c17 = (0.32, 0.09, 0.13), c16 = (0.24, 0, 0.15) = the pink dye
+  (the hair texture is grey). **The 22.80 s frame was a bad reference:** it
+  sits on the arch's shadow edge, where the game's coarse shadowWorld and
+  our static sun map disagree. In open sun (`scenarios/hair_open_sun.toml`,
+  t = 20 s) native is 0.561 lightness vs emulated 0.479, both with a strand
+  highlight (green, which only the highlight gives, 101 vs 87): native is
+  ~15% brighter, not 2x. Also seen: at 10-15 s under the arch the emulated
+  skater stays sunlit while standing in the floor shadow; native shades
+  him (the game's coarse shadow misses him; ours is the better result).
+  Left for the console: whether the remaining ~15% is real.
 - **The skater's body may poke through the shirt** in small spots (seen once
   on Windows, reel `88a86b704bcf2d71`).
 - **Distant textures glitch or pop in** on the Odin 2 (no details yet; needs

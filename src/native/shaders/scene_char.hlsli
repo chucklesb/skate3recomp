@@ -122,9 +122,14 @@ float4 ShadeCharacter(VSOut i, float4 albedo) {
       // sign is irrelevant to sin). A view fresnel stood in for it before,
       // which vanishes on camera-facing hair: the whole sheen was missing
       // and the CAS hair read far darker than the emulated reference.
-      // Bit 64: the frame's V axis instead (which texture axis the strands
-      // run along decides where the Kajiya-Kay band sits).
-      float th = dot(normalize(vd + ch_light.xyz), (hdbg & 64) != 0 ? hbb : htt);
+      // The mesh's own skinned usage-6 tangent when DecodeMesh packed it
+      // (i.tanb.w = 1), as the game does; else the screen frame's U axis
+      // (bit 64: its V axis; bit 128: force the screen frame).
+      float3 strand_t = (hdbg & 64) != 0 ? hbb : htt;
+      if (i.tanb.w > 0.5 && (hdbg & 128) == 0 && dot(i.tanb.xyz, i.tanb.xyz) > 1e-8) {
+        strand_t = normalize(i.tanb.xyz);
+      }
+      float th = dot(normalize(vd + ch_light.xyz), strand_t);
       hs = pow(max(sqrt(saturate(1.0 - th * th)), 1e-6), max(ch_light.w, 1.0));
     } else {
       if (fam < 4.5) {
@@ -141,6 +146,12 @@ float4 ShadeCharacter(VSOut i, float4 albedo) {
     const float hkey = (hdbg & 2) != 0 ? saturate(hndl) : saturate(hndl * 0.75 + 0.25);
     float3 hl = ch_key.rgb * (hkey * wsh + ch_amb.w) +
                 ch_tintB.rgb * hs * saturate(hndl * 1.75 + 0.25) * wsh;
+    // Bit 256: show the strand highlight term alone (grey = sin^p * ramp *
+    // shadow; red channel 1 where the mesh's own tangent is in use).
+    if ((hdbg & 256) != 0) {
+      const float hv = hs * saturate(hndl * 1.75 + 0.25) * wsh;
+      return float4(i.tanb.w > 0.5 && (hdbg & 128) == 0 ? 1.0 : hv, hv, hv, 1.0);
+    }
     lin = dlin * hl;
     out_a = saturate(decal_art.Sample(smp, i.uv2).r * ch_tintB.w);
   } else if (fam > 2.5) {

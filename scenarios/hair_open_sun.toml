@@ -1,0 +1,37 @@
+# Hair in OPEN sun (2026-11-13): the 22.80 s frame of the hair reel sits at
+# the arch's shadow edge, where the game's coarse shadowWorld and our static
+# sun map can disagree. Stills earlier in the same reel (device reel
+# b363c5f2700483f3, played from the start), native vs emulated, with and
+# without the strand highlight.
+name = "hair_open_sun"
+timeout_s = 1500
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+reel = "b363c5f2700483f3"
+stills = [10.0, 15.0, 20.0]
+settle_frames = 30
+stills_variants = [
+  { tag = "fixed", set = { skate3_native_render_scene_hair_debug = 0 } },
+  { tag = "nohl", set = { skate3_native_render_scene_hair_debug = 1 } },
+  { tag = "noshadow", set = { skate3_native_render_scene_hair_debug = 4 } },
+  { tag = "old", set = { skate3_native_render_scene_hair_debug = 176 } },
+  { tag = "emulated", set = { skate3_native_render_scene_hair_debug = 0, skate3_native_render_scene = false } },
+  { tag = "end", set = { skate3_native_render_scene = true } },
+]
+timeout_s = 1200

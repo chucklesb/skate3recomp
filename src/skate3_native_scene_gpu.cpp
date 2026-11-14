@@ -1264,9 +1264,44 @@ bool DecodeMesh(nrhi::Device* device, uint8_t* base, const DrawItem& item,
         std::memcpy(&dst[v * 14 + 7], &packed, 4);
       }
     }
+    // Hair strand tangent (cac_hair, fam 4): cac_hair_defaultPS runs its
+    // Kajiya-Kay highlight sin(T, H)^p along the usage-6 vertex tangent,
+    // which the 14-float layout had no room for; the screen-space stand-in
+    // put the band on the wrong axis (sunlit hair ~0.04 lightness too
+    // bright vs the emulated render; neither texture axis matched). Hair
+    // samples its strand alpha at uv2 and never uses the decal-art UV, so
+    // the tangent rides that slot's first float as unorm bytes with a 200
+    // sentinel in the top byte (as a float that is ~-2.6e5, never a real
+    // UV); vs_main skins it with the normal's bones into tanb.
+    if (item.char_family == 4 && item.skinned && item.tan_fmt == 16 && item.uv_fmt != 32) {
+      float t3[3];
+      unpack_10_11_11(item.tangent_offset, t3);
+      const uint32_t packed =
+          pk(t3[0]) | (pk(t3[1]) << 8) | (pk(t3[2]) << 16) | (200u << 24);
+      std::memcpy(&dst[v * 14 + 12], &packed, 4);
+      // The usage-7 binormal in the second float (same encoding; zero word
+      // when the mesh has none), for the hair_debug 512 A/B.
+      uint32_t packed_b = 0;
+      if (item.tb_fmt == 16) {
+        float b3[3];
+        unpack_10_11_11(item.binormal_offset, b3);
+        packed_b = pk(b3[0]) | (pk(b3[1]) << 8) | (pk(b3[2]) << 16) | (200u << 24);
+      }
+      std::memcpy(&dst[v * 14 + 13], &packed_b, 4);
+    }
     dst[v * 14 + 9] = n3[0];
     dst[v * 14 + 10] = n3[1];
     dst[v * 14 + 11] = n3[2];
+  }
+  if (item.char_family == 4) {
+    static std::atomic<int> hair_layout_logged{0};
+    if (hair_layout_logged.fetch_add(1, std::memory_order_relaxed) < 4) {
+      REXLOG_INFO(
+          "native-scene: hair mesh {:08X} skinned={} tan_fmt={} tb_fmt={} uv_fmt={} "
+          "(strand tangent {})",
+          item.mesh, item.skinned, item.tan_fmt, item.tb_fmt, item.uv_fmt,
+          item.skinned && item.tan_fmt == 16 && item.uv_fmt != 32 ? "packed" : "absent");
+    }
   }
   // Dynobj v2 layout telemetry (first few meshes): which tangent-frame
   // source the props carry decides between the packed authored frame and

@@ -183,8 +183,12 @@ REXCVAR_DEFINE_INT32(skate3_native_render_scene_hair_debug, 0, "Skate 3",
                      "instead of the screen-tangent Kajiya-Kay, 16 = no normal map "
                      "(smooth mesh normal), 32 = N.L clamped to >= 0 before the "
                      "ramps (the pre-2026-11-13 port), 64 = strand highlight along "
-                     "the texture's V axis instead of U. 0 = normal.")
-    .range(0, 127)
+                     "the screen frame's V axis instead of U, 128 = screen-space "
+                     "strand tangent even when the mesh's own is available, 256 = "
+                     "show the strand highlight term alone (red = mesh tangent in "
+                     "use), 512 = the mesh's usage-7 binormal as the strand "
+                     "direction instead of the usage-6 tangent. 0 = normal.")
+    .range(0, 1023)
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_INT32(skate3_native_render_scene_ssr_steps, 48, "Skate 3",
                      "SSR screen-space march taps per ray (half-res pass). More "
@@ -4558,6 +4562,16 @@ void CaptureCharLighting(uint8_t* base, DrawItem& item) {
     const uint32_t fres_r = fam == 4 ? 17u : 10u;
     for (int c = 0; c < 3; ++c) {
       d[13 * 4 + c] = std::clamp(row(fres_r, uint32_t(c)), 0.0f, 8.0f);
+    }
+    // Diagnostics (hair A/B, 2026-11-13): the raw highlight power and tint.
+    static std::atomic<int> s_hair_consts_logged{0};
+    if (s_hair_consts_logged.fetch_add(1, std::memory_order_relaxed) < 6) {
+      REXLOG_INFO(
+          "native-scene: hair consts fam {} power c{}.{}={:.3f} tint=({:.3f},{:.3f},{:.3f}) "
+          "amb c14.w={:.3f} key c16=({:.3f},{:.3f},{:.3f})",
+          fam, fam == 4 ? 11 : 9, fam == 4 ? 'w' : 'z', row(fam == 4 ? 11u : 9u, fam == 4 ? 3u : 2u),
+          row(fres_r, 0), row(fres_r, 1), row(fres_r, 2), row(14u, 3), row(16u, 0), row(16u, 1),
+          row(16u, 2));
     }
     d[13 * 4 + 3] = std::clamp(row(fam == 4 ? 15u : 16u, 0), 0.0f, 4.0f);
     d[14 * 4 + 0] = 1.0f;

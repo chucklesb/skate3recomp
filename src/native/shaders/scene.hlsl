@@ -146,6 +146,26 @@ VSOut vs_main(float3 p : POSITION, float2 uv : TEXCOORD0, float2 uv2 : TEXCOORD1
   float3 sb = bw.xyz * 2.0 - 1.0;
   o.tanb = tint.g > 0.0 ? float4(0.0, 0.0, 0.0, 0.0)
                         : float4(mul(sb, (float3x3)world), bw.w);
+  // Hair strand tangent (skinned cac_hair only): DecodeMesh packs the
+  // usage-6 tangent into uv3.x's bits as unorm bytes with a 200 sentinel in
+  // the top byte; skin it like the normal and hand it to the hair branch in
+  // tanb (w = 1 = present; the statics' sentinels never reach that branch).
+  uint ht = asuint(uv3.x);
+  // hair_debug 512: the usage-7 binormal (uv3.y, same encoding) instead.
+  if ((int(ch_dbg.y + 0.5) & 512) != 0 && (asuint(uv3.y) >> 24) == 200u) {
+    ht = asuint(uv3.y);
+  }
+  if (tint.g > 0.0 && wsum > 0.001 && (ht >> 24) == 200u) {
+    float3 t = float3(float(ht & 0xFFu), float((ht >> 8) & 0xFFu),
+                      float((ht >> 16) & 0xFFu)) * (2.0 / 255.0) - 1.0;
+    float3 st = float3(0, 0, 0);
+    [unroll] for (int k = 0; k < 4; ++k) {
+      uint row = bi[k] * 3u;
+      st += bw[k] * float3(dot(t, bones[row].xyz), dot(t, bones[row + 1].xyz),
+                           dot(t, bones[row + 2].xyz));
+    }
+    o.tanb = float4(st, 1.0);
+  }
   return o;
 }
 // HoM's VS computes distance fog per vertex. The otherwise-unused uv3
