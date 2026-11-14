@@ -40,8 +40,9 @@ what was done).
     grid is built), leaving the depth buffer and culling untouched; the hair
     would move onto it too (see the KI-126 caveat).
 - **Character shading is harsher than the game's.** Shirt folds, hair
-  shadows and muscle definition are sharper and more contrasty; the hair is
-  lighter than the game's in shade (KI-124 and KI-126 notes).
+  shadows and muscle definition are sharper and more contrasty (KI-124
+  notes). The hair was reworked 2026-11-13 (raw N.L, normal map, skinned
+  strand tangent) and the user judged it right in play.
 - **A multiple-exposure challenge photo had one skater without an upper
   body** (Odin 2, 2026-11-13; the Private Parking rail sign photo
   challenge, skater facing away from the camera): the seventh of eight
@@ -51,50 +52,6 @@ what was done).
   Intermittent: if it comes back, record the showcase
   (`tools/harness/odin2_record.ps1`) and check whether that exposure's
   frame is drawn natively or by the emulated display-card path.
-- **Hair loses its colour in shadow** (Odin 2, 2026-11-13): dyed hair
-  (pink) looks mostly desaturated when the skater is in shade, in normal
-  play. Seen first in a multiple-exposure challenge photo, where the
-  exposures in shade had dark hair and the sunlit ones pink. Possibly
-  related to the KI-126 hair notes (hair lighter than the game's in shade).
-  Needs its own repro: the same spot in sun and shade, native vs emulated.
-  **Measured 2026-11-13** (`scenarios/hair_shade_stills.toml`, device reel
-  b363c5f2700483f3, Tresoutta Plaza arch; hair patch lightness /
-  saturation): shade native 0.08 / 0.14, emulated 0.06 / 0.12 (match); sun
-  native 0.24 / 0.35, emulated 0.11 / 0.32. So the dark hair in shade is
-  the game's own shading (cac_hair gets only a flat `key * c14.w * 0.25`
-  ambient; the body gets SH sky light, so the shirt keeps its colour). The
-  difference is in sun: native hair is ~2x brighter than emulated, the same
-  "native hair lighter" difference seen with brown hair, which then makes
-  the drop into shade look extreme. Which sun brightness is right is open:
-  native is closer to the Create-a-Skater swatch, and the console should
-  decide. Suspects for the native brightness: the strand highlight's
-  screen-space tangent (the skinned layout has no vertex tangent), the
-  wrapped key ramp, or the static-sun stand-in for shadowWorld.
-  **Partly fixed 2026-11-13** from the cac_hair_defaultPS ucode: the port
-  clamped N.L to >= 0 before the wrap ramps (the game feeds the raw N.L,
-  so the far side goes to 0) and ignored the hair's normal map (tf4, now
-  bound; it adds strand detail, not average brightness). Sunlit hair
-  0.239 -> 0.169 (emulated 0.111); shade unchanged (it matched).
-  **Remaining gap = the strand highlight:** with it off, native is 0.129
-  and the green channel matches emulated exactly; neither screen-space
-  axis reproduces the game's (U 0.169, V 0.182). The game runs it along
-  the mesh's stored tangent (usage 6), which our skinned layout drops.
-  Proper fix: carry the hair's tangent through skinning. A/B knobs:
-  `skate3_native_render_scene_hair_debug` (bits documented in the cvar),
-  scenarios `hair_shade_terms.toml` / `hair_shade_terms2.toml`.
-  **Done 2026-11-13:** skinned hair now carries its usage-6 tangent (packed
-  into the unused decal-UV slot, skinned in vs_main, `tanb` w = 1) and the
-  highlight runs along it. Hair constants on this skater: power c11.w = 5,
-  highlight c17 = (0.32, 0.09, 0.13), c16 = (0.24, 0, 0.15) = the pink dye
-  (the hair texture is grey). **The 22.80 s frame was a bad reference:** it
-  sits on the arch's shadow edge, where the game's coarse shadowWorld and
-  our static sun map disagree. In open sun (`scenarios/hair_open_sun.toml`,
-  t = 20 s) native is 0.561 lightness vs emulated 0.479, both with a strand
-  highlight (green, which only the highlight gives, 101 vs 87): native is
-  ~15% brighter, not 2x. Also seen: at 10-15 s under the arch the emulated
-  skater stays sunlit while standing in the floor shadow; native shades
-  him (the game's coarse shadow misses him; ours is the better result).
-  Left for the console: whether the remaining ~15% is real.
 - **The skater's body may poke through the shirt** in small spots (seen once
   on Windows, reel `88a86b704bcf2d71`).
 - **Distant textures glitch or pop in** on the Odin 2 (no details yet; needs
@@ -117,13 +74,6 @@ what was done).
   emulated renderer or the guest frame rate. Suspects: frames presented with
   a stale scene or camera, or the editor camera's update. Needs a screen
   recording.
-- **Photo challenges show no photo** on the final showcase screen. The game
-  grabs the screen as soon as the shutter fires, before the native frame
-  reaches the screenshot target (the log says "no native frame ready for
-  the grab"); the reel-thumbnail prefetch only ran in the replay editor.
-  **Fix written 2026-11-13, untested:** the prefetch also runs while the
-  challenge camera (FE 2) is open. Needs a photo challenge played on the
-  device.
 
 - **Native rendering for the menus' remaining emulated pieces.** Some menu
   elements still come from the game's own (emulated) renderer: the skater
@@ -174,9 +124,7 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
 - **The real Xbox 360 as reference** (the user's modded console, once it's
   set up): learn to drive it (screenshots, saves, maybe input) so the
   original look can settle native-vs-emulated questions; the emulated
-  renderer has its own errors (e.g. whether brown hair should be as dark as
-  emulated or as light as native, which is closer to the Create-a-Skater
-  swatch).
+  renderer has its own errors.
 - **A realtime control API** next to the scenarios, for interactive
   driving (input, screenshots, state, cvars). Live mode is a first version:
   `send <verb>` drops a command file in the game's inbox and waits for the
@@ -186,6 +134,12 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
   conditions (FE screen, frame count), screenshots returned directly, an
   event stream (FE changes, census, fps), and a small client library or
   REPL. Also fixes `live --target windows` dying when started from WSL.
+- **No rebuilds for unchanged code:** the Odin 2 runner's build-input key
+  hashes git's index and diff, so committing already-built changes looks
+  like new input, and the commit id baked into the version string then
+  recompiles much of the game (2026-11-13: a full rebuild just to launch
+  identical code). Key on file contents instead, and keep the commit id
+  out of widely included headers (or pass it to one translation unit).
 - **Better screenshots and recordings:** have the renderer(s) write an
   image for every frame of a short capture (frame-exact, no screen
   recorder), on the desktop and the Odin 2; look at what limits today's
