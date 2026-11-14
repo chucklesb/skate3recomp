@@ -83,6 +83,11 @@ what was done).
   runs the whole emulated scene (see Investigations). Long term, draw these
   natively (the native renderer already refuses the portrait passes'
   captures) so the emulated renderer can stay off in menus too.
+  **Researched 2026-11-13** ([menu-portraits.md](menu-portraits.md)): the
+  team screen draws no 3D skater (its boxes are saved photos); the real
+  remaining cost is Create-a-Skater, which renders its whole scene
+  emulated every frame only so the photo saved on exit comes out right.
+  Next: a native skater photo, then drop that.
 
 ## UI and overlays
 
