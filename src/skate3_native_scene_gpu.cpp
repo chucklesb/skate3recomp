@@ -10527,7 +10527,7 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
             ? resolve_texture(item.macro_tex, 2)
             : &g_r.white;
     if ((item.water || item.char_family >= 6 ||
-         (item.char_family >= 1 && item.char_family <= 2)) &&
+         (item.char_family >= 1 && item.char_family <= 2) || item.char_family == 4) &&
         item.water_normal != 0) {
       // Water rides its ripple normal map in the macro slot (water never
       // carries a macro overlay; overlay.z stays 0 below so the macro
@@ -10539,7 +10539,9 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       // Character fams 1/2 (defaultcharacter / CAC skin, face, cloth,
       // lenses) do the same with their DXT5nm `normal` channel, the
       // garment crease / skin pore detail the emulated render shows;
-      // overlay.z > 0 tells the char branch the map resolved.
+      // overlay.z > 0 tells the char branch the map resolved. cac_hair
+      // (fam 4) too: its PS lights the strands with the normal-mapped
+      // normal (tf4), see the hair branch in scene_char.hlsli.
       macro_tex = resolve_texture(item.water_normal, 3);
     }
     // Water / vehicle environment cube (t6, root param 8): decoded once per

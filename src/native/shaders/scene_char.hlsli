@@ -83,8 +83,29 @@ float4 ShadeCharacter(VSOut i, float4 albedo) {
     // skate3_native_render_scene_hair_debug (ch_dbg.y), a bitmask for A/Bs
     // of the hair terms: 1 = no strand highlight, 2 = plain N.L key (no
     // wrap), 4 = no world shadow, 8 = view-fresnel highlight instead of the
-    // screen-tangent Kajiya-Kay.
+    // screen-tangent Kajiya-Kay, 16 = no normal map, 32 = the old clamped
+    // N.L in the ramps.
     const int hdbg = int(ch_dbg.y + 0.5);
+    // cac_hair_defaultPS (ucode, 2026-11-13) lights the hair with a
+    // NORMAL-MAPPED normal: tf4 is a DXT5nm map (x in alpha, y in green,
+    // *2-1, z = sqrt(1 - x^2 - y^2)) bent along the vertex tangent (x) and
+    // binormal (y), normalized, then N.L against c4 feeds BOTH ramps raw:
+    // `mad_sat r4.zw, NdotL, c254.xy, c253.x` (0.75/1.75, +0.25), clamped
+    // only after the wrap. The port used the smooth mesh normal and an N.L
+    // clamped to >= 0 first, so the far side never fell below a quarter of
+    // the key (the game's reaches 0 at N.L <= -1/3) and the strands had no
+    // per-strand shading: sunlit hair read ~2x brighter than the emulated
+    // render (Odin 2, reel b363c5f2700483f3: lightness 0.24 vs 0.11). The
+    // map rides the macro slot like the fam-1/2 normal channel (overlay.z
+    // > 0 = resolved); the screen-space frame stands in for the vertex one.
+    float3 htt, hbb;
+    ScreenTangentFrame(cn, i.rpos, i.uv, htt, hbb);
+    float3 hn = cn;
+    if (fam < 4.5 && overlay.z > 0.5 && (hdbg & 16) == 0) {
+      float2 nm = macro.SampleBias(smp, i.uv, misc.y).ag * 2.0 - 1.0;
+      hn = normalize(nm.x * htt + nm.y * hbb + cn * sqrt(saturate(1.0 - dot(nm, nm))));
+    }
+    const float hndl = (hdbg & 32) != 0 ? ndl : dot(hn, ch_light.xyz);
     if (fam < 4.5 && (hdbg & 8) == 0) {
       // cac_hair's world-shadow receive (shadowWorld tf1, 4-tap bilinear
       // PCF floored by g_CSMSelfBias.w) multiplies the wrapped key AND the
@@ -101,9 +122,7 @@ float4 ShadeCharacter(VSOut i, float4 albedo) {
       // sign is irrelevant to sin). A view fresnel stood in for it before,
       // which vanishes on camera-facing hair: the whole sheen was missing
       // and the CAS hair read far darker than the emulated reference.
-      float3 tt, bb;
-      ScreenTangentFrame(cn, i.rpos, i.uv, tt, bb);
-      float th = dot(normalize(vd + ch_light.xyz), tt);
+      float th = dot(normalize(vd + ch_light.xyz), htt);
       hs = pow(max(sqrt(saturate(1.0 - th * th)), 1e-6), max(ch_light.w, 1.0));
     } else {
       if (fam < 4.5) {
@@ -117,9 +136,9 @@ float4 ShadeCharacter(VSOut i, float4 albedo) {
     if ((hdbg & 4) != 0) {
       wsh = 1.0;
     }
-    const float hkey = (hdbg & 2) != 0 ? saturate(ndl) : saturate(ndl * 0.75 + 0.25);
+    const float hkey = (hdbg & 2) != 0 ? saturate(hndl) : saturate(hndl * 0.75 + 0.25);
     float3 hl = ch_key.rgb * (hkey * wsh + ch_amb.w) +
-                ch_tintB.rgb * hs * saturate(ndl * 1.75 + 0.25) * wsh;
+                ch_tintB.rgb * hs * saturate(hndl * 1.75 + 0.25) * wsh;
     lin = dlin * hl;
     out_a = saturate(decal_art.Sample(smp, i.uv2).r * ch_tintB.w);
   } else if (fam > 2.5) {
