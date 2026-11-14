@@ -288,7 +288,7 @@ the next investigation can reuse them.
 | `char_jitter.py` | Skater-vs-camera jitter from `char_track` lines (KI-120) | - |
 | `perf_report.py` | `perf.json` comparison behind `run_scenario.py perf` | - |
 | `census_report.py` | Emulated draws per screen from `census` events (`native_render_pass_census`): which passes still run under the native renderer, per frontend stack | - |
-| `gen_cas_portrait.py` | Writes `scenarios/cas_portrait.toml` (Create-a-Skater hat on/off, team portrait shots); `--only on|off` for a check across a reboot (the saved photo), `--watch` for the in-session refresh\|off` for a check across a reboot (the saved photo) | - |
+| `gen_cas_portrait.py` | Writes `scenarios/cas_portrait.toml` (Create-a-Skater hat on/off, team portrait shots); `--only on\|off` for a check across a reboot (the saved photo); `--watch` for the in-session refresh (shots every 2 s after each exit) | - |
 | `win_live.ps1` | Starts the staged Windows build in live mode from PowerShell (WSL kills a Windows process it started) and prints the run folder; `-Extra '--cvar=v'` | PowerShell |
 | `live_cvar_ab.sh`, `reel_thumbs.py` | Flip a cvar in a live session and sample fps; extract saved reels' thumbnails | - |
 

@@ -108,11 +108,7 @@ def main():
     out += shot("team_start")
     if args.watch:
         out = out.replace('name = "cas_portrait"', 'name = "cas_watch"')
-        wait2 = '
-[[step]]
-do = "wait"
-ms = 2000
-'
+        wait2 = '\n[[step]]\ndo = "wait"\nms = 2000\n'
         out += helmet_on(1) + "".join(wait2 + shot(f"after_{i * 2}s") for i in range(1, 6))
         out += helmet_off(1) + "".join(wait2 + shot(f"plain_after_{i * 2}s") for i in range(1, 6))
     elif args.only == "on":
