@@ -145,9 +145,12 @@ once per accepted edit.
 
 ## Still open
 
-- My Replays screen 36 and the Import Skater card: not measured with the
-  pass detail yet. Earlier, screen 36 showed up to ~1,160 scene draws a
-  frame, before the mode-3 fix.
+- **Import Skater and My Replays: measured 2026-11-13**
+  (`scenarios/census_menus2.toml`, Windows Vulkan).
+  - Import Skater (FE 68) opens one skater-photo window (1.2 s, the first
+    listed skater) and then runs nothing more than the team screen.
+  - My Replays (FE [0,56,59]) runs no emulated scene passes.
+  - My Replays sub-screen 36 hasn't been reached by a scenario yet.
 - What exactly the 600-pitch MSAA pass is.
 - Whether the photo's stale-frame dependence (finding 2) also applies to a
   native photo. The photo would be rendered at the request, so it should

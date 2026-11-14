@@ -1,0 +1,193 @@
+# Pass census on the menu screens not covered by census_menus.toml: the team
+# screen's Import Skater card and My Replays (Create tab > skate.Reel > My
+# Replays, FE [0,56,59]). Never saves. 5 s per screen, 30 fps cap.
+# Summarise: census_report.py <run>; per-interval rows in events.jsonl.
+name = "census_menus2"
+timeout_s = 500
+boot = "demo"
+state_every_frames = 10
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+native_render_pass_census = true
+native_render_pass_census_detail = true
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 300
+
+[[step]]
+do = "wait"
+frames = 150
+
+[[step]]
+do = "input"
+buttons = "start"
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "input"
+ly = -1.0
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 15
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "screenshot"
+tag = "team"
+
+[[step]]
+do = "input"
+ly = -1.0
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 15
+
+[[step]]
+do = "input"
+ly = -1.0
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 15
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "screenshot"
+tag = "import"
+
+[[step]]
+do = "mark"
+text = "perf import"
+
+[[step]]
+do = "wait"
+ms = 5000
+
+[[step]]
+do = "mark"
+text = "perf end"
+
+[[step]]
+do = "input"
+buttons = "b"
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "screenshot"
+tag = "import_back"
+
+[[step]]
+do = "input"
+buttons = "b"
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "screenshot"
+tag = "pause"
+
+[[step]]
+do = "input"
+lx = 1.0
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 15
+
+[[step]]
+do = "input"
+lx = 1.0
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 20
+
+[[step]]
+do = "screenshot"
+tag = "create_tab"
+
+[[step]]
+do = "input"
+ly = -1.0
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 15
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "screenshot"
+tag = "reel_menu"
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "screenshot"
+tag = "my_replays"
+
+[[step]]
+do = "mark"
+text = "perf replays"
+
+[[step]]
+do = "wait"
+ms = 5000
+
+[[step]]
+do = "mark"
+text = "perf end"
