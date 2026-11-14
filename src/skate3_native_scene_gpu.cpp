@@ -12843,8 +12843,19 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
         cmd->SetPipeline(g_r.pso_blur_down);
         // Source UV rect (second register): the centered 16:9 band on a
         // wide output; the guest screenshot raster is 16:9.
-        const float grab_consts[8] = {1.0f / float(context.guest_output_width),
-                                      1.0f / float(context.guest_output_height),
+        // Tap spacing (first register): ps_down's 4x4 grid spans 4 steps, so
+        // a step of ratio/4 source texels covers exactly one 1152x640 pixel's
+        // footprint (an area average). The menu blur's fixed 1-texel step is
+        // sized for a 4K source; at the Odin 2's ~1.7x reduction it averaged
+        // ~3 photo pixels and challenge photos and reel thumbnails came out
+        // visibly soft (2026-11-13).
+        const float grab_ratio_x =
+            std::max(1.0f, float(context.guest_output_width) * wide_2d_scale /
+                               float(RendererState::kBlurWidth));
+        const float grab_ratio_y = std::max(
+            1.0f, float(context.guest_output_height) / float(RendererState::kBlurHeight));
+        const float grab_consts[8] = {0.25f * grab_ratio_x / float(context.guest_output_width),
+                                      0.25f * grab_ratio_y / float(context.guest_output_height),
                                       0.0f,
                                       0.0f,
                                       wide_2d_scale,
