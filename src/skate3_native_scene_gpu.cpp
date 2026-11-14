@@ -163,6 +163,7 @@ REXCVAR_DECLARE(int32_t, native_render_force_resolve_readback_max_length);
 REXCVAR_DECLARE(int32_t, native_render_suppress_mode);
 REXCVAR_DECLARE(int32_t, native_render_suppress_extra_pitch);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_replay_aux_skip);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_cas_scene_photo_hold);
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_2d_async_px);
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_debug);
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_detail_hold);
@@ -6788,13 +6789,19 @@ void UpdatePhotoGrabWindow(uint8_t* base) {
 // added to the suppression filter (draws and resolves): no other pass uses it
 // there (it never appears in the gameplay census).
 void UpdateReplayAuxSkip(uint8_t* base) {
+  // Create-a-Skater (FE 15) runs the same pass, 12 draws a frame; outside
+  // the skater-photo window nothing reads it there either (2026-11-13: team
+  // portrait and editor shots unchanged with it suppressed). Inside the
+  // window the emulated photo render may sample it, so it runs.
   const bool want =
-      REXCVAR_GET(skate3_native_render_scene_replay_aux_skip) && ReplayEditorOpen(base);
+      REXCVAR_GET(skate3_native_render_scene_replay_aux_skip) &&
+      (ReplayEditorOpen(base) ||
+       (FeScreenOpen(base, 15) && !g_skater_photo_window_armed.load(std::memory_order_relaxed)));
   static bool s_on = false;
   g_ovr_suppress_extra_pitch.Hold(kOvrReplayAux, want);
   if (want != s_on) {
     s_on = want;
-    REXLOG_INFO("native-scene: replay aux skater passes (pitch {}) {}", kReplayAuxPitch,
+    REXLOG_INFO("native-scene: aux skater passes (pitch {}) {}", kReplayAuxPitch,
                 want ? "suppressed" : "restored");
   }
 }
@@ -6841,12 +6848,14 @@ void UpdateSkaterPhotoWindow() {
   // 1200), which mode 3 suppresses (the portrait window's main-scene band);
   // with it suppressed the saved portrait came out blank (Windows A/B,
   // 2026-11-13: the team screen's box empty after leaving Create-a-Skater).
-  // Create-a-Skater (FE 15) keeps mode 4 for its whole stay: with mode 4
-  // only inside the window the photo saved on exit was the previous one
-  // (it also uses scene frames from before the request). The CAS scene is
-  // small (~140 draws a frame) next to the menus' 800-1,160.
+  // Holding mode 4 for Create-a-Skater's whole stay (FE 15) is optional
+  // (skate3_native_render_scene_cas_scene_photo_hold, off): it was added
+  // when the team box looked stale after an edit, but that is the box not
+  // refreshing in-session; across restarts the photo saved with mode 4 only
+  // inside this window is pixel-identical (cas_portrait --only on/off).
   uint8_t* base = g_guest_base.load(std::memory_order_relaxed);
-  const bool cas_open = base != nullptr && FeScreenOpen(base, 15);
+  const bool cas_open = base != nullptr && FeScreenOpen(base, 15) &&
+                        REXCVAR_GET(skate3_native_render_scene_cas_scene_photo_hold);
   g_ovr_suppress_mode.SetForced(
       want || cas_open || REXCVAR_GET(skate3_native_render_scene_portrait_scene_band)
           ? kSuppressModeScenePhoto
@@ -8974,9 +8983,12 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
     // read-fault recovery (POSIX; no-op on Windows).
     ArmGuestReadRecoveryForThread(base);
     UpdatePhotoGrabWindow(base);
+  }
+  // Before the aux skip: it reads this frame's skater-photo window state.
+  UpdateSkaterPhotoWindow();
+  if (base != nullptr) {
     UpdateReplayAuxSkip(base);
   }
-  UpdateSkaterPhotoWindow();
   if (YieldForMenus(context)) {
     return false;
   }

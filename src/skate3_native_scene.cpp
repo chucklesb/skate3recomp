@@ -330,13 +330,23 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_haze, true, "Skate 3",
                     "quickly. Requires the HDR intermediate.")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_replay_aux_skip, true, "Skate 3",
-                    "KI-123: while the replay editor is open, skip the game's per-"
-                    "frame aux skater passes (each skater mesh drawn alone into a "
-                    "128x128 target, surface pitch 160, then resolved). Nothing "
-                    "displayed uses them and under the native renderer their "
-                    "resolves never reach CPU memory; they cost about 1 ms of "
-                    "emulated GPU time and a second GPU submission per replay "
-                    "frame. Off = they run as before.")
+                    "KI-123: while the replay editor or Create-a-Skater is open, "
+                    "skip the game's per-frame aux skater passes (each skater mesh "
+                    "drawn alone into a 128x128 target, surface pitch 160, then "
+                    "resolved). Nothing displayed uses them and under the native "
+                    "renderer their resolves never reach CPU memory; they cost "
+                    "about 1 ms of emulated GPU time and a second GPU submission "
+                    "per replay frame (Create-a-Skater: 12 draws, ~36k indices a "
+                    "frame). They still run inside the skater-photo window. Off = "
+                    "they run as before.")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_cas_scene_photo_hold, false, "Skate 3",
+                    "Create-a-Skater: keep the game's own main scene (surface pitch "
+                    "1200) running emulated for the editor's whole stay (suppress "
+                    "mode 4), as before 2026-11-13. Off (default) = mode 4 only "
+                    "inside the skater-photo window: the saved photo is the same "
+                    "(checked across restarts) and the editor stops rendering a "
+                    "hidden second copy of its scene (~69k indices a frame).")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_reel_thumb_native, true, "Skate 3",
                     "KI-123: a saved reel's automatic thumbnail. The game grabs "
