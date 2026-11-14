@@ -70,6 +70,18 @@ what was done).
   decide. Suspects for the native brightness: the strand highlight's
   screen-space tangent (the skinned layout has no vertex tangent), the
   wrapped key ramp, or the static-sun stand-in for shadowWorld.
+  **Partly fixed 2026-11-13** from the cac_hair_defaultPS ucode: the port
+  clamped N.L to >= 0 before the wrap ramps (the game feeds the raw N.L,
+  so the far side goes to 0) and ignored the hair's normal map (tf4, now
+  bound; it adds strand detail, not average brightness). Sunlit hair
+  0.239 -> 0.169 (emulated 0.111); shade unchanged (it matched).
+  **Remaining gap = the strand highlight:** with it off, native is 0.129
+  and the green channel matches emulated exactly; neither screen-space
+  axis reproduces the game's (U 0.169, V 0.182). The game runs it along
+  the mesh's stored tangent (usage 6), which our skinned layout drops.
+  Proper fix: carry the hair's tangent through skinning. A/B knobs:
+  `skate3_native_render_scene_hair_debug` (bits documented in the cvar),
+  scenarios `hair_shade_terms.toml` / `hair_shade_terms2.toml`.
 - **The skater's body may poke through the shirt** in small spots (seen once
   on Windows, reel `88a86b704bcf2d71`).
 - **Distant textures glitch or pop in** on the Odin 2 (no details yet; needs

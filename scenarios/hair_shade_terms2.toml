@@ -1,0 +1,38 @@
+# Round 2 of the hair A/B (after the raw-N.L + normal-map fix): what's left
+# of the sunlit gap to emulated (lightness 0.169 vs 0.111)? Same frames as
+# hair_shade_terms.toml. 1 = no strand highlight, 8 = view-fresnel
+# highlight (the older stand-in), 2 = plain N.L key.
+name = "hair_shade_terms2"
+timeout_s = 1200
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+reel = "b363c5f2700483f3"
+from = "marker"
+stills = [22.80]
+settle_frames = 30
+stills_variants = [
+  { tag = "fixed", set = { skate3_native_render_scene_hair_debug = 0 } },
+  { tag = "nohl", set = { skate3_native_render_scene_hair_debug = 1 } },
+  { tag = "fresnel", set = { skate3_native_render_scene_hair_debug = 8 } },
+  { tag = "nowrap", set = { skate3_native_render_scene_hair_debug = 2 } },
+  { tag = "vaxis", set = { skate3_native_render_scene_hair_debug = 64 } },
+  { tag = "emulated", set = { skate3_native_render_scene_hair_debug = 0, skate3_native_render_scene = false } },
+  { tag = "end", set = { skate3_native_render_scene = true } },
+]
+timeout_s = 900

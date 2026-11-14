@@ -182,8 +182,9 @@ REXCVAR_DEFINE_INT32(skate3_native_render_scene_hair_debug, 0, "Skate 3",
                      "ramp, 4 = no world shadow, 8 = view-fresnel highlight "
                      "instead of the screen-tangent Kajiya-Kay, 16 = no normal map "
                      "(smooth mesh normal), 32 = N.L clamped to >= 0 before the "
-                     "ramps (the pre-2026-11-13 port). 0 = normal.")
-    .range(0, 63)
+                     "ramps (the pre-2026-11-13 port), 64 = strand highlight along "
+                     "the texture's V axis instead of U. 0 = normal.")
+    .range(0, 127)
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_INT32(skate3_native_render_scene_ssr_steps, 48, "Skate 3",
                      "SSR screen-space march taps per ray (half-res pass). More "
@@ -2669,6 +2670,26 @@ bool BuildItemFromMesh(uint8_t* base, uint32_t mesh, DrawItem& item) {
         // channels ride AFTER their texture (macroOverlayUVScale follows
         // macrooverlay on the plaza asphalt, breaking once the textures
         // resolved left the macro tiling at 1.0 instead of 0.3).
+      }
+      // Diagnostics: each distinct hair (fam 4/5) channel list, once, with
+      // whether the `normal` channel resolved (the cac_hair PS lights the
+      // strands with its tf4 normal map; 2026-11-13 the hair A/B showed no
+      // effect from binding it).
+      if (item.char_family == 4 || item.char_family == 5) {
+        std::string names;
+        for (uint32_t i = 0; i < num_channels; ++i) {
+          char text[20];
+          GuestTryReadString(base, chan_u32(i, 0), text, sizeof(text));
+          names += text;
+          names += ',';
+        }
+        static std::mutex s_mu;
+        static std::unordered_set<std::string> s_seen;
+        std::lock_guard<std::mutex> lk(s_mu);
+        if (s_seen.size() < 32 && s_seen.insert(names).second) {
+          REXLOG_INFO("native-scene: hair material (fam {}) channels [{}] normal={:08X} alpha={:08X}",
+                      item.char_family, names, item.water_normal, item.hair_alpha_tex);
+        }
       }
     }
   }

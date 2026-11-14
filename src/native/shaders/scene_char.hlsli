@@ -122,7 +122,9 @@ float4 ShadeCharacter(VSOut i, float4 albedo) {
       // sign is irrelevant to sin). A view fresnel stood in for it before,
       // which vanishes on camera-facing hair: the whole sheen was missing
       // and the CAS hair read far darker than the emulated reference.
-      float th = dot(normalize(vd + ch_light.xyz), htt);
+      // Bit 64: the frame's V axis instead (which texture axis the strands
+      // run along decides where the Kajiya-Kay band sits).
+      float th = dot(normalize(vd + ch_light.xyz), (hdbg & 64) != 0 ? hbb : htt);
       hs = pow(max(sqrt(saturate(1.0 - th * th)), 1e-6), max(ch_light.w, 1.0));
     } else {
       if (fam < 4.5) {
