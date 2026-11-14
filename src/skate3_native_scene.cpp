@@ -176,6 +176,13 @@ REXCVAR_DEFINE_INT32(skate3_native_render_scene_char_debug, 0, "Skate 3",
                      "cyan), 6 normal shading forced opaque.")
     .range(0, 6)
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_INT32(skate3_native_render_scene_hair_debug, 0, "Skate 3",
+                     "Hair lighting A/B bitmask (cac_hair / defaulthair): 1 = no "
+                     "strand highlight, 2 = plain N.L key instead of the wrapped "
+                     "ramp, 4 = no world shadow, 8 = view-fresnel highlight "
+                     "instead of the screen-tangent Kajiya-Kay. 0 = normal.")
+    .range(0, 15)
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_INT32(skate3_native_render_scene_ssr_steps, 48, "Skate 3",
                      "SSR screen-space march taps per ray (half-res pass). More "
                      "taps resolve thinner reflected geometry at proportional "

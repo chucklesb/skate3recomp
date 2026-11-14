@@ -80,7 +80,12 @@ float4 ShadeCharacter(VSOut i, float4 albedo) {
     // blocky-helmet look).
     float hs;
     float wsh = 1.0;
-    if (fam < 4.5) {
+    // skate3_native_render_scene_hair_debug (ch_dbg.y), a bitmask for A/Bs
+    // of the hair terms: 1 = no strand highlight, 2 = plain N.L key (no
+    // wrap), 4 = no world shadow, 8 = view-fresnel highlight instead of the
+    // screen-tangent Kajiya-Kay.
+    const int hdbg = int(ch_dbg.y + 0.5);
+    if (fam < 4.5 && (hdbg & 8) == 0) {
       // cac_hair's world-shadow receive (shadowWorld tf1, 4-tap bilinear
       // PCF floored by g_CSMSelfBias.w) multiplies the wrapped key AND the
       // strand highlight, never the ambient; the hair shader samples no
@@ -101,9 +106,19 @@ float4 ShadeCharacter(VSOut i, float4 albedo) {
       float th = dot(normalize(vd + ch_light.xyz), tt);
       hs = pow(max(sqrt(saturate(1.0 - th * th)), 1e-6), max(ch_light.w, 1.0));
     } else {
+      if (fam < 4.5) {
+        wsh = SampleStaticSun(i.rpos + cam_pos.xyz, cn, i.pos.xy);
+      }
       hs = pow(1.0 - saturate(dot(cn, vd)), max(ch_light.w, 1.0));
     }
-    float3 hl = ch_key.rgb * (saturate(ndl * 0.75 + 0.25) * wsh + ch_amb.w) +
+    if ((hdbg & 1) != 0) {
+      hs = 0.0;
+    }
+    if ((hdbg & 4) != 0) {
+      wsh = 1.0;
+    }
+    const float hkey = (hdbg & 2) != 0 ? saturate(ndl) : saturate(ndl * 0.75 + 0.25);
+    float3 hl = ch_key.rgb * (hkey * wsh + ch_amb.w) +
                 ch_tintB.rgb * hs * saturate(ndl * 1.75 + 0.25) * wsh;
     lin = dlin * hl;
     out_a = saturate(decal_art.Sample(smp, i.uv2).r * ch_tintB.w);

@@ -1,0 +1,41 @@
+# Which hair lighting term makes native sunlit hair ~2x brighter than the
+# emulated renderer (2026-11-13; see hair_shade_stills.toml). Same two
+# frames (22.80 s sun, 24.90 s shade under the Tresoutta Plaza arch, device
+# reel b363c5f2700483f3), once per skate3_native_render_scene_hair_debug
+# bit: 1 = no strand highlight, 2 = plain N.L key, 4 = no world shadow,
+# 8 = view-fresnel highlight. Plus the emulated renderer for reference.
+name = "hair_shade_terms"
+timeout_s = 1200
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+reel = "b363c5f2700483f3"
+from = "marker"
+stills = [22.80, 24.90]
+settle_frames = 30
+stills_variants = [
+  { tag = "base", set = { skate3_native_render_scene_hair_debug = 0 } },
+  { tag = "nohl", set = { skate3_native_render_scene_hair_debug = 1 } },
+  { tag = "nowrap", set = { skate3_native_render_scene_hair_debug = 2 } },
+  { tag = "noshadow", set = { skate3_native_render_scene_hair_debug = 4 } },
+  { tag = "fresnel", set = { skate3_native_render_scene_hair_debug = 8 } },
+  { tag = "nohl_nowrap", set = { skate3_native_render_scene_hair_debug = 3 } },
+  { tag = "emulated", set = { skate3_native_render_scene_hair_debug = 0, skate3_native_render_scene = false } },
+  { tag = "end", set = { skate3_native_render_scene = true } },
+]
+timeout_s = 900

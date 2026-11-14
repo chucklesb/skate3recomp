@@ -136,6 +136,7 @@ REXCVAR_DECLARE(bool, skate3_native_render_scene_ssr);
 REXCVAR_DECLARE(double, skate3_native_render_scene_water_detile);
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_water_debug);
 REXCVAR_DECLARE(int32_t, skate3_native_render_scene_char_debug);
+REXCVAR_DECLARE(int32_t, skate3_native_render_scene_hair_debug);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_tex_mips);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_tex_revalidate);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_tex_confirm);
@@ -9512,7 +9513,9 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
     cb[231] = float(REXCVAR_GET(skate3_native_render_scene_water_debug));
     // ch_dbg (cb[232..235]): x = the character debug view.
     cb[232] = float(REXCVAR_GET(skate3_native_render_scene_char_debug));
-    cb[233] = cb[234] = cb[235] = 0.0f;
+    // y = the hair-term A/B bitmask (skate3_native_render_scene_hair_debug).
+    cb[233] = float(REXCVAR_GET(skate3_native_render_scene_hair_debug));
+    cb[234] = cb[235] = 0.0f;
     static_assert(236 * sizeof(float) <= RendererState::kShadowCbSlice);
     cmd->SetConstantBuffer(6, g_r.shadow_cb, cb_offset);
     // b2 (character lighting) default: point at the ring base so the root
