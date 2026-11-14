@@ -136,6 +136,9 @@ once per accepted edit.
 
 ## Remaining options
 
+Superseded by [native-only.md](native-only.md), which plans these together
+with every other remaining emulated draw.
+
 1. **The card compose natively** (team screen, Import Skater card). These
    are 2D quads the native 2D pass drops today as "offscreen 2D compose
    draws". Composing them into a native card texture and substituting it

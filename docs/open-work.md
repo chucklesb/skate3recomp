@@ -88,7 +88,8 @@ what was done).
   emulated every frame. **Fixed 2026-11-13** (46d93c9): Odin 2,
   Create-a-Skater uncapped 55 -> 85 fps (`scenarios/cas_perf.toml`).
   Left: the team-screen card compose (small), and the photo itself
-  (a one-shot emulated render per accepted edit).
+  (a one-shot emulated render per accepted edit). **Now planned** with
+  every other remaining emulated draw in [native-only.md](native-only.md).
 
 ## UI and overlays
 
