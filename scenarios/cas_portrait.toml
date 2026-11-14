@@ -6,7 +6,7 @@
 #   cas_helmet_N -> helmet, cas_plain_N -> no hat (cas_pick_N / cas_off_N:
 #   the skater in Create-a-Skater right after the change).
 # Ends with the profile as it started (no hat), but it WRITES the save
-# (Windows test profile, or the device's: ask first there).
+# (Windows test profile or the device's; fine in this dev environment).
 #
 #   run_scenario.py windows scenarios/cas_portrait.toml
 #   ... -- --skate3_native_render_scene_portrait_scene_band=true   (old behavior)
