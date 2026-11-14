@@ -96,14 +96,26 @@ def main():
     ap.add_argument("--only", choices=["on", "off"],
                     help="one change and exit (the next boot's team_start shows the SAVED photo: "
                          "run 'on', then 'off' to check it and restore the profile)")
+    ap.add_argument("--watch", action="store_true",
+                    help="one helmet on/off cycle with team-screen shots every 2 s for 10 s "
+                         "after each exit (in-session refresh check; Vulkan keeps the old look)")
     args = ap.parse_args()
     out = HEADER
-    if args.only:
+    if args.only and not args.watch:
         out = out.replace('name = "cas_portrait"', f'name = "cas_portrait_{args.only}"')
     out += "\n# Pause > Edit Skaters (second entry): the team screen, FE [0,56,63].\n"
     out += press("start", wait=SCREEN) + press(ly=-1.0) + press("a", wait=SCREEN + 15)
     out += shot("team_start")
-    if args.only == "on":
+    if args.watch:
+        out = out.replace('name = "cas_portrait"', 'name = "cas_watch"')
+        wait2 = '
+[[step]]
+do = "wait"
+ms = 2000
+'
+        out += helmet_on(1) + "".join(wait2 + shot(f"after_{i * 2}s") for i in range(1, 6))
+        out += helmet_off(1) + "".join(wait2 + shot(f"plain_after_{i * 2}s") for i in range(1, 6))
+    elif args.only == "on":
         out += helmet_on(1)
     elif args.only == "off":
         out += helmet_off(1)
