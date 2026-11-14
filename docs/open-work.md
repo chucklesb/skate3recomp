@@ -134,12 +134,6 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
   conditions (FE screen, frame count), screenshots returned directly, an
   event stream (FE changes, census, fps), and a small client library or
   REPL. Also fixes `live --target windows` dying when started from WSL.
-- **No rebuilds for unchanged code:** the Odin 2 runner's build-input key
-  hashes git's index and diff, so committing already-built changes looks
-  like new input, and the commit id baked into the version string then
-  recompiles much of the game (2026-11-13: a full rebuild just to launch
-  identical code). Key on file contents instead, and keep the commit id
-  out of widely included headers (or pass it to one translation unit).
 - **Better screenshots and recordings:** have the renderer(s) write an
   image for every frame of a short capture (frame-exact, no screen
   recorder), on the desktop and the Odin 2; look at what limits today's

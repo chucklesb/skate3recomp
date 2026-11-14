@@ -529,16 +529,46 @@ BUILD_EXCLUDE = ("docs", "scenarios", "tools/harness", "tools/release", ".github
 
 
 def source_key(config: str) -> str:
-    """Hash of everything that can change the linux-aarch64 build: the index
-    and unstaged changes of the build-input paths, their untracked files, and
-    each submodule's commit, changes and untracked files. Commits that only
-    touch BUILD_EXCLUDE paths leave it unchanged (the binary then keeps the
-    version string of the commit it was built from)."""
+    """Hash of the CONTENT of everything that can change the linux-aarch64
+    build: every tracked build-input file as it is in the working tree, the
+    untracked ones, and each submodule's tree the same way. It depends only
+    on file contents, never on what is committed or staged, so committing
+    already-built changes keeps the key (and skips the rebuild). Changes
+    that only touch BUILD_EXCLUDE paths leave it unchanged too (the binary
+    then keeps the version string of the commit it was built from)."""
     spec = ["--", "."] + [f":(exclude){p}" for p in BUILD_EXCLUDE]
 
-    def git(*args: str, cwd: Path = REPO) -> bytes:
+    def git(*args: str, cwd: Path = REPO, stdin: bytes | None = None) -> bytes:
         return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True,
-                              check=True).stdout
+                              input=stdin, check=True).stdout
+
+    def tree_content(cwd: Path, pathspec: list[str]) -> bytes:
+        """`ls-files -s` with each modified entry's blob id replaced by the
+        working-tree file's (deleted files dropped), so staged, unstaged and
+        committed versions of the same bytes hash the same. Submodule
+        entries (mode 160000) keep only their path: the caller hashes each
+        submodule's content the same way, so a submodule commit of
+        already-built changes doesn't change the key either."""
+        entries: dict[bytes, tuple[bytes, bytes]] = {}
+        for rec in filter(None, git("ls-files", "-s", "-z", *pathspec, cwd=cwd).split(b"\0")):
+            meta, path = rec.split(b"\t", 1)
+            mode, sha, _stage = meta.split(b" ")
+            entries[path] = (mode, sha)
+        changed = [p for p in filter(None, git("diff", "--name-only", "-z", "--no-renames",
+                                               *pathspec, cwd=cwd).split(b"\0"))
+                   if p in entries and entries[p][0] != b"160000"]
+        present = [p for p in changed if (cwd / p.decode()).is_file()]
+        for p in set(changed) - set(present):
+            del entries[p]
+        if present:
+            shas = git("hash-object", "--stdin-paths", cwd=cwd,
+                       stdin=b"\n".join(present) + b"\n").split()
+            for p, sha in zip(present, shas):
+                entries[p] = (entries[p][0], sha)
+        for path, (mode, _) in list(entries.items()):
+            if mode == b"160000":
+                entries[path] = (mode, b"")
+        return b"".join(m + b" " + s + b"\t" + p + b"\0" for p, (m, s) in sorted(entries.items()))
 
     def untracked(cwd: Path, pathspec: list[str]) -> bytes:
         names = git("ls-files", "-z", "--others", "--exclude-standard", *pathspec, cwd=cwd)
@@ -550,13 +580,12 @@ def source_key(config: str) -> str:
         return bytes(out)
 
     h = hashlib.sha256(config.encode())
-    h.update(git("ls-files", "-s", *spec))           # index (incl. submodule commits)
-    h.update(git("diff", "--binary", *spec))         # unstaged edits
+    h.update(tree_content(REPO, spec))
     h.update(untracked(REPO, spec))
     for line in git("submodule", "status", "--recursive").decode().splitlines():
         sub = REPO / line[1:].split()[1]
         if (sub / ".git").exists():
-            h.update(git("diff", "HEAD", "--binary", cwd=sub))
+            h.update(tree_content(sub, []))
             h.update(untracked(sub, []))
     return h.hexdigest()[:20]
 

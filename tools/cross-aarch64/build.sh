@@ -61,6 +61,19 @@ for step in "${steps[@]}"; do
                 exit 1
             fi
             mkdir -p "out/build/$preset"
+            # clang reaches the sysroot's C++ headers through the lib ->
+            # usr/lib symlink (<sysroot>/lib/gcc/<triple>/15/../../../../
+            # include/c++/15), and ninja collapses those '..' WITHOUT
+            # following the link: the dependency paths it records,
+            # <sysroot>/include/c++/15/..., don't exist, so ninja saw every
+            # object as dirty and recompiled the whole game on every build.
+            # An include -> usr/include link makes the collapsed paths real.
+            # (Here, not in make-sysroot.sh: editing that script changes its
+            # stamp and re-creates the sysroot.)
+            sysroot=${SKATE3_AARCH64_SYSROOT:-$repo/out/sysroot/ubuntu-26.04-arm64}
+            if [ -d "$sysroot/usr/include" ] && [ ! -e "$sysroot/include" ]; then
+                ln -s usr/include "$sysroot/include"
+            fi
             in_shell cross "
                 cmake --preset $preset ${SKATE3_CMAKE_FRESH:+--fresh} -DSKATE3_GAME_DATA_ROOT='$game_root' 2>&1 | tee out/build/$preset/configure.log"
             # SDL quietly drops video drivers whose dependencies it cannot
