@@ -60,14 +60,29 @@ what was done).
   upstream's KNOWN_ISSUES.md first). Seen on the Odin 2 (2026-11-13): body
   modifications such as facial feature sizes don't apply, or only some of
   the time; various clothing and hair problems. Needs a lot of work.
-- **The team screen's skater portrait doesn't update after Create-a-Skater**
-  (Windows, 2026-11-13, `scenarios/cas_portrait.toml`): after a change and
-  "Yes", the Edit Skaters screen keeps showing the previous portrait for the
-  rest of the session, while the saved photo is right (the next boot shows
-  it). Same with the old and new portrait-window behavior. Suspect a cached
-  texture in the native 2D path (the card is re-composed at pitch 560 into
-  0x03855000 / 0x03C55000), or the game reloading the photo only on boot.
-  Check against the fully emulated renderer.
+- **The team screen's skater portrait doesn't update after Create-a-Skater,
+  on Vulkan only** (Windows Vulkan, 2026-11-13): after an edit and "Yes",
+  the Edit Skaters box keeps an older look for the rest of the session,
+  while the saved photo is right (the next boot shows it).
+  - **D3D12 updates the box right after each edit** (`cas_watch`-style
+    run: helmet on, then off, shots every 2 s).
+  - **The cause is in the emulated Vulkan path**, not the native 2D
+    drawing. The card the game composes on the GPU (pitch 560, resolved to
+    `0x03855000` / `0x03C55000`) still contains the photo loaded at boot
+    after edits. Inside the skater-photo window it holds the first edit's
+    photo, for both edits.
+  - Also on Vulkan only: with the depth-only draw gate on (the default),
+    that card resolves nearly empty (99-100% zero) outside the photo
+    window.
+  - Suspects: the new photo's texture isn't invalidated in the emulated
+    Vulkan texture cache, or it's GPU-produced and dropped there. The
+    shared texture-cache watch code is the same on both backends.
+  - **Can't compare against the fully emulated renderer:** with
+    `skate3_native_render_scene=false` the saved photos come out blank (no
+    readback window arms).
+  - Odin 2 (Vulkan) not checked: the check writes the device's save.
+  - Related: photos made on D3D12 come out lighter than photos made on
+    Vulkan.
 - **Create-a-Park is jittery and slow** on the Odin 2 even though the HUD
   shows a steady 30 fps. The 2026-11-13 census run showed guest frames at an
   even 33.3 ms and almost no emulated rendering there, so it isn't the
