@@ -60,32 +60,13 @@ what was done).
   upstream's KNOWN_ISSUES.md first). Seen on the Odin 2 (2026-11-13): body
   modifications such as facial feature sizes don't apply, or only some of
   the time; various clothing and hair problems. Needs a lot of work.
-- **The team screen's skater portrait doesn't update after Create-a-Skater,
-  on Vulkan only** (Windows Vulkan, 2026-11-13): after an edit and "Yes",
-  the Edit Skaters box keeps an older look for the rest of the session,
-  while the saved photo is right (the next boot shows it).
-  - **D3D12 updates the box right after each edit** (`cas_watch`-style
-    run: helmet on, then off, shots every 2 s).
-  - **The cause is in the emulated Vulkan path**, not the native 2D
-    drawing. The card the game composes on the GPU (pitch 560, resolved to
-    `0x03855000` / `0x03C55000`) still contains the photo loaded at boot
-    after edits. Inside the skater-photo window it holds the first edit's
-    photo, for both edits.
-  - Also on Vulkan only: with the depth-only draw gate on (the default),
-    that card resolves nearly empty (99-100% zero) outside the photo
-    window.
-  - Suspects: the new photo's texture isn't invalidated in the emulated
-    Vulkan texture cache, or it's GPU-produced and dropped there. The
-    shared texture-cache watch code is the same on both backends.
-  - **Can't compare against the fully emulated renderer:** with
-    `skate3_native_render_scene=false` the saved photos come out blank (no
-    readback window arms).
-  - **The Odin 2 has it too** (2026-11-13, `gen_cas_portrait.py --watch`):
-    there not even the first edit shows; the box stays on the boot photo
-    for 10 s after each exit. The saved photos themselves are right (next
-    boot).
-  - Related: photos made on D3D12 come out lighter than photos made on
-    Vulkan.
+- **Skater photos on Vulkan are darker, with dark bands** (Windows Vulkan,
+  2026-11-13): photos made on Vulkan show blotchy dark bands across the
+  shirt and arms; D3D12's are clean and lighter. The photo render samples
+  the shadow-cascade atlas (pitch 1600), whose depth draws the depth-only
+  gate drops; with `native_render_suppress_exempt_depth_only=false` the
+  bands go but the photo stays darker than D3D12's. Which brightness is
+  right needs the console.
 - **Create-a-Park is jittery and slow** on the Odin 2 even though the HUD
   shows a steady 30 fps. The 2026-11-13 census run showed guest frames at an
   even 33.3 ms and almost no emulated rendering there, so it isn't the
