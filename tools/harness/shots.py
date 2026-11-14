@@ -3,6 +3,12 @@
 
     shots.py strip OUT.jpg IMG[=LABEL] ... [--box X0,Y0,X1,Y1] [--width W] [--pixel]
     shots.py stats IMG[=LABEL] ... [--box X0,Y0,X1,Y1]   # region colour + change vs first
+    shots.py classify IMG ... --ref LABEL=IMG --ref LABEL=IMG [--box X0,Y0,X1,Y1]
+
+classify answers "which known state does each shot show?" (e.g. the old or
+the new photo in a menu box): per shot, the % of box pixels differing by more
+than 24 from each reference, and the nearest reference. Use it instead of
+judging by eye or by brightness; a darker render is not a different state.
 
 Each image is cropped to --box (optional, the same box for all), scaled to
 --width pixels wide (default 960; --pixel scales with nearest-neighbour for
@@ -97,6 +103,34 @@ def stats(items: list[str], box) -> None:
               f"  |diff| vs first={diff:6.2f}")
 
 
+def changed_pct(a: Image.Image, b: Image.Image, threshold: int = 24) -> float:
+    if a.size != b.size:
+        b = b.resize(a.size, Image.BILINEAR)
+    pa, pb = a.getdata(), b.getdata()
+    n = sum(1 for x, y in zip(pa, pb) if max(abs(x[0] - y[0]), abs(x[1] - y[1]),
+                                              abs(x[2] - y[2])) > threshold)
+    return 100.0 * n / len(pa)
+
+
+def classify(items: list[str], refs: list[str], box) -> None:
+    def load(path: str) -> Image.Image:
+        im = Image.open(path).convert("RGB")
+        return im.crop(box) if box else im
+
+    ref_ims = []
+    for r in refs:
+        name, sep, path = r.partition("=")
+        if not sep:
+            sys.exit(f"--ref needs LABEL=IMG, got {r}")
+        ref_ims.append((name, load(path)))
+    for item in items:
+        im = load(item)
+        scores = [(changed_pct(im, rim), name) for name, rim in ref_ims]
+        best = min(scores)
+        cols = "  ".join(f"{name}={pct:5.1f}%" for pct, name in scores)
+        print(f"{Path(item).name:<40} {cols}  -> {best[1]}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -105,6 +139,11 @@ def main() -> int:
                                      "absolute difference from the first image")
     s.add_argument("items", nargs="+", metavar="IMG[=LABEL]")
     s.add_argument("--box", help="region X0,Y0,X1,Y1 (default: whole image)")
+    c = sub.add_parser("classify", help="nearest reference image per shot, by % of "
+                                        "changed pixels in the box")
+    c.add_argument("items", nargs="+", metavar="IMG")
+    c.add_argument("--ref", action="append", required=True, metavar="LABEL=IMG")
+    c.add_argument("--box", help="region X0,Y0,X1,Y1 (default: whole image)")
     p = sub.add_parser("strip", help="crop, scale, label and place images side by side")
     p.add_argument("out", type=Path)
     p.add_argument("items", nargs="+", metavar="IMG[=LABEL]")
@@ -118,6 +157,9 @@ def main() -> int:
         ap.error("--box needs X0,Y0,X1,Y1")
     if a.cmd == "stats":
         stats(a.items, box)
+        return 0
+    if a.cmd == "classify":
+        classify(a.items, a.ref, box)
         return 0
     strip(a.out, a.items, box, a.width, a.pixel, a.gap)
     return 0
