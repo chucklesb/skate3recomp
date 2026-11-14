@@ -5874,6 +5874,14 @@ enum YieldOverrideOwner : uint32_t {
   kOvrSkaterPhoto = 1u << 6,   // UpdateSkaterPhotoWindow: portrait render
   kOvrReplayAux = 1u << 7,     // UpdateReplayAuxSkip: replay aux skater passes
 };
+constexpr const char* kOvrOwnerNames[] = {
+    "menu_context", "portrait_window", "photo_flow",  "photo_emulated",
+    "photo_burst",  "photo_display",   "skater_photo", "replay_aux"};
+// Every owner that held an override since the last TakeYieldOverrideHolders
+// (the native-only audit: which window let emulated draws run). Owners Hold
+// every frame while their window is open, so a long window shows up in every
+// census interval it spans.
+std::atomic<uint32_t> g_ovr_holders_seen{0};
 
 template <typename T>
 class SdkCvarOverride {
@@ -5892,6 +5900,7 @@ class SdkCvarOverride {
     }
   }
   void Acquire(uint32_t owner) {
+    g_ovr_holders_seen.fetch_or(owner, std::memory_order_relaxed);
     if (owners_ & owner) {
       return;
     }
@@ -6047,6 +6056,17 @@ void RestoreAllYieldOverrides() {
 
 bool SuppressEmulatedDrawsOverride(bool* user_value) {
   return g_ovr_suppress_draws.HeldView(user_value);
+}
+
+std::vector<const char*> TakeYieldOverrideHolders() {
+  const uint32_t seen = g_ovr_holders_seen.exchange(0, std::memory_order_relaxed);
+  std::vector<const char*> names;
+  for (uint32_t i = 0; i < std::size(kOvrOwnerNames); ++i) {
+    if (seen & (1u << i)) {
+      names.push_back(kOvrOwnerNames[i]);
+    }
+  }
+  return names;
 }
 
 namespace {

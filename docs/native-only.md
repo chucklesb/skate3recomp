@@ -84,7 +84,7 @@ fallback until phase 5. The sizes are relative.
 
 | Phase | What | Removes | Size |
 |---|---|---|---|
-| 0 | **Measure.** An emulated-draw audit log: every executed emulated colour draw with its pitch, FE screen and the window that let it through. Run the native tour scenario (see "Before we start") on the Odin 2 as the baseline | nothing | S |
+| 0 | **Measure.** The native-only audit: census events record the windows that were open (`holders`), and `census_report.py` ends with one line per screen context: ZERO, or the executed emulated draws per frame, their pitches and the windows open. Run the native tour scenario (see "Before we start") on Windows Vulkan, then on the Odin 2, as the baseline | nothing | S |
 | 1 | **Offscreen 2D compose** (B, then the atlas). The native 2D pass drops "offscreen 2D compose draws" today. Draw them into native targets keyed by resolve address, and substitute them in `emit_draw` / `resolve_2d_texture` | the portrait window (mode 3) | M |
 | 2 | **Native skater photo** (A). Stop refusing the photo pass (`CaptureSkinnedState`'s aux refusal, `BuildFrameScene`'s portrait-publish gate). Capture it into a separate scene slot with its own palettes, so it can't disturb the on-screen player's. Render it once per `GeneratePhotoRequest` into a 1152x640 target with the photo camera, and write it to guest memory | the skater photo window: mode 4, readbacks, sync shaders, pitch 1600. Should also fix the photo bands | L |
 | 3 | **Photo-challenge card** (C): phase 1's mechanism, plus writing the shot and composite back to guest memory | the shutter burst | M |
@@ -119,7 +119,7 @@ fallback until phase 5. The sizes are relative.
 5. **Reference shots** from the current build for each context, for
    `shots.py classify`.
 6. **Done means, for each phase:**
-   - the audit shows zero emulated colour draws in that context;
+   - the audit shows ZERO for that context;
    - shots classify as the baseline, except for intended fixes (for example
      the photo bands);
    - fps is no worse;

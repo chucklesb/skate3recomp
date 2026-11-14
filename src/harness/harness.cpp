@@ -161,7 +161,9 @@ std::string FeStackJson(const std::vector<std::pair<int32_t, int32_t>>& stack) {
 // Pass census (native_render_pass_census): the emulated draws since the last
 // census event, by surface pitch, for the screen stack they ran under.
 // pitches: [pitch, suppressed, executed under native, executed emulated,
-// and the same three as index counts].
+// and the same three as index counts]. holders: the native renderer's
+// windows that let emulated work run during the interval (empty: only what
+// the default suppress mode lets through).
 constexpr uint64_t kCensusEveryFrames = 60;
 std::string CensusJson(const std::vector<std::pair<int32_t, int32_t>>& fe, bool replay,
                        uint64_t frames) {
@@ -183,6 +185,13 @@ std::string CensusJson(const std::vector<std::pair<int32_t, int32_t>>& fe, bool 
                   static_cast<unsigned long long>(e.indices[1]),
                   static_cast<unsigned long long>(e.indices[2]));
     out += buf;
+  }
+  out += "],\"holders\":[";
+  const std::vector<const char*> holders = native_scene::TakeYieldOverrideHolders();
+  for (size_t i = 0; i < holders.size(); ++i) {
+    out += i ? ",\"" : "\"";
+    out += holders[i];
+    out += "\"";
   }
   return out + "]";
 }

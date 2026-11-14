@@ -778,6 +778,13 @@ void ResetSceneFailure();
 // when it closes. The dialog shows that value and leaves the cvar alone.
 bool SuppressEmulatedDrawsOverride(bool* user_value);
 
+// Native-only audit (docs/native-only.md, phase 0): the names of the windows
+// that held an SDK cvar override since the last call (menu_context,
+// portrait_window, photo_flow, photo_emulated, photo_burst, photo_display,
+// skater_photo, replay_aux), and resets the record. The harness adds them
+// to each census event. Any thread.
+std::vector<const char*> TakeYieldOverrideHolders();
+
 // Debug-dialog cache flushes (F12 native-render debug menu): retire every
 // cached GPU texture / mesh decode so hot-toggled decode settings (mip
 // chains, revalidation, ...) rebuild immediately.
