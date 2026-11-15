@@ -287,6 +287,7 @@ the next investigation can reuse them.
 | `video_frames.py` | scrcpy recordings: `remux` (make seekable), `frames` (every frame of a time window), `match` (find the same moment in another pass or recording) | ffmpeg, Pillow |
 | `ropa_shadow_trace.py` | Per-reel-pass garment shadow offset from a `char_track` run's log (KI-124) | - |
 | `char_jitter.py` | Skater-vs-camera jitter from `char_track` lines (KI-120) | - |
+| `char_sync_report.py` | Body pieces out of sync, from `char_sync` lines (`skate3_native_render_scene_char_sync` on): per character and frame, pieces drawn from another moment than the body (a stale reused pose, the previous frame's pack, raw ahead of the camera, a wrong serve) or that vanished, and why. `--reel` limits it to the reel playback; `--max-bad N` fails a run over N frames; several runs print an A/B table (KI-117, `repro_reel_forearm.toml`) | - |
 | `perf_report.py` | `perf.json` comparison behind `run_scenario.py perf` | - |
 | `census_report.py` | Emulated draws per screen from `census` events (`native_render_pass_census`): which passes still run under the native renderer, per frontend stack | - |
 | `gen_native_tour.py` | Writes `scenarios/native_tour.toml` (every context where the emulated renderer may still run, census on: a challenge, the team screen, Create-a-Skater with an accepted edit, Import Skater, the replay editor's Take Photo, My Replays, the photo viewer) and `native_tour_boot.toml` (the intro movies). Read the result with `census_report.py <run> --audit-only` ([native-only.md](native-only.md)) | - |

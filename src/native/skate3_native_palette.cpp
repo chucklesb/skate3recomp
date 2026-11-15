@@ -95,6 +95,11 @@ struct PackSnap {
   // pieces): rows serve only after the per-session layout vote confirms the
   // row interpretation (see ServeAuthoritativePalettes).
   bool ubt = false;
+  // Provenance (char_sync): one sequence number per pack call (every part of
+  // one UpdateBoneTransforms call shares it: one tick of one character), and
+  // the part record index within a UBT call (0xFFFF otherwise).
+  uint32_t seq = 0;
+  uint16_t part = 0xFFFF;
 };
 std::vector<PackSnap> g_packs;
 std::vector<float> g_pack_rows;  // host-order floats, 12 per row (arena)
@@ -158,6 +163,10 @@ bool ServedRowsUsable(const float* r, uint32_t rows) {
 // The entity whose pack-producing method is on this thread's call stack
 // (the producing entity methods are bracketed by the hook layer).
 thread_local uint32_t tl_pack_owner = 0;
+// Pack provenance for the snapshot being taken (see PackSnap::seq / part).
+std::atomic<uint32_t> g_pack_seq{0};
+thread_local uint32_t tl_pack_seq = 0;
+thread_local uint16_t tl_pack_part = 0xFFFF;
 
 // Sk8::UpdateBoneTransforms m_matrices layout vote: fresh bank captures
 // score the UBT rows; >=75% near/exact over 24 votes locks the
@@ -241,6 +250,8 @@ void SnapshotPack(uint8_t* base, uint32_t inst, bool ubt = false) {
   PackSnap snap;
   snap.inst = inst;
   snap.entity = tl_pack_owner;
+  snap.seq = tl_pack_seq;
+  snap.part = tl_pack_part;
   snap.arr_begin = arr;
   snap.ubt = ubt;
   if (arr_end > arr && (arr_end - arr) % kCtxStride == 0 &&
@@ -372,6 +383,7 @@ void SnapshotLwEntity(uint8_t* base, uint32_t entity) {
       PackSnap snap;
       snap.inst = rec;
       snap.entity = entity;
+      snap.seq = tl_pack_seq;
       snap.arr_begin = actx + k * kCtxStride;  // exactly this mesh's ctx
       snap.arr_bytes = kCtxStride;
       snap.row_ofs = ofs + row * 12;
@@ -471,8 +483,37 @@ struct ServeHist {
 };
 std::unordered_map<uint32_t, ServeHist> g_serve_hist;
 
+// char_sync provenance for a served item: which pack call / part / set the
+// rows came from, and (when the item still holds this frame's bank capture,
+// dbg_src 1/2) how far the served rows sit from it: the game's own draw
+// consumed that bank, so a served pose metres away from it is the wrong
+// pick (another piece, another character, a stale pose). After
+// dougieprishpreed/skate3recomp-plus ProbeServeDivergence (a042005).
+void NoteServe(DrawItem& item, const PackSnap* snap, const float* rows, uint32_t n,
+               uint32_t needed) {
+  if (snap != nullptr) {
+    item.pose_seq = snap->seq;
+    item.pose_part = snap->part;
+    item.pose_set = !g_packs_prev.empty() && snap >= g_packs_prev.data() &&
+                    snap < g_packs_prev.data() + g_packs_prev.size();
+  }
+  item.serve_div = -1.0f;
+  if (item.dbg_src == 1 || item.dbg_src == 2) {
+    const uint32_t lim = std::min<uint32_t>(needed != 0 ? needed : n, n);
+    float worst = 0.0f;
+    for (uint32_t r = 0; r < lim && (r + 1) * 12 <= item.bones.size(); ++r) {
+      const float dx = rows[r * 12 + 3] - item.bones[r * 12 + 3];
+      const float dy = rows[r * 12 + 7] - item.bones[r * 12 + 7];
+      const float dz = rows[r * 12 + 11] - item.bones[r * 12 + 11];
+      worst = std::max(worst, std::sqrt(dx * dx + dy * dy + dz * dz));
+    }
+    item.serve_div = worst;
+  }
+}
+
 uint32_t ServeAuthoritativePalettesImpl(uint8_t* base,
-                                        skate3::native_scene::FrameScene& scene) {
+                                        skate3::native_scene::FrameScene& scene,
+                                        size_t first_item) {
   if (!REXCVAR_GET(skate3_native_render_scene_palette_serve) ||
       !g_pal_ok.load(std::memory_order_relaxed)) {
     return 0;
@@ -482,7 +523,8 @@ uint32_t ServeAuthoritativePalettesImpl(uint8_t* base,
     return 0;
   }
   uint32_t served = 0;
-  for (DrawItem& item : scene.items) {
+  for (size_t item_i = first_item; item_i < scene.items.size(); ++item_i) {
+    DrawItem& item = scene.items[item_i];
     // Pending items are half-built (the fixup/rescue machinery owns them);
     // LW-store substitutions (dbg_src 10) are already authoritative.
     if (!item.skinned || item.ctx == 0 || item.bones.size() < 12 ||
@@ -519,6 +561,7 @@ uint32_t ServeAuthoritativePalettesImpl(uint8_t* base,
       const float* rows;
       uint32_t nrows;
       bool ubt;
+      const PackSnap* snap;
     };
     Cand ring[8];
     uint32_t ring_n = 0;
@@ -611,7 +654,7 @@ uint32_t ServeAuthoritativePalettesImpl(uint8_t* base,
           if (d > 1.5f && !entity_exact) {
             continue;  // another character's piece
           }
-          ring[ring_n++ & 7] = {r, snap.rows, true};
+          ring[ring_n++ & 7] = {r, snap.rows, true, &snap};
           if (entity_exact && d < best_dx + 0.05f) {
             pick_x = &snap;
             pick_x_rows = r;
@@ -647,7 +690,7 @@ uint32_t ServeAuthoritativePalettesImpl(uint8_t* base,
             pick_x_rows = r;
             best_dx = 0.0f;
           }
-          ring[ring_n++ & 7] = {r, snap.rows, snap.ubt};
+          ring[ring_n++ & 7] = {r, snap.rows, snap.ubt, &snap};
           continue;
         }
         // Instance-wide window (PackAndMultiply): the packed bone count
@@ -673,7 +716,7 @@ uint32_t ServeAuthoritativePalettesImpl(uint8_t* base,
           // candidate the item keeps its captured palette.
           continue;
         }
-        ring[ring_n++ & 7] = {r, snap.rows, snap.ubt};
+        ring[ring_n++ & 7] = {r, snap.rows, snap.ubt, &snap};
         if (entity_exact && d < best_dx + 0.05f) {
           pick_x = &snap;
           pick_x_rows = r;
@@ -804,6 +847,7 @@ uint32_t ServeAuthoritativePalettesImpl(uint8_t* base,
           cr = cbuf;
         }
         if (HashRows(cr, size_t(n) * 12) == hist.h1) {
+          NoteServe(item, c.snap, cr, n, needed);
           std::memcpy(item.bones.data(), cr, size_t(n) * 12 * sizeof(float));
           std::fill(item.bones.begin() + size_t(n) * 12, item.bones.end(),
                     0.0f);
@@ -827,6 +871,7 @@ uint32_t ServeAuthoritativePalettesImpl(uint8_t* base,
     hist.t[0] = pick_rows[3];
     hist.t[1] = pick_rows[7];
     hist.t[2] = pick_rows[11];
+    NoteServe(item, pick, pick_rows, n, needed);
     std::memcpy(item.bones.data(), pick_rows, size_t(n) * 12 * sizeof(float));
     // Zero the tail: rows beyond the game's own packed count are never
     // indexed by the mesh, and leftover bank-capture garbage there would
@@ -879,8 +924,9 @@ bool CaptureActive() {
 }  // namespace
 
 uint32_t ServeAuthoritativePalettes(uint8_t* base,
-                                    skate3::native_scene::FrameScene& scene) {
-  return ServeAuthoritativePalettesImpl(base, scene);
+                                    skate3::native_scene::FrameScene& scene,
+                                    size_t first_item) {
+  return ServeAuthoritativePalettesImpl(base, scene, first_item);
 }
 
 uint32_t ExchangePackOwner(uint32_t entity) {
@@ -893,6 +939,8 @@ void OnPackPalette(uint8_t* base, uint32_t instance) {
   if (instance == 0 || !CaptureActive()) {
     return;
   }
+  tl_pack_seq = g_pack_seq.fetch_add(1, std::memory_order_relaxed) + 1;
+  tl_pack_part = 0xFFFF;
   SnapshotPack(base, instance);
 }
 
@@ -906,15 +954,20 @@ void OnBoneTransforms(uint8_t* base, uint32_t parts, uint32_t count) {
   // part becomes a per-piece PackSnap (its ctx window is exactly one
   // MeshContext), which maps the player through the same containment
   // matching as every other instance.
+  tl_pack_seq = g_pack_seq.fetch_add(1, std::memory_order_relaxed) + 1;
   for (uint32_t k = 0; k < count; ++k) {
+    tl_pack_part = uint16_t(k);
     SnapshotPack(base, parts + k * 0x28, /*ubt=*/true);
   }
+  tl_pack_part = 0xFFFF;
 }
 
 void OnLwPack(uint8_t* base, uint32_t entity) {
   if (entity == 0 || !CaptureActive()) {
     return;
   }
+  tl_pack_seq = g_pack_seq.fetch_add(1, std::memory_order_relaxed) + 1;
+  tl_pack_part = 0xFFFF;
   SnapshotLwEntity(base, entity);
 }
 

@@ -1382,6 +1382,23 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_dyn_gap_fill, true, "Skate 3",
                     "Re-publish character/cloth/skinned items for up to two "
                     "missed publish frames (high-frame-rate body flicker)")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_smooth_continuity, true, "Skate 3",
+                    "Pose smoothing: a large step of the SAME character piece that "
+                    "continues its motion (a hitch, a speed glitch) keeps its pose "
+                    "history instead of restarting it, and a short or restarted "
+                    "history is drawn at the camera's playback time rather than at "
+                    "its raw pose ahead of the camera (detached / offset limbs). "
+                    "Off = the old behavior.");
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_char_sync, false, "Skate 3",
+                    "Diagnostic: each frame, check that every piece of each character "
+                    "was drawn from the same moment (pose source, pack tick, draw "
+                    "delay) and log `char-sync` lines naming the pieces that were "
+                    "not, or that vanished, and why (tools/harness/char_sync_report.py).");
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_rescue_serve, true, "Skate 3",
+                    "After the per-instance rescue re-publishes a refused skinned "
+                    "character piece, give it this frame's packed pose from the "
+                    "game when there is one (instead of the cached, re-anchored "
+                    "palette). Off = the cached palette only.");
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_rescue_reanchor, true, "Skate 3",
                     "When a skinned character piece's pose capture is refused and "
                     "its last palette is re-published (the per-instance rescue), "
@@ -5276,6 +5293,7 @@ uint32_t CaptureDynamicState(uint8_t* base, uint32_t ctx, bool world_path,
       if (CaptureSkinnedState(base, bank, palette_base, item)) {
         g_palette_snapshots.fetch_add(1, std::memory_order_relaxed);
         item.dbg_src = 1;
+        item.pose_frame = uint32_t(g_guest_frame);
         item.caster_bank = BankIsOrtho(base, bank);
       } else {
         item.pending = true;
@@ -6633,6 +6651,7 @@ void OnDrawDone(uint8_t* base, uint32_t func, uint32_t r4, uint32_t r5, uint32_t
     probe.caster_bank = BankIsOrtho(base, bank);
     probe.pending = false;
     probe.dbg_src = 2;
+    probe.pose_frame = uint32_t(g_guest_frame);
     d = std::move(probe);
     if ((d.char_family != 0 || d.hall_of_meat) && g_frame_char_refresh.size() < 256) {
       g_frame_char_refresh.emplace(key, oldest->second);
@@ -6692,6 +6711,7 @@ void OnDrawDone(uint8_t* base, uint32_t func, uint32_t r4, uint32_t r5, uint32_t
   }
   d.pending = false;
   d.dbg_src = 2;
+  d.pose_frame = uint32_t(g_guest_frame);
   if (!d.skinned) CaptureHallOfMeatState(base, d);
   if ((d.char_family != 0 || d.hall_of_meat) && g_frame_char_refresh.size() < 256) {
     g_frame_char_refresh.emplace(key, oldest->second);
@@ -7678,11 +7698,12 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
     int count = 0;
     int newest = 0;
     uint64_t seen = 0;
-    // EMA of this entity's own pose-change period. Characters/board update
-    // at the 60 Hz sim value cadence (~16.7 ms); traffic vehicles update
-    // SLOWER (their own sim rate); those entities need their evaluation
-    // point delayed by one own-period or the playback clock runs past
-    // their newest sample and they render raw stepped poses (see play_e).
+    // This entity's own pose-change period (mean spacing over the ring).
+    // Characters/board update at the 60 Hz sim value cadence (~16.7 ms);
+    // traffic vehicles update SLOWER (their own sim rate); those entities
+    // need their evaluation point delayed by one own-period or the playback
+    // clock runs past their newest sample and they render raw stepped poses
+    // (see play_e).
     double period = 0.0;
     // Per-bone skin-weighted vertex centroids in BIND space (w, x, y, z),
     // lazily computed from the mesh's own vertex buffer the first time a
@@ -7700,10 +7721,33 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
     // stream) or holds (perspective stream fresh; interleaving the two
     // sawtooths the wheel phase).
     double last_persp_t = 0.0;
+    // Consecutive ingests from the same captured instance/world. Used only
+    // to distinguish motion across a missing observation from a teleport;
+    // this does not change ring keys or permit cross-instance claims.
+    // (Upstream of this port also keys it by world identity; here every
+    // use requires the previous pose <= 100 ms old, which no world load
+    // meets.)
+    uint32_t motion_ctx = 0;
+    uint32_t motion_owner = 0;
+    unsigned motion_samples = 0;
+    // A motion discontinuity of the SAME instance (teleport, respawn, a hitch
+    // the continuity test cannot vouch for) keeps the last pose before it,
+    // shown until the playback clock reaches the first pose after it: the
+    // jump happens where the camera's playback is, never frames early. A
+    // different object taking the slot (context, owner, world, unknown
+    // identity, clone mispair) or a stale/LOD restart keeps nothing.
+    DynPose held;
+    double held_until = 0.0;
+    bool has_held = false;
   };
   static std::unordered_map<uint64_t, DynHist> s_hist;
   static uint64_t s_frame = 0;
   ++s_frame;
+  // Same-instance motion continuity, the pre-jump hold and short-history
+  // playback (ported from dougieprishpreed/skate3recomp-plus 084dc93; see
+  // skate3_native_render_scene_smooth_continuity). Off = the old resets and
+  // raw short histories.
+  const bool continuity = REXCVAR_GET(skate3_native_render_scene_smooth_continuity);
   // Bone-signal recorder window state (see BoneSigAppend). Written on a
   // detached thread once the window closes.
   const bool bs_rec = BoneSigTick(now);
@@ -8211,6 +8255,86 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
           // its smoothed lag (the speed-scaled garment jumping). Genuine
           // teleports/respawns still clear the 1.5 m character gate.
           discontinuity = d2 > (skinned || item.ropa ? 2.25f : 0.09f);
+          // The distance gate above assumes ordinary speed in one
+          // observation. A hitch can contain several ticks of valid travel
+          // (run259: 1.88m in 79ms), and above ~90 m/s (speed glitches) every
+          // ordinary tick does. Resetting that history renders a zero-lag
+          // actor against the delayed camera, then steps backward as history
+          // fills again (every frame at speed-glitch speeds). For an
+          // established SAME instance, test deviation from its preceding
+          // motion over a comparable time span, using sample times.
+          // Prediction is only a continuity test: rendering still interpolates
+          // the original observed poses. Teleports still break the predicted
+          // motion and reset; clone claims, stale histories, size changes and
+          // rigid props retain their old gates.
+          const double motion_dt = stamp - latest.t;
+          const bool same_instance = continuity && (skinned || item.ropa) && item.ctx != 0 &&
+              h.motion_ctx == item.ctx && h.motion_owner == item.lw_entity &&
+              !item.retained && !item.caster_bank && motion_dt <= 0.1;
+          if (discontinuity && same_instance && h.count == 1 && h.motion_samples >= 1) {
+            // A history that just restarted has no motion to predict from, so
+            // this step of the same instance defines it: at speed-glitch speeds
+            // the first huge step resets, and every later one would too,
+            // rendering raw for the whole glitch.
+            discontinuity = false;
+          } else if (discontinuity && same_instance && h.count >= 2 && h.motion_samples >= 2) {
+            // Match the velocity-measurement interval to the missing interval.
+            // Extrapolating a single tick magnifies ordinary limb animation
+            // and timestamp noise by the hitch/tick ratio. Only use observed
+            // samples from this same instance; never borrow an older owner.
+            // Two samples suffice right after a restart (at most 2x).
+            int back = 1;
+            const int available = std::min(h.count, int(h.motion_samples));
+            while (back + 1 < available &&
+                   latest.t - h.ring[(h.newest + kRing - back) % kRing].t < motion_dt) {
+              ++back;
+            }
+            const DynPose& prev = h.ring[(h.newest + kRing - back) % kRing];
+            const double prev_dt = latest.t - prev.t;
+            if (prev_dt >= (available > 2 ? motion_dt : 0.5 * motion_dt) &&
+                prev_dt <= 0.1 + h.period &&
+                (!skinned || prev.b.size() == item.bones.size())) {
+              const float ratio = float(motion_dt / prev_dt);
+              const auto residual2 = [&](const float* cur, const float* last,
+                                         const float* old, size_t offset,
+                                         size_t stride) {
+                float sum = 0.0f;
+                for (size_t axis = 0; axis < 3; ++axis) {
+                  const size_t j = offset + axis * stride;
+                  const float e = cur[j] - last[j] - (last[j] - old[j]) * ratio;
+                  sum += e * e;
+                }
+                return sum;
+              };
+              float error2 = 1e30f;
+              if (skinned) {
+                // Same non-spinning weighted reference policy as the original
+                // jump gate; a wheel's affine translation is not body travel.
+                const size_t n = std::min(h.cen.size(), item.bones.size() / 12);
+                for (size_t bone = 0; bone < n; ++bone) {
+                  if (h.cen[bone][0] > 0.5f) {
+                    error2 = std::min(error2, residual2(item.bones.data(),
+                        latest.b.data(), prev.b.data(), bone * 12 + 3, 4));
+                  }
+                }
+                if (error2 == 1e30f) {
+                  error2 = residual2(item.bones.data(), latest.b.data(),
+                                     prev.b.data(), 3, 4);
+                }
+              } else {
+                error2 = residual2(item.world, latest.w, prev.w, 12, 1);
+                // Do not excuse a rigid garment's rotation discontinuity.
+                for (int row = 0; row < 3; ++row) {
+                  for (int col = 0; col < 3; ++col) {
+                    const int j = row * 4 + col;
+                    const float delta = item.world[j] - latest.w[j];
+                    error2 = std::max(error2, delta * delta * 4.0f);
+                  }
+                }
+              }
+              discontinuity = !(error2 <= 2.25f);
+            }
+          }
           if (discontinuity && !skinned && d2 < 2.25f) {
             // A rigid step that only the tightened bound caught = a
             // close-clone mispair that would have LERPED (the prop jitter).
@@ -8226,6 +8350,16 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
           }
         }
         if (discontinuity) {
+          const bool keep_pre =
+              continuity && now - latest.t <= 0.1 && (skinned || item.ropa) && item.ctx != 0 &&
+              (!skinned || latest.b.size() == item.bones.size()) &&
+              h.motion_ctx == item.ctx && h.motion_owner == item.lw_entity &&
+              !item.retained && !item.caster_bank;
+          h.has_held = keep_pre;
+          if (keep_pre) {
+            h.held = latest;
+            h.held_until = stamp;
+          }
           h.count = 0;
           if (trk != nullptr) {
             trk->rst = 1;
@@ -8236,17 +8370,16 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
         trk->ing = 1;
         trk->stamp_ms = float((now - stamp) * 1e3);
       }
-      const double prev_t = h.count > 0 ? h.ring[h.newest].t : 0.0;
+      const bool fresh_motion = !item.retained && !item.caster_bank;
+      const bool same_motion_instance = fresh_motion && h.count != 0 &&
+          h.motion_ctx == item.ctx && h.motion_owner == item.lw_entity;
+      h.motion_samples = !fresh_motion ? 0 :
+          (same_motion_instance ? std::min(h.motion_samples + 1, unsigned(kRing)) : 1);
+      h.motion_ctx = item.ctx;
+      h.motion_owner = item.lw_entity;
       h.newest = h.count == 0 ? 0 : (h.newest + 1) % kRing;
       DynPose& p = h.ring[h.newest];
       p.t = stamp;
-      if (prev_t > 0.0) {
-        // Track the entity's OWN pose-change period (see DynHist::period).
-        const double dt = p.t - prev_t;
-        if (dt > 0.0005 && dt < 0.1) {
-          h.period = h.period == 0.0 ? dt : h.period * 0.75 + dt * 0.25;
-        }
-      }
       p.b = item.bones;
       std::memcpy(p.w, item.world, sizeof(p.w));
       p.shape_seq = 0;
@@ -8256,6 +8389,15 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
         p.shape_seq = sit != g_ropa_last_seq.end() ? sit->second : 0;
       }
       h.count = std::min(h.count + 1, kRing);
+      // The entity's OWN pose-change period (see DynHist::period): the mean
+      // spacing over the ring. A per-sample EMA read ONE missing pose (a
+      // doubled gap) as a slower entity and moved its playback point for a
+      // frame (see play_e); across the ring a single gap barely registers,
+      // while a vehicle's own slower rate still shows in full.
+      if (h.count >= 2) {
+        const double span = p.t - h.ring[(h.newest + kRing - h.count + 1) % kRing].t;
+        h.period = span / double(h.count - 1);
+      }
       if (skinned && !item.caster_bank && !item.retained) {
         h.last_persp_t = p.t;
       }
@@ -8267,11 +8409,85 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
     } else if (changed && trk != nullptr) {
       trk->ing = 2;  // change withheld by the ingest spacing floor
     }
-    if (h.count < 3 || now - h.ring[h.newest].t > 0.1) {
+    // Per-entity playback point. Entities whose own pose stream is SLOWER
+    // than the 60 Hz character cadence (traffic vehicles tick on their own
+    // sim rate) pin the shared playback clock past their newest sample;
+    // alpha clamps at 1.0, the whole smoothing machinery degenerates to
+    // raw stepped poses, and every new sample renders as a visible jump
+    // (the vehicle judder/catch-up that survived the entity boxcar).
+    // Evaluating one own-period earlier keeps the eval point BRACKETED by
+    // samples: the staircase renders as continuous piecewise-linear
+    // motion, at the cost of that entity lagging one of ITS sim updates
+    // behind the world, invisible for background traffic, and never
+    // applied to 60 Hz entities (the skater/NPCs keep the shared clock).
+    // KI-120: "slower than the characters" must be relative to the guest's
+    // actual tick. At 30 fps (Odin 2) the camera AND the skater tick every
+    // 33 ms, so the fixed 60 Hz reference delayed the skater 17 ms behind
+    // the camera. Mode 1 measures against the camera's own period (never
+    // below the 60 Hz character cadence, so the PC behavior is unchanged).
+    const double char_period =
+        REXCVAR_GET(skate3_native_render_scene_dyn_stamp_mode) == 1
+            ? std::max(1.0 / 60.0, g_cam_period)
+            : 1.0 / 60.0;
+    const double play_e =
+        g_smooth_play -
+        (h.period > (char_period > 1.0 / 60.0 ? char_period + 0.0035 : 0.020)
+             ? std::min(h.period - char_period, 0.1)
+             : 0.0);
+    if (h.has_held && (h.count == 0 || play_e >= h.held_until)) {
+      h.has_held = false;  // playback reached the jump
+    }
+    if ((continuity ? h.count == 0 : h.count < 3) || now - h.ring[h.newest].t > 0.1) {
+      // Nothing recent: the entity is not changing (its raw pose is its
+      // newest), or it just appeared after a gap.
+      item.draw_mode = 1;
+      item.draw_lag_ms = h.count > 0 ? float((now - h.ring[h.newest].t) * 1e3) : 0.0f;
       if (trk != nullptr) {
         trk->raw_render = 1;
       }
-      continue;  // not enough history yet: raw stepped pose (one-time snap)
+      continue;
+    }
+    if (h.has_held || h.count < 3) {
+      // Consistent smoothing: a short or just-restarted history is drawn at
+      // the shared playback time too, from what it has (the pose before a
+      // same-instance jump until playback reaches the jump, the oldest pose
+      // until playback reaches it, then the pair between them). Drawing its
+      // newest (raw) pose instead put the part up to the playback delay
+      // ahead of the camera and stepped it back as the history filled: the
+      // offset skater of the log234 load runs.
+      const DynPose& oldest = h.ring[(h.newest + kRing - h.count + 1) % kRing];
+      const DynPose& newest = h.ring[h.newest];
+      const DynPose* p0 = h.has_held ? &h.held : &oldest;
+      const DynPose* p1 = p0;
+      float a = 0.0f;
+      if (!h.has_held && h.count >= 2 && play_e > oldest.t) {
+        // Count 2: oldest and newest are the only pair.
+        p1 = &newest;
+        a = float(std::clamp((play_e - oldest.t) / std::max(newest.t - oldest.t, 0.0005), 0.0, 1.0));
+      }
+      const bool fits = skinned ? p0->b.size() == item.bones.size() &&
+                                      p1->b.size() == item.bones.size()
+                                : true;
+      if (!fits) {
+        item.draw_mode = 1;
+        item.draw_lag_ms = float((now - newest.t) * 1e3);
+        if (trk != nullptr) {
+          trk->raw_render = 1;
+        }
+        continue;
+      }
+      item.draw_mode = h.has_held ? 2 : 3;
+      item.draw_lag_ms = float((now - (p0->t + (p1->t - p0->t) * a)) * 1e3);
+      if (skinned) {
+        for (size_t i = 0; i < item.bones.size(); ++i) {
+          item.bones[i] = p0->b[i] + (p1->b[i] - p0->b[i]) * a;
+        }
+      } else {
+        for (int i = 0; i < 16; ++i) {
+          item.world[i] = p0->w[i] + (p1->w[i] - p0->w[i]) * a;
+        }
+      }
+      continue;
     }
     // Evaluate the ring's piecewise-linear pose signal at time tt into
     // `out_b` (skinned, weighted-accumulated) / `out_w` (rigid), scaled by
@@ -8318,31 +8534,6 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
     const double filter_w = std::clamp(
         REXCVAR_GET(skate3_native_render_scene_smooth_camera_filter_ms), 0.0, 200.0) *
         1e-3;
-    // Per-entity playback point. Entities whose own pose stream is SLOWER
-    // than the 60 Hz character cadence (traffic vehicles tick on their own
-    // sim rate) pin the shared playback clock past their newest sample;
-    // alpha clamps at 1.0, the whole smoothing machinery degenerates to
-    // raw stepped poses, and every new sample renders as a visible jump
-    // (the vehicle judder/catch-up that survived the entity boxcar).
-    // Evaluating one own-period earlier keeps the eval point BRACKETED by
-    // samples: the staircase renders as continuous piecewise-linear
-    // motion, at the cost of that entity lagging one of ITS sim updates
-    // behind the world, invisible for background traffic, and never
-    // applied to 60 Hz entities (the skater/NPCs keep the shared clock).
-    // KI-120: "slower than the characters" must be relative to the guest's
-    // actual tick. At 30 fps (Odin 2) the camera AND the skater tick every
-    // 33 ms, so the fixed 60 Hz reference delayed the skater 17 ms behind
-    // the camera. Mode 1 measures against the camera's own period (never
-    // below the 60 Hz character cadence, so the PC behavior is unchanged).
-    const double char_period =
-        REXCVAR_GET(skate3_native_render_scene_dyn_stamp_mode) == 1
-            ? std::max(1.0 / 60.0, g_cam_period)
-            : 1.0 / 60.0;
-    const double play_e =
-        g_smooth_play -
-        (h.period > (char_period > 1.0 / 60.0 ? char_period + 0.0035 : 0.020)
-             ? std::min(h.period - char_period, 0.1)
-             : 0.0);
     static std::vector<float> acc;  // guest render thread only
     float wacc[16] = {};
     bool ok = true;
@@ -8366,11 +8557,15 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
       ok = accum_at(play_e, 1.0f, acc.data(), wacc);
     }
     if (!ok) {
+      item.draw_mode = 1;
+      item.draw_lag_ms = float((now - h.ring[h.newest].t) * 1e3);
       if (trk != nullptr) {
         trk->raw_render = 2;
       }
       continue;  // palette-size mismatch in the window: raw pose this frame
     }
+    item.draw_mode = 4;
+    item.draw_lag_ms = float((now - std::min(play_e, h.ring[h.newest].t)) * 1e3);
     if (trk != nullptr) {
       trk->box = filter_w > 0.0005 && h.count >= 4 ? 1 : 0;
     }
@@ -9447,6 +9642,203 @@ static void LogStaleRescue(const DrawItem& item, float moved_m, uint64_t age_fra
   }
 }
 
+// ---- char_sync (skate3_native_render_scene_char_sync; diagnostic) -------
+// The native renderer rebuilds a character piece by piece: each piece gets
+// its own pose (bank capture, served pack, rescued cache) and its own
+// smoothing history. A piece whose pose comes from another moment than the
+// rest of the body is drawn off it (speed x time offset); a piece with no
+// usable pose is dropped. This check names both, per character, per frame.
+namespace {
+struct CharDrop {
+  uint32_t ctx, mesh;
+  int age;  // frames since its cached pose; -1 = never cached
+};
+std::vector<CharDrop> g_char_drops;  // this frame's dropped rescues
+struct CharSeen {
+  uint32_t mesh, group;
+  uint64_t last;
+  uint8_t src;
+};
+std::unordered_map<uint32_t, CharSeen> g_char_seen;  // guest render thread only
+
+const char* CharSrcName(uint8_t s) {
+  switch (s) {
+    case 1: return "cap";
+    case 2: return "fix";
+    case 3: return "rescue";
+    case 6: return "heal";
+    case 9: return "gapfill";
+    case 10: return "lw";
+    case 11: return "serve";
+    case 13: return "reanchor";
+    default: return "other";
+  }
+}
+}  // namespace
+
+void NoteCharDrop(uint32_t ctx, uint32_t mesh, int age) {
+  if (REXCVAR_GET(skate3_native_render_scene_char_sync) && g_char_drops.size() < 512) {
+    g_char_drops.push_back({ctx, mesh, age});
+  }
+}
+
+// Served items (dbg_src 11) from scene.items[first..]: the pose frame is this
+// frame, or the previous one for a pick from the previous frame's packs.
+void StampServedFrames(FrameScene& scene, size_t first) {
+  for (size_t i = first; i < scene.items.size(); ++i) {
+    DrawItem& it = scene.items[i];
+    if (it.dbg_src == 11) {
+      it.pose_frame = uint32_t(g_guest_frame) - it.pose_set;
+    }
+  }
+}
+
+void CharSyncLog(const FrameScene& scene) {
+  if (!REXCVAR_GET(skate3_native_render_scene_char_sync)) {
+    g_char_drops.clear();
+    return;
+  }
+  const uint64_t frame = g_guest_frame;
+  std::vector<const DrawItem*> pieces;
+  for (const DrawItem& it : scene.items) {
+    if (it.skinned && !it.ropa && it.ctx != 0 && it.char_family >= 1 &&
+        it.char_family <= 5 && !it.caster_bank && !it.draws.empty()) {
+      pieces.push_back(&it);
+    }
+  }
+  std::sort(pieces.begin(), pieces.end(),
+            [](const DrawItem* a, const DrawItem* b) { return a->ctx < b->ctx; });
+  // Characters: the owning LW entity, else ctx records within 0x200 bytes
+  // (one character's MeshContexts are allocated together).
+  std::unordered_map<uint32_t, std::vector<const DrawItem*>> groups;
+  std::unordered_map<uint32_t, const DrawItem*> piece_of;
+  std::unordered_map<uint32_t, uint32_t> group_of;
+  uint32_t cluster = 0, prev = 0;
+  for (const DrawItem* it : pieces) {
+    if (prev == 0 || it->ctx - prev > 0x200) {
+      cluster = it->ctx | 1u;
+    }
+    prev = it->ctx;
+    const uint32_t g = it->lw_entity != 0 ? it->lw_entity : cluster;
+    if (!group_of.try_emplace(it->ctx, g).second) {
+      continue;  // a second draw item of the same piece
+    }
+    piece_of[it->ctx] = it;
+    groups[g].push_back(it);
+  }
+  for (const auto& [g, list] : groups) {
+    if (list.size() < 2) {
+      continue;
+    }
+    // Majorities: UBT tick, draw mode, draw delay.
+    std::unordered_map<uint32_t, int> seqs;
+    std::unordered_map<uint8_t, int> modes;
+    std::unordered_map<uint64_t, int> parts;
+    std::vector<float> lags;
+    for (const DrawItem* it : list) {
+      if (it->pose_part != 0xFFFF && it->dbg_src == 11) {
+        ++seqs[it->pose_seq];
+        ++parts[(uint64_t(it->pose_seq) << 16) | it->pose_part];
+      }
+      ++modes[it->draw_mode];
+      lags.push_back(it->draw_lag_ms);
+    }
+    uint32_t seq_major = 0;
+    int seq_n = 0;
+    for (const auto& [s, n] : seqs) {
+      if (n > seq_n) {
+        seq_major = s;
+        seq_n = n;
+      }
+    }
+    uint8_t mode_major = 0;
+    int mode_n = 0;
+    for (const auto& [m, n] : modes) {
+      if (n > mode_n) {
+        mode_major = m;
+        mode_n = n;
+      }
+    }
+    std::sort(lags.begin(), lags.end());
+    const float lag_med = lags[lags.size() / 2];
+    std::string issues;
+    const auto add = [&](const DrawItem* it, const std::string& what) {
+      issues += fmt::format(" {:08X}/{:08X}:{}", it->ctx, it->mesh, what);
+    };
+    for (const DrawItem* it : list) {
+      const uint32_t age = it->pose_frame != 0 ? uint32_t(frame) - it->pose_frame : 0;
+      if (it->dbg_src == 3 || it->dbg_src == 13 || it->dbg_src == 6 || it->dbg_src == 9) {
+        add(it, fmt::format("stale={}/{}f", CharSrcName(it->dbg_src), age));
+      } else if (it->dbg_src == 11 && it->pose_set == 1) {
+        add(it, "prevpack");
+      }
+      if (it->pose_part != 0xFFFF && it->dbg_src == 11 && seq_n > 0 &&
+          it->pose_seq != seq_major) {
+        add(it, fmt::format("tick={:+d}", int(it->pose_seq) - int(seq_major)));
+      }
+      if (it->pose_part != 0xFFFF && it->dbg_src == 11 &&
+          parts[(uint64_t(it->pose_seq) << 16) | it->pose_part] > 1) {
+        add(it, fmt::format("dup=part{}", it->pose_part));
+      }
+      if (it->serve_div > 0.3f) {
+        add(it, fmt::format("div={:.2f}m", it->serve_div));
+      }
+      if (it->draw_mode != mode_major) {
+        add(it, fmt::format("mode={}", it->draw_mode));
+      }
+      if (std::fabs(it->draw_lag_ms - lag_med) > 8.0f) {
+        add(it, fmt::format("lag={:+.0f}ms", it->draw_lag_ms - lag_med));
+      }
+    }
+    // Pieces of this character drawn last frame but missing now (reported
+    // once, on the first missing frame).
+    for (const auto& [ctx, s] : g_char_seen) {
+      if (s.last + 1 != frame || group_of.count(ctx) != 0) {
+        continue;
+      }
+      // Same character: same entity key, or (ctx-cluster keys move when the
+      // lowest piece is the one missing) a ctx within 0x200 of a piece here.
+      bool same = s.group == g;
+      for (size_t k = 0; !same && (s.group & 1u) != 0 && k < list.size(); ++k) {
+        same = (list[k]->ctx > ctx ? list[k]->ctx - ctx : ctx - list[k]->ctx) <= 0x200;
+      }
+      if (!same) {
+        continue;
+      }
+      std::string why = "absent";
+      for (const CharDrop& d : g_char_drops) {
+        if (d.ctx == ctx) {
+          why = d.age < 0 ? "nocache" : fmt::format("cache{}f", d.age);
+        }
+      }
+      issues += fmt::format(" {:08X}/{:08X}:gone({},was {})", ctx, s.mesh, why,
+                            CharSrcName(s.src));
+    }
+    if (!issues.empty()) {
+      REXLOG_INFO("char-sync f={} grp={:08X} n={} seq={} mode={} lag={:.0f}ms issues:{}",
+                  frame, g, list.size(), seq_major, mode_major, lag_med, issues);
+    }
+    if (frame % 30 == 0) {
+      std::string all;
+      for (const DrawItem* it : list) {
+        all += fmt::format(" {:08X}/{:08X}/{}/s{}p{}/m{}/{:.0f}ms", it->ctx, it->mesh,
+                           CharSrcName(it->dbg_src), it->pose_seq,
+                           it->pose_part == 0xFFFF ? -1 : int(it->pose_part), it->draw_mode,
+                           it->draw_lag_ms);
+      }
+      REXLOG_INFO("char-sync-sum f={} grp={:08X} n={}{}", frame, g, list.size(), all);
+    }
+  }
+  for (const auto& [ctx, g] : group_of) {
+    const DrawItem* it = piece_of[ctx];
+    g_char_seen[ctx] = {it->mesh, g, frame, it->dbg_src};
+  }
+  for (auto it = g_char_seen.begin(); it != g_char_seen.end();) {
+    it = frame - it->second.last > 60 ? g_char_seen.erase(it) : std::next(it);
+  }
+  g_char_drops.clear();
+}
+
 void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
   // Before any early return (see ReleaseFreecamIfOff).
   ReleaseFreecamIfOff();
@@ -9912,6 +10304,7 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
     // the rescue caches learn them; unmapped items keep the bank pipeline.
     const auto pal_t0 = PerfClock::now();
     g_pal_served_frame = skate3::native_palette::ServeAuthoritativePalettes(base, scene);
+    StampServedFrames(scene, 0);
     g_frame_bpal_ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                    PerfClock::now() - pal_t0)
                                    .count());
@@ -9955,6 +10348,7 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
             g_guest_frame - cit->second.frame <= 30) {
           item.bones = cit->second.bones;
           item.dbg_src = 6;
+          item.pose_frame = uint32_t(cit->second.frame);
           healed = true;
         }
       } else {
@@ -9967,6 +10361,7 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
             g_guest_frame - cit->second.frame <= 10) {
           item.bones = cit->second.bones;
           item.dbg_src = 6;
+          item.pose_frame = uint32_t(cit->second.frame);
           healed = true;
         }
       }
@@ -10041,6 +10436,7 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
     // whose ctx did not publish this frame re-publishes with ITS OWN last
     // palette (<= 10 frames fresh), regardless of how many clones of the
     // mesh are alive.
+    const size_t rescue_first = scene.items.size();
     for (const auto& [ctxk, cand] : pending_skinned_by_ctx) {
       if (dyn_slot.find(ctxk) != dyn_slot.end()) {
         continue;  // this instance published live
@@ -10048,6 +10444,10 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
       const auto bit = g_bones_cache_ctx.find(ctxk);
       if (bit == g_bones_cache_ctx.end() ||
           g_guest_frame - bit->second.frame > 10) {
+        NoteCharDrop(ctxk, cand->mesh,
+                     bit == g_bones_cache_ctx.end()
+                         ? -1
+                         : int(g_guest_frame - bit->second.frame));
         continue;  // stale = an old pose; one missing frame beats a teleport
       }
       scene.items.push_back(*cand);
@@ -10055,6 +10455,7 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
       rescued.bones = bit->second.bones;
       rescued.pending = false;
       rescued.dbg_src = 3;
+      rescued.pose_frame = uint32_t(bit->second.frame);
       // KI-117: the cached palette is world-space and up to 10 frames old.
       // Carry it along with the owner entity's motion since the cache was
       // written, so a rescued piece stays on the skater instead of being
@@ -10088,6 +10489,30 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
       // publish the same instance this frame.
       dyn_slot.try_emplace(ctxk, scene.items.size() - 1);
       g_lw_ctx_rescued.fetch_add(1, std::memory_order_relaxed);
+    }
+    // The authoritative serve above ran before these rescues existed, so a
+    // rescued piece kept its cached pose (up to 10 frames old, re-anchored
+    // above) even when the game packed this frame's pose for it. Serve the
+    // rescued tail now (dbg_src 11: interpolated like any live piece) and
+    // teach the ctx cache the fresh pose; pieces the game did not pack keep
+    // the re-anchored cache. Ported from dougieprishpreed/skate3recomp-plus
+    // (v0.1, a042005).
+    if (scene.items.size() > rescue_first &&
+        REXCVAR_GET(skate3_native_render_scene_rescue_serve)) {
+      const uint32_t n = skate3::native_palette::ServeAuthoritativePalettes(
+          base, scene, rescue_first);
+      g_pal_served_frame += n;
+      g_rescue_served.fetch_add(n, std::memory_order_relaxed);
+      StampServedFrames(scene, rescue_first);
+      for (size_t ri = rescue_first; ri < scene.items.size(); ++ri) {
+        const DrawItem& it = scene.items[ri];
+        if (it.dbg_src == 11 && it.ctx != 0) {
+          CachedBones& cb = g_bones_cache_ctx[it.ctx];
+          cb.bones = it.bones;
+          cb.frame = g_guest_frame;
+          cb.ent_ok = skate3::native_entity::ReadEntityWorldRows(base, it.ctx, cb.ent);
+        }
+      }
     }
     // Rigid clone rescue: a piece whose world-bearing draw was missed this
     // frame (culled, or claimed by another clone of the mesh) re-publishes
@@ -10884,6 +11309,7 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
           std::memcpy(item.bones.data(), rows, size_t(n) * 12 * sizeof(float));
           item.caster_bank = false;
           item.dbg_src = 10;  // lw palette substitution
+          item.pose_frame = uint32_t(g_guest_frame);
           g_lw_pal_sub.fetch_add(1, std::memory_order_relaxed);
           static std::atomic<uint32_t> s_sub_logged{0};
           const uint32_t ln =
@@ -11046,6 +11472,7 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
       InterpolateDynamicItems(base, scene, now_s);
     }
   }
+  CharSyncLog(scene);
 
   // Off-screen retention (see g_retained_items): re-append statics the game
   // view-culled this frame while the trailing rendered pose can still see

@@ -285,6 +285,25 @@ struct DrawItem {
   // 6 = publish-time incoherent-palette heal (cached palette substituted
   // after the dense 32-sample spread gate failed).
   uint8_t dbg_src = 0;
+  // Pose provenance for the char_sync check (skate3_native_render_scene_
+  // char_sync): the guest frame the palette was taken from (0 = unknown;
+  // a cached/rescued pose keeps its cache frame), and for served palettes
+  // (dbg_src 11) the pack call it came from (pose_seq: one per pack /
+  // UpdateBoneTransforms call, so every part of one UBT call shares it),
+  // the part record index within that call (0xFFFF = not a UBT part), and
+  // whether it came from the previous frame's packs (pose_set 1).
+  uint32_t pose_frame = 0;
+  uint32_t pose_seq = 0;
+  uint16_t pose_part = 0xFFFF;
+  uint8_t pose_set = 0;
+  // Served pose vs this frame's bank capture of the same piece: the largest
+  // bone translation disagreement (m), -1 = not compared.
+  float serve_div = -1.0f;
+  // How InterpolateDynamicItems drew it: 0 = not smoothed, 1 = raw newest,
+  // 2 = held pre-jump pose, 3 = short history, 4 = smoothed ring; and how
+  // far behind `now` the drawn pose is (ms).
+  uint8_t draw_mode = 0;
+  float draw_lag_ms = 0.0f;
   // The palette was captured from an ORTHOGRAPHIC (CSM caster-cascade)
   // bank. The game does not reliably re-evaluate fine bone animation for
   // the shadow passes (vehicle wheel spin measured ~40 ms stale in bursts)

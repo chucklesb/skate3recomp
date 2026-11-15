@@ -1,0 +1,35 @@
+# The skater's forearm floats off and vanishes during a skate.Reel replay
+# (KI-117 class). Plays the user's reel a9bbe6156adca014 (three markers, one
+# per limb detachment) from the first marker with the char_sync check on.
+# The reel lives in the test saves (Windows: C:\Users\user\skate3-ab\userdata;
+# the Odin 2's profile); it is not in the repo.
+#
+# Check:  tools/harness/char_sync_report.py <run> --reel --max-bad 4
+# Before the fix (rescue_serve and smooth_continuity off): 44 frames, the
+# forearm piece 4052F100 stale for ~12 frames, gone, then drawn raw, at
+# every marker. With it: 2 frames (the reel start, before any history).
+name = "repro_reel_forearm"
+timeout_s = 1200
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+skate3_native_render_scene_char_sync = true
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 120
+
+[[step]]
+do = "play_reel"
+reel = "a9bbe6156adca014"
+from = "marker"
+every_frames = 3
+tag = "rf"

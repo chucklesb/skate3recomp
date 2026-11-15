@@ -65,6 +65,46 @@ By hand on the Odin 2 the limbs stay on the body. A general jitter of the
 whole skater remains; that's [KI-120](#ki-120-the-skater-jitters-worse-with-speed),
 an older, separate issue.
 
+**Follow-up (2026-11-15): a forearm vanishing and floating in replays.** In a
+skate.Reel replay the skater's forearm still disappeared for a moment, then
+floated off the arm, at three moments in one reel. That's the same family:
+- the game's pose for that one piece went missing for about 12 frames in a
+  row, so the reused pose grew older and older (the arm froze while the body
+  moved);
+- after 10 frames it was too old to reuse, so the piece wasn't drawn at all
+  for about 5 frames (the vanish);
+- when it came back, the motion smoothing had no history for it and drew its
+  raw pose, 66 ms ahead of the rest of the body (the float).
+
+Every 33 ms frame at 30 fps is twice the motion of a 60 fps frame, so the
+Odin 2 sees it worse.
+
+**The fix**, ported from dougieprishpreed/skate3recomp-plus:
+- after the reuse, the piece gets the game's own pose for this frame when
+  there is one, and is smoothed like every other piece
+  (`skate3_native_render_scene_rescue_serve`);
+- a piece whose smoothing history is new or restarted is drawn at the
+  camera's delay, never at its raw pose ahead of the body
+  (`skate3_native_render_scene_smooth_continuity`).
+
+Both settings are on by default.
+
+**How it's checked:**
+- **Scenario:** `scenarios/repro_reel_forearm.toml` plays the reel (it is in
+  the test saves, not the repo).
+- **Check:** `skate3_native_render_scene_char_sync` makes the renderer log,
+  each frame, any body piece not drawn from the same moment as the rest of the
+  body, or missing, and why. `tools/harness/char_sync_report.py <run> --reel
+  --max-bad 4` checks a run.
+
+| Reel playback, frames with a piece out of sync | Before | After |
+|---|---|---|
+| Windows Vulkan, 30 fps | 44 (stale 35, vanished 3, drawn ahead 6) | 2 (playback start) |
+| Windows Vulkan, 60 fps | | 2 (playback start) |
+
+Screenshots at the three markers show the forearm missing or detached
+before the fix and attached after it.
+
 <details>
 <summary>Technical details</summary>
 

@@ -435,6 +435,9 @@ inline std::atomic<uint64_t> g_lw_ctx_rescued{0};
 // Per-instance rescues whose cached palette was re-anchored to the owner's
 // current placement (KI-117; dbg_src 13).
 inline std::atomic<uint64_t> g_rescue_reanchored{0};
+// Per-instance rescues then served this frame's packed pose by the
+// post-rescue re-serve (dbg_src 11).
+inline std::atomic<uint64_t> g_rescue_served{0};
 // LW entity store consumption counters (stats line lw[...]).
 inline std::atomic<uint64_t> g_lw_stamped{0};
 inline std::atomic<uint64_t> g_lw_fade0{0};
