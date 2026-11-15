@@ -79,15 +79,34 @@ floated off the arm, at three moments in one reel. That's the same family:
 Every 33 ms frame at 30 fps is twice the motion of a 60 fps frame, so the
 Odin 2 sees it worse.
 
-**The fix**, ported from dougieprishpreed/skate3recomp-plus:
-- after the reuse, the piece gets the game's own pose for this frame when
-  there is one, and is smoothed like every other piece
-  (`skate3_native_render_scene_rescue_serve`);
-- a piece whose smoothing history is new or restarted is drawn at the
-  camera's delay, never at its raw pose ahead of the body
-  (`skate3_native_render_scene_smooth_continuity`).
+**Why the pose went missing:**
+- **What the check is for:** before using a captured pose, the renderer
+  checks that it really belongs to this piece, by posing a few of the piece's
+  vertices with it. They must land on screen and keep a sensible size: at
+  least 20% of the piece's size in its rest pose. That size check catches
+  garbage poses that squash a mesh to a point.
+- **Why it failed here:** this piece holds the forearms and hands, which are
+  1.36 m across in the rest pose (arms out). In the crouch the hands come
+  together at the knees: 0.25 m, under the 0.27 m limit. The game's correct
+  pose was rejected for as long as the crouch lasted, about 12 frames.
 
-Both settings are on by default.
+**The fixes:**
+1. **The root cause:** character pieces now need only 10% of their rest-pose
+   size. Every other mesh keeps 20%; a squashed garbage pose is far smaller
+   than either. Setting: `skate3_native_render_scene_char_spread_floor`
+   (0.1; 0.2 = the old value).
+2. **Two fallbacks** for any other reason a piece's pose goes missing, ported
+   from dougieprishpreed/skate3recomp-plus:
+   - after the reuse, the piece gets the game's own pose for this frame
+     when there is one, and is smoothed like every other piece
+     (`skate3_native_render_scene_rescue_serve`);
+   - a piece whose smoothing history is new or restarted is drawn at the
+     camera's delay, never at its raw pose ahead of the body
+     (`skate3_native_render_scene_smooth_continuity`).
+
+All three are on by default. With only the size fix, and both fallbacks
+off, the reel already shows no piece out of sync, and the forearm's pose is
+refused 0 times instead of 336.
 
 **How it's checked:**
 - **Scenario:** `scenarios/repro_reel_forearm.toml` plays the reel (it is in
@@ -99,9 +118,9 @@ Both settings are on by default.
 
 | Reel playback, frames with a piece out of sync | Before | After |
 |---|---|---|
-| Windows Vulkan, 30 fps | 44 (stale 35, vanished 3, drawn ahead 6) | 2 (playback start) |
-| Windows Vulkan, 60 fps | | 2 (playback start) |
-| Odin 2, 30 fps | 44 (the same pattern) | 2 (playback start) |
+| Windows Vulkan, 30 fps | 44 (stale 35, vanished 3, drawn ahead 6) | 0 |
+| Windows Vulkan, 30 fps, size fix only (fallbacks off) | 44 | 0 |
+| Odin 2, 30 fps | 44 (the same pattern) | 0 |
 
 Screenshots at the three markers, on Windows and on the Odin 2, show the
 forearm missing or detached before the fix and attached after it.

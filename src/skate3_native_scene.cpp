@@ -1389,6 +1389,11 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_smooth_continuity, true, "Skate 3
                     "history is drawn at the camera's playback time rather than at "
                     "its raw pose ahead of the camera (detached / offset limbs). "
                     "Off = the old behavior.");
+REXCVAR_DEFINE_DOUBLE(skate3_native_render_scene_char_spread_floor, 0.1, "Skate 3",
+                      "Palette validation for character pieces: the smallest spread "
+                      "of the skinned sample vertices, as a fraction of the piece's "
+                      "bind-pose size, that still counts as a real pose (other meshes "
+                      "keep 0.2). 0.2 = the old value, which refused folded limbs.");
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_char_sync, false, "Skate 3",
                     "Diagnostic: each frame, check that every piece of each character "
                     "was drawn from the same moment (pose source, pack tick, draw "
@@ -1738,7 +1743,17 @@ uint32_t RefinePaletteBase(uint8_t* base, uint32_t bank, uint32_t palette_base,
   // vehicle-flick garbage). Samples span the whole VB, so legit skinning
   // keeps a large fraction of the bind size; small items (hats: samples
   // can cluster on one bone) skip the floor.
-  const float min_spread = bind_diag > 1.0f ? 0.2f * bind_diag : 0.0f;
+  // Character pieces (skater/NPC families) articulate: a limb piece whose
+  // bind pose spreads its arms 1.36 m folds to ~0.25 m when the skater
+  // crouches with the hands at the knees, and the 20% floor refused the
+  // game's correct palette for as long as the pose lasted (the forearm that
+  // froze, vanished and floated in replays, ~12 frames at a time). The
+  // collapse this floor exists for (non-pose rows skinning every sample to
+  // nearly one point) stays far below the character floor.
+  const bool articulated = item.char_family >= 1 && item.char_family <= 5;
+  const float floor_frac =
+      articulated ? float(REXCVAR_GET(skate3_native_render_scene_char_spread_floor)) : 0.2f;
+  const float min_spread = bind_diag > 1.0f ? floor_frac * bind_diag : 0.0f;
   // Acceptance gate: skins into the bank's own view AND at a sane size.
   // IMPORTANT selection constraint (offline-validated on the cap capture):
   // a palette shifted by whole rows is a RIGID transform of the mesh, same
@@ -1904,6 +1919,23 @@ uint32_t RefinePaletteBase(uint8_t* base, uint32_t bank, uint32_t palette_base,
   // No candidate skins this mesh into the bank's own view at a sane size:
   // the bank belongs to another mesh. The caller refuses the capture (item
   // stays pending) and the post-draw fixup re-captures from a real draw.
+  if (REXCVAR_GET(skate3_native_render_scene_char_sync) && item.char_family >= 1 &&
+      item.char_family <= 5 && !item.ropa) {
+    // Why a character piece was refused: each home's in-clip score (of 16),
+    // spread and all-in-front flag, against the bind size and its bounds.
+    std::string homes;
+    for (const uint32_t pb : {palette_base, palette_base + 1, 4u, 5u, 7u, 8u}) {
+      float spread = 0.0f;
+      bool front_all = false;
+      const int sc = score(pb, &spread, &front_all);
+      homes += fmt::format(" c{}:{}/{:.2f}m{}", pb, sc, spread, front_all ? "/front" : "");
+    }
+    REXLOG_INFO(
+        "char-sync-refuse f={} mesh={:08X} ctx={:08X} guess=c{} bind={:.2f}m "
+        "spread=[{:.2f},{:.2f}] cam_c4={} homes:{}",
+        g_guest_frame, item.mesh, item.ctx, palette_base, bind_diag, min_spread, max_spread,
+        cam_at_c4() ? 1 : 0, homes);
+  }
   return 0;
 }
 
@@ -4844,6 +4876,7 @@ bool CaptureSkinnedState(uint8_t* base, uint32_t bank, uint32_t palette_base,
           "(portrait RTT) mesh={:08X} (n={})",
           item.mesh, n);
     }
+    item.pend_why |= 16;
     return false;
   }
   const bool hom_shader = ActiveHallOfMeatShader(base);
@@ -5053,6 +5086,7 @@ bool CaptureSkinnedState(uint8_t* base, uint32_t bank, uint32_t palette_base,
       // The bank's palette provably does not skin this mesh into the bank's
       // own view (foreign/stale bank): refuse; the caller keeps the item
       // pending and the post-draw (ib,vb) fixup re-captures on a real draw.
+      item.pend_why |= 32;
       return false;
     }
   }
@@ -5289,6 +5323,8 @@ uint32_t CaptureDynamicState(uint8_t* base, uint32_t ctx, bool world_path,
     // a stale/foreign bank can still hold plausible bone rows.
     item.pending = world_path || !own_draw_last || (passes > 1 && passes < 16) ||
                    palette_base == 0;
+    item.pend_why = uint16_t((world_path ? 1 : 0) | (!own_draw_last ? 2 : 0) |
+                             (passes > 1 && passes < 16 ? 4 : 0) | (palette_base == 0 ? 8 : 0));
     if (!item.pending) {
       if (CaptureSkinnedState(base, bank, palette_base, item)) {
         g_palette_snapshots.fetch_add(1, std::memory_order_relaxed);
@@ -6665,11 +6701,16 @@ void OnDrawDone(uint8_t* base, uint32_t func, uint32_t r4, uint32_t r5, uint32_t
     // Locate the palette for this draw's layout; a bank without plausible
     // bone rows (parameter blocks, camera rows) must not be consumed; that
     // was the source of screen-wide stretched characters.
+    d.pend_why |= 64;
     const uint32_t palette_base = BankPaletteBase(base, bank);
     if (palette_base == 0) {
+      d.pend_why |= 128;
       return;
     }
+    const uint16_t why0 = d.pend_why;
+    d.pend_why &= uint16_t(~(16 | 32));
     if (!CaptureSkinnedState(base, bank, palette_base, d)) {
+      d.pend_why = uint16_t(why0 | ((d.pend_why & 16) ? 256 : 0) | ((d.pend_why & 32) ? 512 : 0));
       return;  // stale bank refused: wait for a later draw with these buffers
     }
     d.caster_bank = BankIsOrtho(base, bank);
@@ -9780,7 +9821,7 @@ void CharSyncLog(const FrameScene& scene) {
     for (const DrawItem* it : list) {
       const uint32_t age = it->pose_frame != 0 ? uint32_t(frame) - it->pose_frame : 0;
       if (it->dbg_src == 3 || it->dbg_src == 13 || it->dbg_src == 6 || it->dbg_src == 9) {
-        add(it, fmt::format("stale={}/{}f", CharSrcName(it->dbg_src), age));
+        add(it, fmt::format("stale={}/{}f/why{:x}", CharSrcName(it->dbg_src), age, it->pend_why));
       } else if (it->dbg_src == 11 && it->pose_set == 1) {
         add(it, "prevpack");
       }

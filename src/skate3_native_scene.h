@@ -299,6 +299,13 @@ struct DrawItem {
   // The entity that produced the served pack (PackSnap::entity; 0 = unknown):
   // char_sync groups a character's pieces by it.
   uint32_t pose_entity = 0;
+  // Why a skinned capture stayed pending (char_sync): 1 world-path capture,
+  // 2 the submit's last draw was not this mesh's, 4 multi-pass mesh, 8 no
+  // palette in the bank, 16 refused: aux perspective (portrait) bank, 32
+  // refused: the bank's palette does not skin this mesh (RefinePaletteBase),
+  // 64 post-draw fixup saw a draw, 128 fixup: no palette in that bank,
+  // 256 / 512 fixup refused as 16 / 32 (bits 16/32 = the first capture).
+  uint16_t pend_why = 0;
   // Served pose vs this frame's bank capture of the same piece: the largest
   // bone translation disagreement (m), -1 = not compared.
   float serve_div = -1.0f;
