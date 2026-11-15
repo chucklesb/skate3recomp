@@ -761,6 +761,20 @@ void ReelTick(PPCContext& ctx, uint8_t* base) {
         const float m = static_cast<float>(CallGuestF(ctx, base, sub_82506BE0, {e, 1}));
         const bool has_marker = m > 0.0f && m < 1.0f;
         g_reel_marker.store(has_marker ? m * dur : -1.0f);
+        // Every marker (a user may place several, e.g. one per bug
+        // instance): keys 1.. until the end position.
+        {
+          std::string all;
+          const uint32_t count = keys_word & 0xFFFF;
+          for (uint32_t k = 1; k <= count && k < 64; ++k) {
+            const float mk = static_cast<float>(CallGuestF(ctx, base, sub_82506BE0, {e, k}));
+            if (!(mk > 0.0f && mk < 1.0f)) {
+              break;
+            }
+            all += fmt::format("{}{:.2f}", all.empty() ? "" : ", ", mk * dur);
+          }
+          REXLOG_INFO("harness: reel {}: markers at [{}] s", g_reel_slot, all);
+        }
         float start = 0.0f;
         if (g_reel_from_marker) {
           if (has_marker) {
