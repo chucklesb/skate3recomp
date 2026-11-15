@@ -101,9 +101,15 @@ Both settings are on by default.
 |---|---|---|
 | Windows Vulkan, 30 fps | 44 (stale 35, vanished 3, drawn ahead 6) | 2 (playback start) |
 | Windows Vulkan, 60 fps | | 2 (playback start) |
+| Odin 2, 30 fps | 44 (the same pattern) | 0 (see below) |
 
-Screenshots at the three markers show the forearm missing or detached
-before the fix and attached after it.
+Screenshots at the three markers, on Windows and on the Odin 2, show the
+forearm missing or detached before the fix and attached after it.
+
+**Open:** in the Odin 2 run with the fix, the check never listed the forearm
+piece at all (6 pieces instead of 7), although the screenshots show the hand
+drawn and attached. So that 0 rests on the screenshots, not on the check.
+Why the check misses that piece there isn't known yet.
 
 <details>
 <summary>Technical details</summary>
