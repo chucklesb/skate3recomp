@@ -296,6 +296,9 @@ struct DrawItem {
   uint32_t pose_seq = 0;
   uint16_t pose_part = 0xFFFF;
   uint8_t pose_set = 0;
+  // The entity that produced the served pack (PackSnap::entity; 0 = unknown):
+  // char_sync groups a character's pieces by it.
+  uint32_t pose_entity = 0;
   // Served pose vs this frame's bank capture of the same piece: the largest
   // bone translation disagreement (m), -1 = not compared.
   float serve_div = -1.0f;

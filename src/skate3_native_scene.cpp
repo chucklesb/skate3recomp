@@ -9708,8 +9708,9 @@ void CharSyncLog(const FrameScene& scene) {
   }
   std::sort(pieces.begin(), pieces.end(),
             [](const DrawItem* a, const DrawItem* b) { return a->ctx < b->ctx; });
-  // Characters: the owning LW entity, else ctx records within 0x200 bytes
-  // (one character's MeshContexts are allocated together).
+  // Characters: the owning LW entity, else the entity that produced the
+  // served pack, else ctx records within 0x200 bytes (a fallback only: one
+  // character's MeshContexts can sit in several clusters).
   std::unordered_map<uint32_t, std::vector<const DrawItem*>> groups;
   std::unordered_map<uint32_t, const DrawItem*> piece_of;
   std::unordered_map<uint32_t, uint32_t> group_of;
@@ -9719,7 +9720,18 @@ void CharSyncLog(const FrameScene& scene) {
       cluster = it->ctx | 1u;
     }
     prev = it->ctx;
-    const uint32_t g = it->lw_entity != 0 ? it->lw_entity : cluster;
+    // A rescued piece has no pack this frame: use its last known entity.
+    static std::unordered_map<uint32_t, uint32_t> s_ctx_entity;  // render thread
+    if (it->pose_entity != 0 && it->dbg_src == 11) {
+      if (s_ctx_entity.size() > 4096) {
+        s_ctx_entity.clear();
+      }
+      s_ctx_entity[it->ctx] = it->pose_entity;
+    }
+    const auto known = s_ctx_entity.find(it->ctx);
+    const uint32_t g = it->lw_entity != 0             ? it->lw_entity
+                       : known != s_ctx_entity.end() ? known->second
+                                                      : cluster;
     if (!group_of.try_emplace(it->ctx, g).second) {
       continue;  // a second draw item of the same piece
     }
@@ -9826,7 +9838,32 @@ void CharSyncLog(const FrameScene& scene) {
                            it->pose_part == 0xFFFF ? -1 : int(it->pose_part), it->draw_mode,
                            it->draw_lag_ms);
       }
-      REXLOG_INFO("char-sync-sum f={} grp={:08X} n={}{}", frame, g, list.size(), all);
+      // Items of this character the check does NOT measure (ctx within
+      // 0x200 of its pieces), with why: a body piece missing from the list
+      // above is drawn through one of these.
+      std::string excl;
+      for (const DrawItem& it : scene.items) {
+        if (it.ctx == 0 || group_of.count(it.ctx) != 0) {
+          continue;
+        }
+        bool close_by = false;
+        for (size_t k = 0; !close_by && k < list.size(); ++k) {
+          close_by = (list[k]->ctx > it.ctx ? list[k]->ctx - it.ctx : it.ctx - list[k]->ctx) <= 0x200;
+        }
+        if (!close_by) {
+          continue;
+        }
+        std::string why;
+        if (!it.skinned) why += "rigid,";
+        if (it.ropa) why += "ropa,";
+        if (it.char_family < 1 || it.char_family > 5) why += fmt::format("fam{},", it.char_family);
+        if (it.caster_bank) why += "caster,";
+        if (it.draws.empty()) why += "nodraw,";
+        excl += fmt::format(" {:08X}/{:08X}/{}/{}", it.ctx, it.mesh, CharSrcName(it.dbg_src),
+                            why.empty() ? "dup" : why.substr(0, why.size() - 1));
+      }
+      REXLOG_INFO("char-sync-sum f={} grp={:08X} n={}{}{}{}", frame, g, list.size(), all,
+                  excl.empty() ? "" : " | not measured:", excl);
     }
   }
   for (const auto& [ctx, g] : group_of) {

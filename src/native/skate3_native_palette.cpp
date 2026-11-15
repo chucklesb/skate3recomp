@@ -494,6 +494,7 @@ void NoteServe(DrawItem& item, const PackSnap* snap, const float* rows, uint32_t
   if (snap != nullptr) {
     item.pose_seq = snap->seq;
     item.pose_part = snap->part;
+    item.pose_entity = snap->entity;
     item.pose_set = !g_packs_prev.empty() && snap >= g_packs_prev.data() &&
                     snap < g_packs_prev.data() + g_packs_prev.size();
   }
