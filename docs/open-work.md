@@ -18,6 +18,15 @@ what was done).
 
 ## Rendering
 
+- **Photo challenge: the closing animation looks jerky, and the skater's
+  pose snaps while choosing a shot.** Reported by the user on the Odin 2,
+  2026-11-15: the animation at the end of a photo challenge seems to step back
+  a frame each time a photo is taken, and when choosing between shots the
+  skater's pose snaps into place. Not investigated yet (deferred by the user).
+  Candidates: the photo windows (photo_burst lifts emulated suppression for 1-3
+  frames per shot, [native-only.md](native-only.md) row C) and the pose
+  smoothing restarting around each shot. `skate3_native_render_scene_char_sync`
+  shows the second.
 - **Glass hazed as if it were the sky behind it.** The KI-126 class
   ([hair](known-issues.md#ki-126-the-skaters-hair-looks-transparent), fixed)
   also reaches glass: blended surfaces don't write depth, so our haze pass

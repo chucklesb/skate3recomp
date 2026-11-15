@@ -105,8 +105,7 @@ fallback until phase 5. The sizes are relative.
 - **Done:** item 1 (published as the full release v2.1.0-aarch64.3, not a
   testing pre-release); the Windows parts of 3-5 (see Baseline).
 - **Still to do:**
-  - the Odin 2 baseline run;
-  - the photo-challenge recording;
+  - the Odin 2 baseline run of the tour;
   - item 2, the branches.
 
 1. **A known-good build for testers:** publish the current state as a testing
@@ -157,15 +156,33 @@ executed per frame.
 - **No frame was presented emulated.** The intro movies render natively.
 - **The replay editor's Take Photo is already native:** it opens only
   `photo_flow` (synchronous shaders), with no extra emulated draws.
-- **Not reached by the tour:**
-  - a photo challenge's shutter and photo screens (row C), which need the
-    trick landed;
-  - the career "new team member" prompt (row A);
-  - the aux pass in a *running* photo challenge (row D). The Odin 2 census
-    of 2026-11-13 saw 73-96 draws a frame at pitch 160 there.
+- **Not reached by the tour:** a photo challenge's running, shutter and
+  photo screens (rows C and D), measured below from a live session instead,
+  and the career "new team member" prompt (row A), still unmeasured.
 
-  These need a recording of the user playing one photo challenge
-  (`Ctrl+Shift+R` in a live session).
+**Photo challenges, Odin 2, 2026-11-15** (run `20261115-153557_live`: the
+user played two photo challenges live with the census on; no input replay):
+
+| Context (FE stack) | Draws/frame | Pitches | Windows open | Table row |
+|---|---|---|---|---|
+| Free skate `[0]`, challenge map `[0,17]`, challenge intro `[0,1]` | 10.0-11.1 | 80: 6, 320: 4 (+ 160: 1.1 in the intro) | none | E |
+| First challenge, running `[0,1:47]` | 82.3 | + 160: 72.3 | none | D |
+| First challenge, shutter and shots `[0,1:47,2]` | 111.1 | + 160: 96, 1200: 4.1, 1600: 0.5, 1280: 0.2, 600, 640 | photo_burst, photo_flow | C, A |
+| First challenge, photo card `[0,1:47,2,69]` | 119.2 | + 160: 96, 1200: 10.6, 1600: 1.4 | photo_burst, photo_flow | C, A |
+| Second challenge, running `[0,1:11]` | 22.0 | + 160: 12 | photo_flow | D |
+| Second challenge, shots `[0,1:11,2]` | 22.0 | + 160: 12 | photo_flow | D |
+| Second challenge, photo card `[0,1:11,2,69]` (left up, 7260 frames) | 22.7 | + 160: 12, 1200: 0.7 | photo_burst, photo_flow | C, D |
+
+- **Row D is the biggest emulated cost anywhere:** the aux skater pass at
+  pitch 160 runs 72-96 draws a frame through the first challenge, from the
+  start of the challenge to the photo card. The second challenge's is smaller
+  (12 a frame).
+- **The photo screens** also run the skater-photo pitches (1200, 1600) of
+  row A, through the photo windows.
+- **Seen there, not chased:** the user reported that the animation at the
+  end of a photo challenge looks jerky, as if it steps back a frame at each
+  photo, and that the skater's pose snaps into place while choosing a shot
+  ([open-work.md](open-work.md)).
 
 ## Verification
 

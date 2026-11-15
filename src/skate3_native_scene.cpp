@@ -1382,13 +1382,18 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_dyn_gap_fill, true, "Skate 3",
                     "Re-publish character/cloth/skinned items for up to two "
                     "missed publish frames (high-frame-rate body flicker)")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
-REXCVAR_DEFINE_BOOL(skate3_native_render_scene_smooth_continuity, true, "Skate 3",
+// Off by default (the user's call, 2026-11-15): with the root cause fixed
+// (char_spread_floor) these fallbacks would hide the next piece-level bug
+// instead of letting char_sync show it. Ported from dougieprishpreed/
+// skate3recomp-plus; switch on to compare.
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_smooth_continuity, false, "Skate 3",
                     "Pose smoothing: a large step of the SAME character piece that "
                     "continues its motion (a hitch, a speed glitch) keeps its pose "
                     "history instead of restarting it, and a short or restarted "
                     "history is drawn at the camera's playback time rather than at "
                     "its raw pose ahead of the camera (detached / offset limbs). "
-                    "Off = the old behavior.");
+                    "Off (default) = the original behavior; on hides other "
+                    "per-piece bugs, so it stays a comparison switch.");
 REXCVAR_DEFINE_DOUBLE(skate3_native_render_scene_char_spread_floor, 0.1, "Skate 3",
                       "Palette validation for character pieces: the smallest spread "
                       "of the skinned sample vertices, as a fraction of the piece's "
@@ -1399,11 +1404,12 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_char_sync, false, "Skate 3",
                     "was drawn from the same moment (pose source, pack tick, draw "
                     "delay) and log `char-sync` lines naming the pieces that were "
                     "not, or that vanished, and why (tools/harness/char_sync_report.py).");
-REXCVAR_DEFINE_BOOL(skate3_native_render_scene_rescue_serve, true, "Skate 3",
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_rescue_serve, false, "Skate 3",
                     "After the per-instance rescue re-publishes a refused skinned "
                     "character piece, give it this frame's packed pose from the "
                     "game when there is one (instead of the cached, re-anchored "
-                    "palette). Off = the cached palette only.");
+                    "palette). Off (default) = the cached palette only; on hides "
+                    "other per-piece bugs, so it stays a comparison switch.");
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_rescue_reanchor, true, "Skate 3",
                     "When a skinned character piece's pose capture is refused and "
                     "its last palette is re-published (the per-instance rescue), "

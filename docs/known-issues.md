@@ -95,8 +95,9 @@ Odin 2 sees it worse.
    size. Every other mesh keeps 20%; a squashed garbage pose is far smaller
    than either. Setting: `skate3_native_render_scene_char_spread_floor`
    (0.1; 0.2 = the old value).
-2. **Two fallbacks** for any other reason a piece's pose goes missing, ported
-   from dougieprishpreed/skate3recomp-plus:
+2. **Two fallbacks, off by default**, for any other reason a piece's pose
+   goes missing, ported from dougieprishpreed/skate3recomp-plus. They stay off
+   so they can't hide the next per-piece bug; switch them on only to compare:
    - after the reuse, the piece gets the game's own pose for this frame
      when there is one, and is smoothed like every other piece
      (`skate3_native_render_scene_rescue_serve`);
@@ -104,9 +105,8 @@ Odin 2 sees it worse.
      camera's delay, never at its raw pose ahead of the body
      (`skate3_native_render_scene_smooth_continuity`).
 
-All three are on by default. With only the size fix, and both fallbacks
-off, the reel already shows no piece out of sync, and the forearm's pose is
-refused 0 times instead of 336.
+Only the size fix is on by default. With it, the reel shows no piece out of
+sync, and the forearm's pose is refused 0 times instead of 336.
 
 **How it's checked:**
 - **Scenario:** `scenarios/repro_reel_forearm.toml` plays the reel (it is in
@@ -118,9 +118,9 @@ refused 0 times instead of 336.
 
 | Reel playback, frames with a piece out of sync | Before | After |
 |---|---|---|
-| Windows Vulkan, 30 fps | 44 (stale 35, vanished 3, drawn ahead 6) | 0 |
-| Windows Vulkan, 30 fps, size fix only (fallbacks off) | 44 | 0 |
-| Odin 2, 30 fps | 44 (the same pattern) | 0 |
+| Windows Vulkan, 30 fps (default: size fix, fallbacks off) | 44 (stale 35, vanished 3, drawn ahead 6) | 0 |
+| Windows Vulkan, 30 fps, fallbacks on too | 44 | 0 |
+| Odin 2, 30 fps (default) | 44 (the same pattern) | 0 (all 8 pieces measured, 0 refusals) |
 
 Screenshots at the three markers, on Windows and on the Odin 2, show the
 forearm missing or detached before the fix and attached after it.
