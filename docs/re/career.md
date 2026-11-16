@@ -96,7 +96,11 @@ change. The harness `results` step walks the results ("Continue" on New
 Teammate: its default, Customize Teammate, opens Create-a-Skater) and
 returns only once `SKATER.P` has been rewritten and left alone for 3 s.
 Checked by a second run: the paid counters and the Killed level were kept,
-and nothing was paid twice. It runs on the Odin 2 too (run `20261115-210836_career_complete_challenge`; that career tracks 89 active, 30 Owned, 15 Killed). It pays no reward (set `board_sales` for that).
+and nothing was paid twice. On the Odin 2 too (run
+`20261115-213444_career_complete_challenge`: `street_dwtn_01` paid 20,000,
+281,500 → 301,500, saved to the device's `SKATER.P`). Earlier harness runs
+that quit at the results were not kept (the device career was back at
+281,500 after the 1,000,000 milestone run). It runs on the Odin 2 too (run `20261115-210836_career_complete_challenge`; that career tracks 89 active, 30 Owned, 15 Killed). It pays no reward (set `board_sales` for that).
 `scenarios/career_complete_challenge.toml`.
 
 **Completing a challenge, as the game does it:** the Lua `CompleteChallenge` (`sub_8283FD00`)
