@@ -181,11 +181,10 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
   image for every frame of a short capture (frame-exact, no screen
   recorder), on the desktop and the Odin 2; look at what limits today's
   `screenshot` bursts and recordings.
-- **Headless desktop runs** for automated testing (Windows, Linux, macOS;
-  not needed for linux-aarch64 / the Odin 2): start the game without a
-  visible window or focus steal, so scenario runs don't interrupt the
-  user's desktop. Look into an offscreen/hidden window or swapchain-less
-  output, a virtual display, and what input and audio need.
+- **Headless desktop runs**: done for Windows (2026-11-16): `windows`/`ab`
+  runs start windowed, hidden and muted; a `window` step shows the window
+  with audio ([scenario-harness.md](scenario-harness.md)). Left: check
+  Linux and macOS desktops (the same SDK cvars should apply).
 - **Faster test runs** (2026-11-16). Much of a run is fixed delays put in
   so input doesn't arrive too early:
   - **Frame-count waits** (`wait frames = 120` after spawning, the 90-frame
