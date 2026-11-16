@@ -51,7 +51,8 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   [KI-125](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps).
   Done: UBT is a pure gather from one pose array (`srcPalette`), and UBT
   part `k` is the entity's LOD instance `k` (the part ↔ draw link,
-  checked over a reel). Next: capture the pose there (shadow mode).
+  checked over a reel). The pack is `transpose(gather × m_MatLtoW)`, exact.
+  Next: the skeleton store in shadow mode.
 - RE-6 [ ] **Who issues the emulated passes** native-only must replace
   (pitches 160 and 1200).
 - RE-7 [ ] **`src/re/` shadow-mode replacements.**

@@ -42,6 +42,22 @@ pedestrians, NPC skaters), and the redesign it points to. Functions:
     = instance `k`, including an entity switching LOD (8 and 10 parts). The
     Odin 2 agrees (`20261115-231919_re_skeleton_link`: 154 samples, 8
     entities, 1,468 parts).
+- **A skater's palette, one tick from pose to GPU** (RE-5 step 0, run
+  `20261115-233443_re_skeleton_link`, 170 packs, every one matching):
+  1. `StartJobs`: UBT gathers each LOD instance's 4x4 bone matrices from
+     `srcPalette` into the instance's own `m_matrices` buffer. **The UBT
+     "parts" array is the entity's LOD instance array** (same address,
+     `entity + (lod + 8) * 4`), not a copy.
+  2. `EndJobs`: `PackAndMultiplyMatricesForUpload` (`sub_827E5B30`) packs
+     each of those instances in place, with `localToWorld` = the entity's
+     `m_MatLtoW` (`+0x160`).
+  3. So every packed bone row is
+     `transpose(srcPalette[remap[meshbone[i]]] × m_MatLtoW)`, rows 0-2: the
+     3 float4 per bone the native shader reads. Rotation and translation
+     match to float rounding (3e-5).
+  The instance arrays, `srcPalette` and the remap tables stay put across
+  ticks for an entity, but move now and then (reel loads, LOD switches),
+  so they are re-read every tick.
 - **Other characters** pack per instance with
   `cModelInstance::PackAndMultiplyMatricesForUpload` (`sub_827E5B30`).
   LOD pedestrians use a fused writer (`sub_827C1D38`) that concatenates

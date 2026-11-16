@@ -495,7 +495,9 @@ extern "C" REX_FUNC(sub_82C9A618) {
 // upload palette the VS consumes. r3 = the cModelInstance.
 extern "C" REX_FUNC(sub_827E5B30) {
   const uint32_t instance = ctx.r3.u32;
+  skate3::harness::re_skeleton::OnPackEnter(base, instance, ctx.r4.u32);  // RE-5 probe (off by default)
   __imp__sub_827E5B30(ctx, base);
+  skate3::harness::re_skeleton::OnPackExit(base, instance);
   if (skate3::native_render::Enabled()) {
     skate3::native_palette::OnPackPalette(base, instance);
   }
@@ -508,11 +510,14 @@ extern "C" REX_FUNC(sub_827E5B30) {
 extern "C" REX_FUNC(sub_827A52C8) {
   const uint32_t parts = ctx.r3.u32;
   const uint32_t count = ctx.r4.u32;
+  const uint32_t src_palette = ctx.r5.u32;
+  const uint32_t remaps = ctx.r6.u32;
   __imp__sub_827A52C8(ctx, base);
   if (skate3::native_render::Enabled()) {
     skate3::native_palette::OnBoneTransforms(base, parts, count);
   }
-  skate3::harness::re_skeleton::OnBoneTransforms(base, parts, count);  // RE-5 probe (off by default)
+  skate3::harness::re_skeleton::OnBoneTransforms(base, parts, count, src_palette,
+                                                  remaps);  // RE-5 probe (off by default)
 }
 
 // Sk8::cLivingWorldPresEntity::Update: post-call, this+528 holds the
@@ -531,9 +536,10 @@ extern "C" REX_FUNC(sub_827C1188) {
 // UpdateBoneTransforms calls inside stamp their snapshots with this entity.
 extern "C" REX_FUNC(sub_827825B0) {
   const uint32_t prev_owner = skate3::native_palette::ExchangePackOwner(ctx.r3.u32);
-  skate3::harness::re_skeleton::SetOwner(ctx.r3.u32);
+  const uint64_t probe = skate3::harness::re_skeleton::EnterOwner(
+      base, ctx.r3.u32, skate3::harness::re_skeleton::kStartJobs);
   __imp__sub_827825B0(ctx, base);
-  skate3::harness::re_skeleton::SetOwner(0);
+  skate3::harness::re_skeleton::RestoreOwner(probe);
   skate3::native_palette::ExchangePackOwner(prev_owner);
 }
 
@@ -557,7 +563,10 @@ extern "C" REX_FUNC(sub_82783038) {
 extern "C" REX_FUNC(sub_82782818) {
   const uint32_t prev_owner =
       skate3::native_palette::ExchangePackOwner(ctx.r3.u32);
+  const uint64_t probe = skate3::harness::re_skeleton::EnterOwner(
+      base, ctx.r3.u32, skate3::harness::re_skeleton::kEndJobs);
   __imp__sub_82782818(ctx, base);
+  skate3::harness::re_skeleton::RestoreOwner(probe);
   skate3::native_palette::ExchangePackOwner(prev_owner);
 }
 
@@ -567,7 +576,10 @@ extern "C" REX_FUNC(sub_82782818) {
 extern "C" REX_FUNC(sub_82785778) {
   const uint32_t prev_owner =
       skate3::native_palette::ExchangePackOwner(ctx.r3.u32);
+  const uint64_t probe = skate3::harness::re_skeleton::EnterOwner(
+      base, ctx.r3.u32, skate3::harness::re_skeleton::kDriver);
   __imp__sub_82785778(ctx, base);
+  skate3::harness::re_skeleton::RestoreOwner(probe);
   skate3::native_palette::ExchangePackOwner(prev_owner);
 }
 

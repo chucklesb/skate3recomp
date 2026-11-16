@@ -3,7 +3,8 @@
 # entity's current-LOD instance k; docs/re/characters.md). Plays the forearm
 # reel with the probe logging every 5th UBT call ("re-ubt:" lines in
 # log.txt); every line should report all parts "matched one persistent ctx
-# by mesh", each part k against instance k.0.
+# by mesh", each part k against instance k.0, and "re-pack:" lines show each
+# EndJobs pack of those instances (in, out, the localToWorld argument).
 name = "re_skeleton_link"
 timeout_s = 1200
 boot = "demo"
@@ -13,7 +14,7 @@ skate3_demo_path_signed_in = true
 skate3_guest_fps_cap = 30.0
 skate3_guest_fps_cap_auto = false
 skate3_native_render_scene_char_sync = true
-skate3_harness_re_ubt = 5
+skate3_harness_re_ubt = 40
 
 [[step]]
 do = "wait"
