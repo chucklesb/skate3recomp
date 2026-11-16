@@ -54,6 +54,7 @@ enum class Verb {
                 // settle=true (false: return on arrival, e.g. a floorless locator)
   kRenderer,    // renderer="native"|"emulated" frames=30: the F5 switch, then settle
   kVideo,       // frames=N tag="x": every rendered frame as video/<tag>/f<n>.png
+  kCareer,      // board_sales=N: set the career's total board sales (docs/re/career.md)
   kMem,         // op="find"|"refine"|"read"|"write" type="u8|u16|u32|f32|f64" value=N
                 // cmp="changed|unchanged|increased|decreased" addr="0x..." range=["lo","hi"]
                 // (live RE: find a game value in guest memory and change it; harness_mem.h)
@@ -158,6 +159,9 @@ struct Step {
   std::string mem_type = "u32"; // u8 | u16 | u32 | f32 | f64 (big-endian, as the guest)
   std::string mem_cmp;          // refine: changed | unchanged | increased | decreased
   uint64_t mem_lo = 0, mem_hi = 0;  // range (hi = 0: the whole space)
+
+  // career
+  std::optional<double> board_sales;
 
   // snapshot
   bool native_snapshot = false;  // native = true: the native renderer's capture (Windows)

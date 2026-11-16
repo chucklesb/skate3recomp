@@ -1,0 +1,40 @@
+# Set the career's total board sales (docs/re/career.md), then show it on the
+# pause menu's Career tab. To reach a milestone the game's own way, set the
+# total just under it (e.g. 299000 for the 300,000 "new team member"
+# milestone) and complete any challenge: the award crosses it and the game
+# shows Milestone Unlocked, the unlock and the New Teammate screens (FE 64,
+# 65, 66; native-only.md row A).
+# The value here equals the Odin 2 test career's total on 2026-11-15
+# (311,500), so running it as-is changes nothing.
+name = "career_board_sales"
+timeout_s = 600
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "career"
+board_sales = 311500
+
+[[step]]
+do = "wait"
+frames = 150   # the location title after spawning eats an early Start
+
+[[step]]
+do = "input"
+buttons = "start"
+frames = 3
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "screenshot"
+tag = "career_tab"

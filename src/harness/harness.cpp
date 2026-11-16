@@ -1233,6 +1233,45 @@ Outcome Execute(Run& r, const Step& st) {
       return o;
     }
 
+    case Verb::kCareer: {
+      // The career's board sales are four u32 counters in a stats object
+      // S = *(*(*0x830CFD94 + 0xE0) + 0x48), at S+4..S+0x10; the total the
+      // game shows (GetTotalBoardSales, sub_825B1630) is their sum. Set the
+      // total by adjusting the first counter, the one the game's own
+      // AwardBoardSales binding (sub_827D1328) adds to. docs/re/career.md.
+      uint8_t* base = g_base.load();
+      uint32_t p = 0, q = 0, s = 0;
+      if (!base || !ReadU32(base, 0x830CFD94, &p) || !ReadU32(base, p + 0xE0, &q) ||
+          !ReadU32(base, q + 0x48, &s) || s == 0) {
+        return Fail("career: no career stats object (not in a career?)");
+      }
+      uint32_t c[4];
+      for (int i = 0; i < 4; ++i) {
+        if (!ReadU32(base, s + 4 + 4 * i, &c[i])) {
+          return Fail("career: stats object not readable");
+        }
+      }
+      const uint64_t others = uint64_t(c[1]) + c[2] + c[3];
+      const uint64_t want = static_cast<uint64_t>(*st.board_sales);
+      if (want < others) {
+        return Fail("career: board_sales below the other three counters' " +
+                    std::to_string(others));
+      }
+      const uint32_t first = static_cast<uint32_t>(want - others);
+      const uint32_t be = __builtin_bswap32(first);
+      std::memcpy(base + s + 4, &be, 4);
+      char buf[200];
+      std::snprintf(buf, sizeof(buf),
+                    "\"stats\":\"%08X\",\"old_total\":%llu,\"board_sales\":%llu,"
+                    "\"counters\":[%u,%u,%u,%u]",
+                    s, static_cast<unsigned long long>(others + c[0]),
+                    static_cast<unsigned long long>(want), first, c[1], c[2], c[3]);
+      Event(r, "career_set", buf);
+      Outcome o;
+      o.result_json = buf;
+      return o;
+    }
+
     case Verb::kVideo: {
       // Every rendered frame for the next `frames` frames.
       const std::string tag = st.tag.empty() ? "video" : SafeName(st.tag);

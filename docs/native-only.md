@@ -105,13 +105,13 @@ fallback until phase 5. The sizes are relative.
 - **Done:**
   - item 1: the known-good build to compare against is now
     **v2.1.0-aarch64.4** (full release, 2026-11-15);
-  - item 3, mostly: the tour reaches every row except A's career prompt
-    (C and D were measured from a live photo-challenge session instead);
+  - item 3: every row is measured. The tour reaches most; C and D came from
+    a live photo-challenge session, and A's career prompt from a live session
+    with the board sales set by the harness (`career` step, RE-4);
   - items 4 and 5 on Windows (audit and reference shots), the Odin 2 tour
     run with fps per screen, and the photo-challenge reference shots (all
     below).
 - **Still to do:**
-  - the career "new team member" prompt (row A);
   - item 2, the branches.
 
 1. **A known-good build for testers:** publish the current state as a testing
@@ -125,7 +125,8 @@ fallback until phase 5. The sizes are relative.
    - [x] a photo challenge's shutter and photo card (C), and the running
      challenge (D): measured from a live session (below), since the trick
      has to be landed by hand;
-   - [ ] the career "new team member" prompt (A).
+   - [x] the career "new team member" prompt (A): board sales set just under
+     300,000 (`scenarios/career_board_sales.toml`), then one challenge; below.
 
    Some need a save placed at the right point. Test saves may be written
    freely.
@@ -165,7 +166,7 @@ executed per frame.
   `photo_flow` (synchronous shaders), with no extra emulated draws.
 - **Not reached by the tour:** a photo challenge's running, shutter and
   photo screens (rows C and D), measured below from a live session instead,
-  and the career "new team member" prompt (row A), still unmeasured.
+  and the career "new team member" prompt (row A), measured below.
 
 **Odin 2, 2026-11-15** (build `ga49a5c9`; runs `20261115-181111_native_tour`,
 `20261115-181622_native_tour_boot`; fps from `fps_by_screen.py`, capped at
@@ -192,6 +193,21 @@ executed per frame.
   (the shots match). Likely the portrait re-rendering until its assets
   stream in, which takes longer on the device; it goes away with row A's
   phase either way, so it's recorded, not chased.
+
+**The career "new team member" prompt, Odin 2, 2026-11-15** (run
+`20261115-201900_live`: board sales set to 299,000 with the harness, then the
+user completed one challenge; [re/career.md](re/career.md)):
+
+| Context (FE stack) | Draws/frame | Pitches beyond the base 80: 6, 320: 4 | Windows open | Table row |
+|---|---|---|---|---|
+| Milestone Unlocked `[0,64]`, location unlocked `[0,65]` | 10.0 | - | none | E |
+| **New Teammate!** `[0,66]` (748 frames) | **36.4** | 1200: 26.0, 600, 1600, 160 | skater_photo | A |
+| Customize Teammate `[0,66,15]` | 12.2 | 1200: 1.7, 600, 1600, 160 | replay_aux, skater_photo | A |
+
+- **The prompt is the heaviest row-A screen measured:** the teammate's
+  portrait runs the skater-photo pass at 26 draws a frame the whole time it's
+  up (Import Skater: 23.4 on the device). Phase 2 (the native skater photo)
+  removes both.
 
 **Photo challenges, Odin 2, 2026-11-15** (run `20261115-153557_live`: the
 user played two photo challenges live with the census on; no input replay):

@@ -29,6 +29,7 @@ constexpr VerbEntry kVerbs[] = {
     {"query", Verb::kQuery},       {"capture", Verb::kCapture},
     {"video", Verb::kVideo},
     {"mem", Verb::kMem},
+    {"career", Verb::kCareer},
     {"crash", Verb::kCrash},       {"teleport", Verb::kTeleport},
     {"play_reel", Verb::kPlayReel},  {"renderer", Verb::kRenderer},
 };
@@ -184,6 +185,7 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
   }
   s.mem_op = t["op"].value_or(std::string());
   s.native_snapshot = t["native"].value_or(false);
+  s.board_sales = Number(t, "board_sales");
   s.mem_type = t["type"].value_or(std::string("u32"));
   s.mem_cmp = t["cmp"].value_or(std::string());
   if (const toml::array* rg = t["range"].as_array()) {
@@ -312,6 +314,12 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
       }
       if ((s.mem_op == "read" || s.mem_op == "write") && !s.addr) {
         *error = "mem " + s.mem_op + " needs addr = \"0x...\"";
+        return false;
+      }
+      break;
+    case Verb::kCareer:
+      if (!s.board_sales || *s.board_sales < 0 || *s.board_sales > 4e9) {
+        *error = "career needs board_sales = N (the total, 0..4e9)";
         return false;
       }
       break;

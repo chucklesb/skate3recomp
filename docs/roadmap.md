@@ -11,12 +11,10 @@ Update it with every commit that finishes or starts an item. Details live in
 the linked pages; the backlog is [open-work.md](open-work.md).
 
 **Now** (finishing milestone 1, phase 0):
-1. [ ] **The career "new team member" prompt (row A):** a save placed just
-   before it, or the user plays to it in a live session.
-2. [ ] **Branches:** `native-only` here and in the SDK fork.
+1. [ ] **Branches:** `native-only` here and in the SDK fork.
 
 **Next:**
-3. [ ] **Native-only phase 1** (offscreen 2D compose), then phases 2-5.
+2. [ ] **Native-only phase 1** (offscreen 2D compose), then phases 2-5.
    Row D, the offscreen skater pass in challenges (72-96 emulated draws a
    frame), is the biggest remaining cost; it's phase 4.
 
@@ -32,10 +30,10 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   the message table published ([re/README.md](re/README.md)); they also
   showed layout-align names to be unreliable (no longer exported). Left:
   debug strings; handlers for the messages.
-- RE-4 [ ] **Career pilot:** board sales and challenge state, a harness verb
-  to set them, then the "new team member" prompt (Now #1). Leads: the Lua
-  binding `CompleteChallenge` (`sub_8283FD00`), messages
-  `cMsgPresTeamBrandTeammate` and `cMsgPresTeamBrandUnlock`.
+- RE-4 [~] **Career pilot:** board sales understood (four counters, summed;
+  [re/career.md](re/career.md)), the harness `career` step sets them, and the
+  "new team member" prompt is measured (row A). Left: the milestone check
+  (show the screens without a challenge), challenge completion state.
 - RE-5 [ ] **The character skeleton** ([re/characters.md](re/characters.md)):
   one pose per character per tick; the likely fix for
   [KI-125](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps).
@@ -52,6 +50,8 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   passed on retry, no symbols); watch for a repeat.
 
 **Done recently:**
+- 2026-11-15: **Row A measured** (the "new team member" prompt, 36.4 draws a
+  frame) through RE-4: board sales decoded and settable (`career` step).
 - 2026-11-15: **RE-1 toolkit** and **RE-2 first pass** (8,020 Skate 3
   functions named from the Skate 2 PDB; [re/README.md](re/README.md)).
 - 2026-11-15: **photo-challenge reference shots** (live on the Odin 2;

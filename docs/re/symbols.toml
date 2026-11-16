@@ -223,3 +223,43 @@ name = "IsWipeoutRequested"
 role = "Polled per physical player; ORs two conditions behind a guard."
 confidence = "guess"
 evidence = "andrewnakas/SK8-Engine audio/phase1-harness commit a491ccb (not verified in this fork)"
+
+# ---- Career and progression (career.md) --------------------------------------
+
+[sub_825B1630]
+name = "FE GetTotalBoardSales"
+signature = "() -> u64 pushed to the FE script"
+role = "The front end's total board sales: the sum of the four counters at stats+4..+0x10, stats = *(*(*0x830CFD94 + 0xE0) + 0x48)."
+confidence = "confirmed"
+evidence = "decompile; live on the Odin 2 2026-11-15: 233,750 + 30,000 + 0 + 0 = the 263,750 the pause menu showed"
+
+[sub_825B1618]
+name = "FE GetTotalCash"
+role = "Pushes stats+0x14."
+confidence = "likely"
+evidence = "decompile (registration order in sub_825B12B8)"
+
+[sub_825B1540]
+name = "FE GetNextBoardSaleMilestone"
+role = "Calls sub_827CD9A0(*(*0x830CFD94 + 0xE0)) for the next milestone."
+confidence = "likely"
+evidence = "decompile (registration order in sub_825B12B8)"
+
+[sub_825B12B8]
+name = "register the career FE script functions"
+role = "Creates each callback (sub_82E62F00) and registers it under its name (sub_82E62B40): GetNextBoardSaleMilestone, GetTotalBoardSales, GetMilestoneUnlockInfo, ..."
+confidence = "likely"
+evidence = "decompile; the only code that builds those name strings"
+
+[sub_827D1328]
+name = "Lua AwardBoardSales"
+signature = "(lua_State* L) : stats+4 += luaL_checkinteger(L, 1)"
+role = "Adds to the first board-sales counter, then notifies (sub_82C1C2A0) if stats+0x1C is set. The binding context is the career stats object."
+confidence = "confirmed"
+evidence = "binding table 0x823116DC; a challenge award on 2026-11-15 landed in the same counter (269,000 -> 281,500)"
+
+[sub_827D1210]
+name = "Lua AwardCash"
+signature = "(lua_State* L) : stats+0x14 += n; stats+0x18 += n"
+confidence = "likely"
+evidence = "binding table 0x823116DC; decompile"
