@@ -19,6 +19,7 @@ role = "A gather: part p's palette[i] = srcPalette[remaps[p][mesh u16 (m+0x4C)[i
 confidence = "confirmed"
 evidence = "disassembly (the gather; RE-5); probe --skate3_harness_re_ubt over a reel (part k = LOD instance k, run 20261115-231543_re_ubt_reel); hook in src/skate3_native_render.cpp"
 hooked = "src/skate3_native_render.cpp"
+replaced = "src/native/skate3_native_pose.cpp (RE-7, bit-exact in shadow mode, on by default since 2026-11-16)"
 
 [sub_827E5B30]
 name = "cModelInstance::PackAndMultiplyMatricesForUpload"
@@ -27,6 +28,7 @@ role = "Packs an instance's bone matrices into m_matrices (+0x14) in place: row 
 confidence = "confirmed"
 evidence = "post-call snapshot matches the draw-time constant bank (palette serve); RE-5 probe: 170/170 packs match the formula; the skeleton store reproduces it on every skater piece (shadow mode, Windows and Odin 2)"
 hooked = "src/skate3_native_render.cpp"
+replaced = "src/native/skate3_native_pose.cpp (RE-7, bit-exact in shadow mode, on by default since 2026-11-16)"
 
 [sub_827C1D38]
 name = "LivingWorld batch pack writer"
@@ -35,6 +37,7 @@ role = "UpdateBoneTransforms and PackAndMultiply fused, over the skaters' tables
 confidence = "confirmed"
 evidence = "disassembly (RE-5b, 2026-11-16); the skeleton store rebuilt from these inputs matches every pedestrian bank capture (scenarios/skel_lw_shadow.toml: Windows 11,006/11,006, Odin 2 10,610/10,610 exact)"
 hooked = "src/skate3_native_render.cpp"
+replaced = "src/native/skate3_native_pose.cpp (RE-7, bit-exact in shadow mode, on by default since 2026-11-16)"
 
 [sub_827B8228]
 name = "LivingWorld pose getter (vtable +0x60)"

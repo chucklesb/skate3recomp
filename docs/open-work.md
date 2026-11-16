@@ -36,9 +36,11 @@ In order; the roadmap has the context ([roadmap.md](roadmap.md), RE-5/RE-7):
    plaza) and the store re-poses them. The few char_sync flags left at the
    plaza are pedestrians in their first frames, before the store has a
    tick for them.
-5. **RE-7:** native replacements of `UpdateBoneTransforms` and
-   `PackAndMultiplyMatricesForUpload`, shadow first
+5. ~~**RE-7, first three**~~: done 2026-11-16. `UpdateBoneTransforms`,
+   `PackAndMultiplyMatricesForUpload` and the LivingWorld writer run
+   natively by default, bit-exact
    ([re/characters.md](re/characters.md#native-replacements-re-7-candidates)).
+   Next: choose the next functions to replace.
 6. **Frame-time follow-ups** (below, under tooling).
 
 ## Rendering

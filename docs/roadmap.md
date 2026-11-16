@@ -70,11 +70,15 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   race after a seek, documented, fix deferred.
 - RE-6 [ ] **Who issues the emulated passes** native-only must replace
   (pitches 160 and 1200).
-- RE-7 [ ] **`src/re/` shadow-mode replacements:** native code in place of
-  recompiled functions, verified in shadow mode first. First candidates:
-  `UpdateBoneTransforms` and `PackAndMultiplyMatricesForUpload`, fully
-  specified by RE-5 and already reproduced exactly by the skeleton store
-  ([re/characters.md](re/characters.md#native-replacements-re-7-candidates)).
+- RE-7 [~] **Shadow-mode replacements:** native code in place of
+  recompiled functions, verified in shadow mode first. Done (2026-11-16, on
+  by default): `UpdateBoneTransforms`, `PackAndMultiplyMatricesForUpload`
+  and the LivingWorld batch pack writer, bit-exact on both platforms, no
+  frame-time cost (`src/native/skate3_native_pose.cpp`,
+  [re/characters.md](re/characters.md#native-replacements-re-7-candidates)).
+  Next: pick the next fully specified functions (a recipe is in
+  characters.md: disassemble, match the recompiler's primitives and order,
+  shadow byte for byte, then replace).
 
 **Parked** (the user's call; don't start without asking):
 - The photo challenge's jerky closing animation and snapping pose

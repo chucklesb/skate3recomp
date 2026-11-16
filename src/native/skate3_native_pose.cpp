@@ -17,12 +17,12 @@
 #include "native/skate3_native_guest_read.h"
 #include "skate3_native_scene.h"
 
-REXCVAR_DEFINE_STRING(skate3_native_pose_replace, "off", "Skate 3",
+REXCVAR_DEFINE_STRING(skate3_native_pose_replace, "on", "Skate 3",
                       "Native replacements for the character pose functions (RE-7): off | "
                       "shadow | on. PackAndMultiplyMatricesForUpload (sub_827E5B30) and the "
                       "LivingWorld batch pack writer (sub_827C1D38) computed natively, bit for "
                       "bit; shadow compares with the recompiled functions (pose: lines), on "
-                      "replaces them")
+                      "replaces them (default since 2026-11-16; off runs the recompiled code)")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
 namespace skate3::native_pose {

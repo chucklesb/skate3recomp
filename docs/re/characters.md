@@ -83,11 +83,36 @@ the skeleton store already reimplements them on the host:
 - `PackAndMultiplyMatricesForUpload` (`sub_827E5B30`): each gathered row
   times `localToWorld`, transposed to three float4 rows.
 
-The store's `BuildPiece` (`src/native/skate3_native_skeleton.cpp`) matched
-the game's own upload on every skater piece in shadow mode (6,336 on
-Windows, 4,016 on the Odin 2). A native replacement would run the host code
-in place of the recompiled function and write the same `m_matrices`. Shadow
-first (compare the guest's result each call), then replace. Not started.
+**Done (2026-11-16), on by default:** `src/native/skate3_native_pose.{h,cpp}`
+runs native versions of all three, in place of the recompiled code:
+- `Sk8::UpdateBoneTransforms` (`sub_827A52C8`): the 64-byte gather;
+- `PackAndMultiplyMatricesForUpload` (`sub_827E5B30`): in place, bone `i`
+  reads 64 bytes at `+64i` and writes 48 at `+48i`;
+- the LivingWorld batch pack writer (`sub_827C1D38`): both fused. It runs
+  natively only when the entity's vtable `+0x60` is the known pose getter
+  (`sub_827B8228`); other classes keep the recompiled function.
+
+**Bit for bit.** The guest computes each row of `M × L` as `m.x·L0`, then
+`vmaddfp` of `m.y·L1`, `m.z·L2`, `m.w·L3`. The recompiler emits `vmaddfp` as a
+true FMA (`simde_mm_fmadd_ps`) under the VMX flush-to-zero mode
+(`third_party/rexglue-sdk/src/codegen/builders/vector.cpp`). The native code
+uses the same primitives in the same order after `ctx.fpscr.enableFlushMode()`,
+and masks vector addresses to 16 bytes like `lvx`/`stvx`.
+
+Switch: `skate3_native_pose_replace = off | shadow | on` (`pose:` lines).
+Shadow computes before the recompiled function and compares bytes after.
+
+| Check | Windows Vulkan | Odin 2 |
+|---|---|---|
+| Shadow, plaza + forearm reel | Pack 54,452, LW 31,633, UBT 5,408 calls, all bit-exact | Pack 49,325, LW 30,372, UBT 5,315, all bit-exact |
+| On: skeleton store vs the game's upload | 0 divergent | 0 divergent |
+| On: char_sync, forearm reel | 0 bad frames | - |
+| Frame time, plaza, off / on (medians) | busy p50 4.62 / 4.68 ms, p99 7.01 / 6.90 | busy p50 6.97 / 6.84 ms, p99 11.62 / 11.04 |
+
+**Lesson:** the first version read guest memory through `GuestTryCopy` (a
+non-inlined SEH / `sigsetjmp` call per read) and was slower than the
+recompiled code (Windows busy p50 4.51 → 4.82 ms). A replacement only
+touches what the guest code touches on the same call, so it reads directly.
 
 ## Structures (known offsets)
 

@@ -15,7 +15,7 @@
 // that order (vmulfp, then vmaddfp, which the recompiler emits as a true
 // FMA), under the guest's VMX flush-to-zero mode.
 //
-// skate3_native_pose_replace = off | shadow | on:
+// skate3_native_pose_replace = off | shadow | on (default on):
 //  - shadow: compute the native result before the recompiled function runs,
 //    then compare it byte for byte with what the function wrote (pose: lines);
 //  - on: write the native result and skip the recompiled function.
