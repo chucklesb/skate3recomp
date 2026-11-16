@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <mutex>
@@ -20,14 +21,15 @@
 #include "skate3_native_scene.h"
 
 REXCVAR_DEFINE_STRING(skate3_native_render_scene_skeleton, "off", "Skate 3",
-                      "Character skeleton store (RE-5): off | shadow. shadow captures one pose "
-                      "per character per tick at UpdateBoneTransforms, rebuilds every skater "
-                      "piece's palette from it and compares it with the bank capture and the "
-                      "palette serve, changing nothing (skel-shadow: lines; "
+                      "Character skeleton store (RE-5): off | shadow | on. Captures one pose "
+                      "per skater per tick at UpdateBoneTransforms and rebuilds every piece's "
+                      "palette from it. shadow compares it with the bank capture and the "
+                      "palette serve, changing nothing; on serves skater pieces from it and "
+                      "resets their pose smoothing per character (skel: lines; "
                       "docs/re/characters.md)")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_INT32(skate3_native_render_scene_skeleton_log_interval, 120, "Skate 3",
-                     "Frames between skel-shadow: stats lines while the skeleton store is on "
+                     "Frames between skel: stats lines while the skeleton store is on "
                      "(0 = off)")
     .range(0, 100000)
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
@@ -44,13 +46,18 @@ constexpr uint32_t kMaxParts = 32;
 constexpr uint32_t kMaxRows = 96;        // DrawItem palettes top out here
 constexpr uint32_t kMaxModelBones = 80;  // UBT skips models above this
 constexpr uint32_t kMaxSkelBones = 512;
+// A root step the motion does not explain (a jump): the character gate the
+// pose smoothing uses for one tick (1.5 m), against the position the last
+// two ticks predict.
+constexpr float kJumpM = 1.5f;
+constexpr double kGapS = 0.1;
 
-// 0 = off, 1 = shadow. Refreshed once per built frame (string cvar).
+// 0 = off, 1 = shadow, 2 = on. Refreshed once per built frame (string cvar).
 std::atomic<int> g_mode{-1};
 
 int ReadMode() {
   const std::string v = REXCVAR_GET(skate3_native_render_scene_skeleton);
-  return v == "shadow" ? 1 : 0;
+  return v == "on" ? 2 : v == "shadow" ? 1 : 0;
 }
 
 int Mode() {
@@ -60,6 +67,11 @@ int Mode() {
     g_mode.store(m, std::memory_order_relaxed);
   }
   return m;
+}
+
+double NowS() {
+  return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch())
+      .count();
 }
 
 bool U32(uint8_t* base, uint32_t addr, uint32_t* out) {
@@ -92,7 +104,9 @@ struct Part {
 // the pack's localToWorld.
 struct Tick {
   uint32_t seq = 0;
+  uint32_t epoch = 0;
   uint64_t frame = 0;
+  double t = 0.0;  // steady-clock seconds at the UBT
   uint32_t parts = 0;
   uint32_t count = 0;
   std::vector<Part> part;
@@ -114,6 +128,11 @@ struct Entity {
   bool cur_valid = false;
   bool prev_valid = false;
   uint64_t last_frame = 0;
+  uint32_t epoch = 1;
+  // The last two complete ticks' roots, for the jump test.
+  float root[2][3] = {};
+  double root_t[2] = {};
+  int roots = 0;
   // Newest complete tick first.
   const Tick* Newest() const {
     return cur_valid && cur.have_ltow ? &cur : prev_valid ? &prev : nullptr;
@@ -129,14 +148,16 @@ std::atomic<uint32_t> g_seq{0};
 // ---- counters (window; exchanged to 0 at each stats line) ------------------
 std::atomic<uint64_t> c_ticks{0}, c_unpacked{0}, c_ubt_unowned{0}, c_part_skipped{0},
     c_part_bad{0}, c_pose_unread{0}, c_ltow_var{0}, c_pack_foreign{0};
-// Shadow: items of skater-family entities, how many the store could build,
-// and why not.
+// Jumps by cause.
+std::atomic<uint64_t> c_jump_root{0}, c_jump_gap{0}, c_jump_parts{0};
+// Items of skater-family entities, how many the store could build, and why
+// not.
 std::atomic<uint64_t> c_items{0}, c_built{0}, c_miss_noent{0}, c_miss_notick{0},
-    c_miss_nopart{0}, c_miss_skipped{0}, c_unmapped{0};
+    c_miss_nopart{0}, c_miss_skipped{0}, c_unmapped{0}, c_served{0}, c_served_tail{0};
 // [0] newest tick exact, [1] older tick exact, [2] close, [3] divergent.
 std::atomic<uint64_t> c_bank[4], c_srv[4];
 std::atomic<uint64_t> c_srv_unserved{0}, c_bank_none{0};
-std::atomic<uint64_t> g_log_div{0};
+std::atomic<uint64_t> g_log_div{0}, g_log_jump{0};
 
 struct Worst {
   float trans = -1.0f;
@@ -185,11 +206,12 @@ Err Compare(const float* a, const float* b, uint32_t n) {
 bool Exact(const Err& e) { return e.rot <= 2e-4f && e.trans <= 2e-3f; }
 bool Close(const Err& e) { return e.rot <= 0.05f && e.trans <= 0.05f; }
 
-// Per-item shadow scratch (render thread only; Before -> After).
+// Per-item scratch (render thread only; BeforeServe -> AfterServe).
 struct Shadow {
   size_t item = 0;
   uint32_t ctx = 0, mesh = 0, entity = 0, k = 0, n = 0;
   uint32_t ofs_new = 0, ofs_old = 0;
+  uint32_t seq = 0, epoch = 0;
   bool have_old = false;
 };
 std::vector<Shadow> g_shadow;
@@ -214,7 +236,7 @@ void NoteDiv(const Shadow& s, const Err& e, const char* vs, const DrawItem& item
   const uint64_t n = g_log_div.fetch_add(1, std::memory_order_relaxed);
   if (n < 16 || n % 4096 == 0) {
     REXLOG_INFO(
-        "skel-shadow: divergent vs {} entity {:08X} piece {} mesh {:08X} ctx {:08X} rows {} "
+        "skel: divergent vs {} entity {:08X} piece {} mesh {:08X} ctx {:08X} rows {} "
         "err rot {:.4f} trans {:.4f} | item src {} seq {} ent {:08X}",
         vs, s.entity, s.k, s.mesh, s.ctx, s.n, e.rot, e.trans, item.dbg_src, item.pose_seq,
         item.pose_entity);
@@ -222,6 +244,122 @@ void NoteDiv(const Shadow& s, const Err& e, const char* vs, const DrawItem& item
 }
 
 uint64_t X(std::atomic<uint64_t>& a) { return a.exchange(0, std::memory_order_relaxed); }
+
+// A newly complete tick: does it continue the entity's last one? g_mu held.
+void CheckContinuity(uint32_t owner, Entity& e, const Tick& t) {
+  const float r[3] = {t.ltow[12], t.ltow[13], t.ltow[14]};
+  const char* why = nullptr;
+  float miss = 0.0f;
+  if (e.roots > 0) {
+    if (t.t - e.root_t[0] > kGapS) {
+      why = "gap";
+      c_jump_gap.fetch_add(1, std::memory_order_relaxed);
+    } else if (e.prev_valid && (e.prev.parts != t.parts || e.prev.count != t.count)) {
+      why = "parts";
+      c_jump_parts.fetch_add(1, std::memory_order_relaxed);
+    } else {
+      // Predicted from the last two roots (a hitch can hold several ticks of
+      // real travel, and speed glitches move metres every tick).
+      float pred[3] = {e.root[0][0], e.root[0][1], e.root[0][2]};
+      if (e.roots > 1 && e.root_t[0] - e.root_t[1] > 1e-4) {
+        const double k = (t.t - e.root_t[0]) / (e.root_t[0] - e.root_t[1]);
+        for (int i = 0; i < 3; ++i) pred[i] += float((e.root[0][i] - e.root[1][i]) * k);
+      }
+      const float dx = r[0] - pred[0], dy = r[1] - pred[1], dz = r[2] - pred[2];
+      miss = std::sqrt(dx * dx + dy * dy + dz * dz);
+      if (miss > kJumpM) {
+        why = "root";
+        c_jump_root.fetch_add(1, std::memory_order_relaxed);
+      }
+    }
+  }
+  if (why != nullptr) {
+    ++e.epoch;
+    e.roots = 0;
+    const uint64_t n = g_log_jump.fetch_add(1, std::memory_order_relaxed);
+    if (n < 32 || n % 1024 == 0) {
+      REXLOG_INFO("skel: jump entity {:08X} epoch {} ({}, root off by {:.2f} m) at ({:.2f},{:.2f},{:.2f})",
+                  owner, e.epoch, why, miss, r[0], r[1], r[2]);
+    }
+  }
+  std::memcpy(e.root[1], e.root[0], sizeof(e.root[0]));
+  e.root_t[1] = e.root_t[0];
+  std::memcpy(e.root[0], r, sizeof(r));
+  e.root_t[0] = t.t;
+  e.roots = std::min(e.roots + 1, 2);
+}
+
+// Look up, build (and in "on" mode serve) one item. Returns true when built;
+// fills s. g_rows grows by the rows built.
+enum class Built { kNo, kYes, kNotSkater };
+Built BuildItem(const DrawItem& item, size_t i, Shadow* s, bool count) {
+  skate3::native_entity::CtxInfo ident;
+  if (!skate3::native_entity::LookupCtx(item.ctx, &ident) || ident.entity == 0) {
+    if (count) c_unmapped.fetch_add(1, std::memory_order_relaxed);
+    return Built::kNotSkater;
+  }
+  using skate3::native_entity::EntClass;
+  if (ident.cls != EntClass::kSkater && ident.cls != EntClass::kColorized &&
+      ident.cls != EntClass::kCac && ident.cls != EntClass::kSkaterAux) {
+    return Built::kNotSkater;  // not a SkaterPresEntity (pedestrians: RE-5b)
+  }
+  if (count) c_items.fetch_add(1, std::memory_order_relaxed);
+  s->item = i;
+  s->ctx = item.ctx;
+  s->mesh = item.mesh;
+  s->entity = ident.entity;
+  std::lock_guard<std::mutex> lock(g_mu);
+  const auto it = g_ents.find(ident.entity);
+  const auto miss = [&](std::atomic<uint64_t>& c) {
+    if (count) c.fetch_add(1, std::memory_order_relaxed);
+    return Built::kNo;
+  };
+  if (it == g_ents.end()) return miss(c_miss_noent);
+  const Tick* nt = it->second.Newest();
+  if (nt == nullptr) return miss(c_miss_notick);
+  const Part* p = nt->Find(ident.instance);
+  if (p == nullptr) return miss(c_miss_nopart);
+  if (!p->built) return miss(c_miss_skipped);
+  uint32_t n = std::min<uint32_t>(uint32_t(item.bones.size() / 12), p->rows);
+  if (p->pack_count >= 1 && p->pack_count <= kMaxRows) n = std::min<uint32_t>(n, p->pack_count);
+  s->k = (ident.instance - nt->parts) / kInstStride;
+  s->n = n;
+  s->seq = nt->seq;
+  s->epoch = nt->epoch;
+  s->ofs_new = uint32_t(g_rows.size());
+  g_rows.resize(g_rows.size() + size_t(n) * 12);
+  BuildPiece(*nt, *p, n, g_rows.data() + s->ofs_new);
+  s->have_old = false;
+  const Tick* ot = it->second.Older();
+  const Part* op = ot ? ot->Find(ident.instance) : nullptr;
+  if (op != nullptr && op->built && op->rows >= n) {
+    s->have_old = true;
+    s->ofs_old = uint32_t(g_rows.size());
+    g_rows.resize(g_rows.size() + size_t(n) * 12);
+    BuildPiece(*ot, *op, n, g_rows.data() + s->ofs_old);
+  }
+  if (count) c_built.fetch_add(1, std::memory_order_relaxed);
+  return Built::kYes;
+}
+
+void Serve(DrawItem& item, const Shadow& s) {
+  std::memcpy(item.bones.data(), g_rows.data() + s.ofs_new, size_t(s.n) * 12 * sizeof(float));
+  // Rows past the game's own count are never indexed by the mesh.
+  std::fill(item.bones.begin() + size_t(s.n) * 12, item.bones.end(), 0.0f);
+  item.dbg_src = kDbgSrc;
+  item.caster_bank = false;
+  item.pose_entity = s.entity;
+  item.pose_seq = s.seq;
+  item.pose_part = uint16_t(s.k);
+  item.pose_set = 0;
+  item.serve_div = -1.0f;
+  item.skel_epoch = s.epoch;
+}
+
+bool Servable(const DrawItem& item) {
+  return item.skinned && item.ctx != 0 && item.bones.size() >= 12 && !item.pending &&
+         item.dbg_src != 10;
+}
 
 }  // namespace
 
@@ -235,6 +373,7 @@ void OnBoneTransforms(uint8_t* base, uint32_t owner, uint32_t parts, uint32_t co
     return;
   }
   Tick t;
+  t.t = NowS();
   t.parts = parts;
   t.count = std::min(count, kMaxParts);
   t.part.resize(t.count);
@@ -342,7 +481,8 @@ void OnPack(uint8_t* base, uint32_t owner, uint32_t instance, uint32_t local_to_
   std::lock_guard<std::mutex> lock(g_mu);
   const auto it = g_ents.find(owner);
   if (it == g_ents.end() || !it->second.cur_valid) return;
-  Tick& t = it->second.cur;
+  Entity& e = it->second;
+  Tick& t = e.cur;
   const Part* p = t.Find(instance);
   if (p == nullptr) {
     c_pack_foreign.fetch_add(1, std::memory_order_relaxed);  // not this tick's parts
@@ -351,6 +491,8 @@ void OnPack(uint8_t* base, uint32_t owner, uint32_t instance, uint32_t local_to_
   if (!t.have_ltow) {
     std::memcpy(t.ltow, l, sizeof(l));
     t.have_ltow = true;
+    CheckContinuity(owner, e, t);
+    t.epoch = e.epoch;
   } else if (std::memcmp(t.ltow, l, sizeof(l)) != 0) {
     c_ltow_var.fetch_add(1, std::memory_order_relaxed);  // one tick, two localToWorlds
   }
@@ -358,68 +500,17 @@ void OnPack(uint8_t* base, uint32_t owner, uint32_t instance, uint32_t local_to_
   if (k < 32) t.packed_mask |= 1u << k;
 }
 
-void ShadowBeforeServe(uint8_t* base, const FrameScene& scene) {
+void BeforeServe(uint8_t* base, FrameScene& scene) {
+  (void)base;
   g_shadow.clear();
   g_rows.clear();
-  if (Mode() != 1) return;
-  (void)base;
+  const int mode = Mode();
+  if (mode == 0) return;
   for (size_t i = 0; i < scene.items.size(); ++i) {
-    const DrawItem& item = scene.items[i];
-    if (!item.skinned || item.ctx == 0 || item.bones.size() < 12 || item.pending) continue;
-    skate3::native_entity::CtxInfo ident;
-    if (!skate3::native_entity::LookupCtx(item.ctx, &ident) || ident.entity == 0) {
-      c_unmapped.fetch_add(1, std::memory_order_relaxed);
-      continue;
-    }
-    using skate3::native_entity::EntClass;
-    if (ident.cls != EntClass::kSkater && ident.cls != EntClass::kColorized &&
-        ident.cls != EntClass::kCac && ident.cls != EntClass::kSkaterAux) {
-      continue;  // not a SkaterPresEntity (pedestrians: RE-5b)
-    }
-    c_items.fetch_add(1, std::memory_order_relaxed);
+    DrawItem& item = scene.items[i];
+    if (!Servable(item)) continue;
     Shadow s;
-    s.item = i;
-    s.ctx = item.ctx;
-    s.mesh = item.mesh;
-    s.entity = ident.entity;
-    {
-      std::lock_guard<std::mutex> lock(g_mu);
-      const auto it = g_ents.find(ident.entity);
-      if (it == g_ents.end()) {
-        c_miss_noent.fetch_add(1, std::memory_order_relaxed);
-        continue;
-      }
-      const Tick* nt = it->second.Newest();
-      if (nt == nullptr) {
-        c_miss_notick.fetch_add(1, std::memory_order_relaxed);
-        continue;
-      }
-      const Part* p = nt->Find(ident.instance);
-      if (p == nullptr) {
-        c_miss_nopart.fetch_add(1, std::memory_order_relaxed);
-        continue;
-      }
-      if (!p->built) {
-        c_miss_skipped.fetch_add(1, std::memory_order_relaxed);
-        continue;
-      }
-      uint32_t n = std::min<uint32_t>(uint32_t(item.bones.size() / 12), p->rows);
-      if (p->pack_count >= 1 && p->pack_count <= kMaxRows) n = std::min<uint32_t>(n, p->pack_count);
-      s.k = (ident.instance - nt->parts) / kInstStride;
-      s.n = n;
-      s.ofs_new = uint32_t(g_rows.size());
-      g_rows.resize(g_rows.size() + size_t(n) * 12);
-      BuildPiece(*nt, *p, n, g_rows.data() + s.ofs_new);
-      const Tick* ot = it->second.Older();
-      const Part* op = ot ? ot->Find(ident.instance) : nullptr;
-      if (op != nullptr && op->built && op->rows >= n) {
-        s.have_old = true;
-        s.ofs_old = uint32_t(g_rows.size());
-        g_rows.resize(g_rows.size() + size_t(n) * 12);
-        BuildPiece(*ot, *op, n, g_rows.data() + s.ofs_old);
-      }
-    }
-    c_built.fetch_add(1, std::memory_order_relaxed);
+    if (BuildItem(item, i, &s, true) != Built::kYes) continue;
     // The bank capture: the game's own upload for this draw.
     if ((item.dbg_src == 1 || item.dbg_src == 2) && !item.caster_bank) {
       Err e;
@@ -429,11 +520,16 @@ void ShadowBeforeServe(uint8_t* base, const FrameScene& scene) {
     } else {
       c_bank_none.fetch_add(1, std::memory_order_relaxed);
     }
-    g_shadow.push_back(s);
+    if (mode == 2) {
+      Serve(item, s);
+      c_served.fetch_add(1, std::memory_order_relaxed);
+    } else {
+      g_shadow.push_back(s);
+    }
   }
 }
 
-void ShadowAfterServe(const FrameScene& scene) {
+void AfterServe(const FrameScene& scene) {
   if (Mode() != 1) return;
   for (const Shadow& s : g_shadow) {
     if (s.item >= scene.items.size()) continue;
@@ -450,6 +546,23 @@ void ShadowAfterServe(const FrameScene& scene) {
   }
 }
 
+uint32_t ServeRange(uint8_t* base, FrameScene& scene, size_t first) {
+  (void)base;
+  if (Mode() != 2) return 0;
+  uint32_t n = 0;
+  for (size_t i = first; i < scene.items.size(); ++i) {
+    DrawItem& item = scene.items[i];
+    if (!Servable(item)) continue;
+    Shadow s;
+    g_rows.clear();
+    if (BuildItem(item, i, &s, false) != Built::kYes) continue;
+    Serve(item, s);
+    ++n;
+  }
+  c_served_tail.fetch_add(n, std::memory_order_relaxed);
+  return n;
+}
+
 void OnFrameBuilt() {
   g_mode.store(ReadMode(), std::memory_order_relaxed);
   size_t ents = 0;
@@ -464,24 +577,28 @@ void OnFrameBuilt() {
     ents = g_ents.size();
     worst = g_worst;
   }
+  const int mode = Mode();
   const int32_t every = REXCVAR_GET(skate3_native_render_scene_skeleton_log_interval);
-  if (Mode() == 0 || every <= 0 || g_frames % uint64_t(every) != 0) return;
+  if (mode == 0 || every <= 0 || g_frames % uint64_t(every) != 0) return;
   {
     std::lock_guard<std::mutex> lock(g_mu);
     g_worst = Worst{};
   }
   REXLOG_INFO(
-      "skel-shadow: frame {} items {} built {} miss[noent={} notick={} nopart={} skipped={}] "
-      "unmapped {} bank[new={} old={} close={} div={} none={}] serve[new={} old={} close={} "
-      "div={} unserved={}] store[ents={} ticks={} unpacked={} unowned={} foreign={} ltow_var={} "
-      "part_skip={} part_bad={} pose_unread={}] worst[{} ent={:08X} piece={} mesh={:08X} "
-      "trans={:.4f} rot={:.4f}]",
-      g_frames, X(c_items), X(c_built), X(c_miss_noent), X(c_miss_notick), X(c_miss_nopart),
-      X(c_miss_skipped), X(c_unmapped), X(c_bank[0]), X(c_bank[1]), X(c_bank[2]), X(c_bank[3]),
-      X(c_bank_none), X(c_srv[0]), X(c_srv[1]), X(c_srv[2]), X(c_srv[3]), X(c_srv_unserved), ents,
-      X(c_ticks), X(c_unpacked), X(c_ubt_unowned), X(c_pack_foreign), X(c_ltow_var),
-      X(c_part_skipped), X(c_part_bad), X(c_pose_unread), worst.trans < 0 ? "-" : worst.vs,
-      worst.entity, worst.k, worst.mesh, std::max(worst.trans, 0.0f), worst.rot);
+      "skel: mode {} frame {} items {} built {} served {} tail {} miss[noent={} notick={} "
+      "nopart={} skipped={}] unmapped {} bank[new={} old={} close={} div={} none={}] "
+      "serve[new={} old={} close={} div={} unserved={}] store[ents={} ticks={} unpacked={} "
+      "unowned={} foreign={} ltow_var={} part_skip={} part_bad={} pose_unread={}] "
+      "jump[root={} gap={} parts={}] worst[{} ent={:08X} piece={} mesh={:08X} trans={:.4f} "
+      "rot={:.4f}]",
+      mode == 2 ? "on" : "shadow", g_frames, X(c_items), X(c_built), X(c_served),
+      X(c_served_tail), X(c_miss_noent), X(c_miss_notick), X(c_miss_nopart), X(c_miss_skipped),
+      X(c_unmapped), X(c_bank[0]), X(c_bank[1]), X(c_bank[2]), X(c_bank[3]), X(c_bank_none),
+      X(c_srv[0]), X(c_srv[1]), X(c_srv[2]), X(c_srv[3]), X(c_srv_unserved), ents, X(c_ticks),
+      X(c_unpacked), X(c_ubt_unowned), X(c_pack_foreign), X(c_ltow_var), X(c_part_skipped),
+      X(c_part_bad), X(c_pose_unread), X(c_jump_root), X(c_jump_gap), X(c_jump_parts),
+      worst.trans < 0 ? "-" : worst.vs, worst.entity, worst.k, worst.mesh,
+      std::max(worst.trans, 0.0f), worst.rot);
 }
 
 }  // namespace skate3::native_skeleton

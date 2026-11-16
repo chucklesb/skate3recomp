@@ -7778,6 +7778,9 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
     uint32_t motion_ctx = 0;
     uint32_t motion_owner = 0;
     unsigned motion_samples = 0;
+    // Skeleton-served pieces: the character's jump counter at the newest
+    // pose (DrawItem::skel_epoch). A change resets the ring.
+    uint32_t skel_epoch = 0;
     // A motion discontinuity of the SAME instance (teleport, respawn, a hitch
     // the continuity test cannot vouch for) keeps the last pose before it,
     // shown until the playback clock reaches the first pose after it: the
@@ -8016,10 +8019,14 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
     // interpolator lerps their 180-degree-apart rotations, the visible
     // piece spin. Legacy (mesh, occurrence) pairing continues to serve
     // everything without a usable ctx (player, CAC, ctx-less captures).
+    // Skeleton-store serves (dbg_src 14) are identity-proven too (the ctx
+    // maps to its entity and instance), so they take the ctx key.
+    const bool skel_served =
+        item.dbg_src == skate3::native_skeleton::kDbgSrc && item.skel_epoch != 0;
     bool lw_keyed = item.ctx != 0 &&
                     ((item.lw_entity != 0 &&
                       REXCVAR_GET(skate3_native_render_scene_lw_identity)) ||
-                     !skinned);
+                     !skinned || skel_served);
     uint64_t key = lw_keyed ? ((1ull << 63) | (uint64_t(item.ctx) << 32) |
                                uint64_t(item.mesh))
                             : ((uint64_t(item.mesh) << 8) | (k & 0xFF));
@@ -8268,7 +8275,14 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
         bool discontinuity =
             now - latest.t > 0.1 ||
             (skinned && latest.b.size() != item.bones.size());
-        if (!discontinuity) {
+        if (skel_served) {
+          // One decision per character (KI-125): the store raised the jump
+          // counter for a root step its motion doesn't explain, a gap or an
+          // LOD switch. Every piece of the character sees the same counter
+          // on the same tick, so they reset together; a per-piece distance
+          // gate could reset some pieces and lerp others across the jump.
+          discontinuity = discontinuity || h.skel_epoch != item.skel_epoch;
+        } else if (!discontinuity) {
           // Translation jump at the non-spinning reference (see
           // skinned_dist2; bone 0 is a WHEEL on vehicles); rigid worlds
           // carry t in row 3.
@@ -8425,6 +8439,7 @@ void InterpolateDynamicItems(uint8_t* base, FrameScene& scene, double now) {
           (same_motion_instance ? std::min(h.motion_samples + 1, unsigned(kRing)) : 1);
       h.motion_ctx = item.ctx;
       h.motion_owner = item.lw_entity;
+      h.skel_epoch = item.skel_epoch;
       h.newest = h.count == 0 ? 0 : (h.newest + 1) % kRing;
       DynPose& p = h.ring[h.newest];
       p.t = stamp;
@@ -9719,6 +9734,7 @@ const char* CharSrcName(uint8_t s) {
     case 10: return "lw";
     case 11: return "serve";
     case 13: return "reanchor";
+    case 14: return "skel";
     default: return "other";
   }
 }
@@ -9735,7 +9751,7 @@ void NoteCharDrop(uint32_t ctx, uint32_t mesh, int age) {
 void StampServedFrames(FrameScene& scene, size_t first) {
   for (size_t i = first; i < scene.items.size(); ++i) {
     DrawItem& it = scene.items[i];
-    if (it.dbg_src == 11) {
+    if (it.dbg_src == 11 || it.dbg_src == skate3::native_skeleton::kDbgSrc) {
       it.pose_frame = uint32_t(g_guest_frame) - it.pose_set;
     }
   }
@@ -9770,7 +9786,7 @@ void CharSyncLog(const FrameScene& scene) {
     prev = it->ctx;
     // A rescued piece has no pack this frame: use its last known entity.
     static std::unordered_map<uint32_t, uint32_t> s_ctx_entity;  // render thread
-    if (it->pose_entity != 0 && it->dbg_src == 11) {
+    if (it->pose_entity != 0 && (it->dbg_src == 11 || it->dbg_src == 14)) {
       if (s_ctx_entity.size() > 4096) {
         s_ctx_entity.clear();
       }
@@ -9796,7 +9812,7 @@ void CharSyncLog(const FrameScene& scene) {
     std::unordered_map<uint64_t, int> parts;
     std::vector<float> lags;
     for (const DrawItem* it : list) {
-      if (it->pose_part != 0xFFFF && it->dbg_src == 11) {
+      if (it->pose_part != 0xFFFF && (it->dbg_src == 11 || it->dbg_src == 14)) {
         ++seqs[it->pose_seq];
         ++parts[(uint64_t(it->pose_seq) << 16) | it->pose_part];
       }
@@ -9832,11 +9848,11 @@ void CharSyncLog(const FrameScene& scene) {
       } else if (it->dbg_src == 11 && it->pose_set == 1) {
         add(it, "prevpack");
       }
-      if (it->pose_part != 0xFFFF && it->dbg_src == 11 && seq_n > 0 &&
+      if (it->pose_part != 0xFFFF && (it->dbg_src == 11 || it->dbg_src == 14) && seq_n > 0 &&
           it->pose_seq != seq_major) {
         add(it, fmt::format("tick={:+d}", int(it->pose_seq) - int(seq_major)));
       }
-      if (it->pose_part != 0xFFFF && it->dbg_src == 11 &&
+      if (it->pose_part != 0xFFFF && (it->dbg_src == 11 || it->dbg_src == 14) &&
           parts[(uint64_t(it->pose_seq) << 16) | it->pose_part] > 1) {
         add(it, fmt::format("dup=part{}", it->pose_part));
       }
@@ -10388,9 +10404,11 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
     // FIRST so the sanity gate below validates the authoritative rows and
     // the rescue caches learn them; unmapped items keep the bank pipeline.
     const auto pal_t0 = PerfClock::now();
-    skate3::native_skeleton::ShadowBeforeServe(base, scene);  // RE-5 shadow (off by default)
+    // RE-5 skeleton store (off by default): shadow compares, on serves skater
+    // pieces (dbg_src 14) before the palette serve, which then skips them.
+    skate3::native_skeleton::BeforeServe(base, scene);
     g_pal_served_frame = skate3::native_palette::ServeAuthoritativePalettes(base, scene);
-    skate3::native_skeleton::ShadowAfterServe(scene);
+    skate3::native_skeleton::AfterServe(scene);
     StampServedFrames(scene, 0);
     g_frame_bpal_ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                    PerfClock::now() - pal_t0)
@@ -10406,7 +10424,8 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
     for (DrawItem& item : scene.items) {
       if (!item.skinned || item.bones.empty() || item.pending ||
           item.dbg_src == 10 ||  // LW-substituted palettes are authoritative
-          item.dbg_src == 11) {  // pack-served palettes are authoritative
+          item.dbg_src == 11 ||  // pack-served palettes are authoritative
+          item.dbg_src == skate3::native_skeleton::kDbgSrc) {  // so are skeleton serves
         continue;
       }
       float spread = 0.0f;
@@ -10584,6 +10603,20 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
     // teach the ctx cache the fresh pose; pieces the game did not pack keep
     // the re-anchored cache. Ported from dougieprishpreed/skate3recomp-plus
     // (v0.1, a042005).
+    if (scene.items.size() > rescue_first) {
+      const uint32_t n = skate3::native_skeleton::ServeRange(base, scene, rescue_first);
+      g_pal_served_frame += n;
+      StampServedFrames(scene, rescue_first);
+      for (size_t ri = rescue_first; ri < scene.items.size() && n != 0; ++ri) {
+        const DrawItem& it = scene.items[ri];
+        if (it.dbg_src == skate3::native_skeleton::kDbgSrc && it.ctx != 0) {
+          CachedBones& cb = g_bones_cache_ctx[it.ctx];
+          cb.bones = it.bones;
+          cb.frame = g_guest_frame;
+          cb.ent_ok = skate3::native_entity::ReadEntityWorldRows(base, it.ctx, cb.ent);
+        }
+      }
+    }
     if (scene.items.size() > rescue_first &&
         REXCVAR_GET(skate3_native_render_scene_rescue_serve)) {
       const uint32_t n = skate3::native_palette::ServeAuthoritativePalettes(

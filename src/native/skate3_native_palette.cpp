@@ -529,7 +529,8 @@ uint32_t ServeAuthoritativePalettesImpl(uint8_t* base,
     // Pending items are half-built (the fixup/rescue machinery owns them);
     // LW-store substitutions (dbg_src 10) are already authoritative.
     if (!item.skinned || item.ctx == 0 || item.bones.size() < 12 ||
-        item.pending || item.dbg_src == 10) {
+        item.pending || item.dbg_src == 10 ||
+        item.dbg_src == 14) {  // served from the skeleton store
       continue;
     }
     const uint32_t published = uint32_t(item.bones.size() / 12);

@@ -1,0 +1,34 @@
+# RE-5 step 3: skater pieces served from the skeleton store (one pose per
+# character per tick; dbg_src 14), with one smoothing reset per character.
+# Free skate, then the forearm reel (KI-117 class) with char_sync on.
+#
+# Check:  tools/harness/skel_shadow_report.py <run> --max-div 0
+#         tools/harness/char_sync_report.py <run> --reel --max-bad 4
+# Compare with skel_shadow.toml (today's path) on the same target.
+name = "skel_on"
+timeout_s = 1200
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+skate3_native_render_scene_char_sync = true
+skate3_native_render_scene_skeleton = "on"
+skate3_native_render_scene_skeleton_log_interval = 30
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 300
+
+[[step]]
+do = "play_reel"
+reel = "a9bbe6156adca014"
+from = "marker"
+every_frames = 3
+tag = "rf"

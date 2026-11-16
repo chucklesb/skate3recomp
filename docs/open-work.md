@@ -166,6 +166,17 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
 - **Profiling:** a Tracy build option with zones in our code, then GPU
   tracing on the device (Perfetto or Mesa); a performance threshold in
   scenarios.
+- **Frame-time follow-ups** (after `frames.csv` and
+  `tools/harness/frametime_report.py`, 2026-11-16):
+  - **Log lines next to each hitch:** list the log lines (shader compiles,
+    streaming, saves, audio) logged around each of the worst frames. This
+    needs the run start's wall time so log timestamps map onto `frames.csv`.
+  - **Time for the threads beside the game thread:** per-frame time for the
+    native renderer's GPU submission thread (and the GPU, from the timestamp
+    buckets) as extra `frames.csv` columns. Today they show only when they
+    hold the game back (in `swap`).
+  - **Odin 2 lead:** in `20261115-235927_skel_shadow`, one in-game 50 ms frame
+    was 36 ms of game-thread time with no event next to it.
 
 ## Investigations
 

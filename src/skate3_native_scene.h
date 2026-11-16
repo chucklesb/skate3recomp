@@ -284,6 +284,8 @@ struct DrawItem {
   // re-published while the flipped mode's decode is still in flight),
   // 6 = publish-time incoherent-palette heal (cached palette substituted
   // after the dense 32-sample spread gate failed).
+  // 14 = skeleton store (native_skeleton, skate3_native_render_scene_skeleton
+  // = on): the palette rebuilt from the character's one pose this tick.
   uint8_t dbg_src = 0;
   // Pose provenance for the char_sync check (skate3_native_render_scene_
   // char_sync): the guest frame the palette was taken from (0 = unknown;
@@ -299,6 +301,10 @@ struct DrawItem {
   // The entity that produced the served pack (PackSnap::entity; 0 = unknown):
   // char_sync groups a character's pieces by it.
   uint32_t pose_entity = 0;
+  // Skeleton-store serves (dbg_src 14): the character's jump counter at
+  // the served tick (native_skeleton). The pose smoothing resets every
+  // piece of a character together when it changes (KI-125).
+  uint32_t skel_epoch = 0;
   // Why a skinned capture stayed pending (char_sync): 1 world-path capture,
   // 2 the submit's last draw was not this mesh's, 4 multi-pass mesh, 8 no
   // palette in the bank, 16 refused: aux perspective (portrait) bank, 32

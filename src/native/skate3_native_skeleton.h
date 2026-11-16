@@ -23,12 +23,23 @@
 // store (native_entity::LookupCtx), and instance k of the tick's parts array
 // is the piece.
 //
-// skate3_native_render_scene_skeleton = off | shadow. In shadow, every
-// skinned item of a skater-family entity gets its palette rebuilt from the
-// store and compared, without changing anything, with the bank capture (the
-// game's own upload) and with what today's palette serve chose; a
-// "skel-shadow:" line reports the counts (tools/harness/skel_shadow_report.py).
-// A piece the store can't build is counted as missing, never filled.
+// Each entity also has a jump counter (epoch), raised when a tick does not
+// continue the last one: the root moved further than its motion explains
+// (a teleport, a replay jumping to another time), a gap of more than
+// 100 ms, or another instance array (an LOD switch). Served pieces carry it
+// (DrawItem::skel_epoch), and the pose smoothing resets every piece of the
+// character together when it changes (KI-125).
+//
+// skate3_native_render_scene_skeleton = off | shadow | on:
+//  - shadow: every skinned item of a skater-family entity gets its palette
+//    rebuilt and compared, without changing anything, with the bank capture
+//    (the game's own upload) and with what the palette serve chose;
+//  - on: those items are served from the store (dbg_src 14), and the
+//    palette serve leaves them alone. A covered piece the store can't build
+//    is counted as missing and keeps today's path; pedestrians (RE-5b) stay
+//    on today's path.
+// A "skel:" line every N frames reports the counts
+// (tools/harness/skel_shadow_report.py).
 
 #include <cstddef>
 #include <cstdint>
@@ -38,6 +49,8 @@ struct FrameScene;
 }  // namespace skate3::native_scene
 
 namespace skate3::native_skeleton {
+
+constexpr uint8_t kDbgSrc = 14;
 
 // True when the store captures (cvar not "off").
 bool Active();
@@ -50,11 +63,16 @@ void OnBoneTransforms(uint8_t* base, uint32_t owner, uint32_t parts, uint32_t co
 // PackAndMultiplyMatricesForUpload ENTRY: r3 the instance, r4 localToWorld.
 void OnPack(uint8_t* base, uint32_t owner, uint32_t instance, uint32_t local_to_world);
 
-// Scene builder, around the first ServeAuthoritativePalettes call: Before
-// builds every covered item's palette from the store and compares it with
-// the item's bank capture; After compares it with the served palette.
-void ShadowBeforeServe(uint8_t* base, const skate3::native_scene::FrameScene& scene);
-void ShadowAfterServe(const skate3::native_scene::FrameScene& scene);
+// Scene builder, around the first ServeAuthoritativePalettes call. Before
+// builds every covered item's palette from the store, compares it with the
+// item's bank capture, and in "on" mode serves it; After (shadow mode)
+// compares it with the palette serve's choice.
+void BeforeServe(uint8_t* base, skate3::native_scene::FrameScene& scene);
+void AfterServe(const skate3::native_scene::FrameScene& scene);
+
+// "on" mode: serve scene.items[first..] (the rescued tail). Returns the
+// number served.
+uint32_t ServeRange(uint8_t* base, skate3::native_scene::FrameScene& scene, size_t first);
 
 // Frame tail: expiry and the stats line.
 void OnFrameBuilt();

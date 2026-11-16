@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Skeleton-store shadow report (RE-5 step 2) from a game log.
 
-Run a game with skate3_native_render_scene_skeleton="shadow" (for example
-scenarios/skel_shadow.toml). The store rebuilds every skater piece's palette
-from one pose per character per tick, and a `skel-shadow:` line every N
-frames counts how the rebuilt pieces compare:
+Run a game with skate3_native_render_scene_skeleton="shadow" or "on" (for
+example scenarios/skel_shadow.toml, skel_on.toml). The store rebuilds every
+skater piece's palette from one pose per character per tick, and a `skel:`
+line every N frames counts how the rebuilt pieces compare (in "on" mode also
+how many it served, and the bank compare still runs before the serve):
 
     items     skinned draws of skater-family entities
     built     of those, pieces the store could rebuild; the rest are
@@ -17,6 +18,9 @@ frames counts how the rebuilt pieces compare:
     store[...] ticks captured, unpacked (a UBT with no pack before the
               next), unowned UBT calls, packs of other instances, and a
               tick with two different localToWorlds (ltow_var)
+    jump[...] the characters' jump counter rising: root (a root step the
+              motion doesn't explain: teleport, replay jump), gap (> 100
+              ms between ticks), parts (another instance array: LOD)
 
     skel_shadow_report.py <run dir | log.txt> ... [--reel] [--max-div N]
 
@@ -31,11 +35,13 @@ import re
 import sys
 from pathlib import Path
 
-STAT = re.compile(r"^\[\S+ (\S+)\].*skel-shadow: frame (\d+) (.*)$")
-DIV = re.compile(r"^\[\S+ (\S+)\].*skel-shadow: divergent vs (\w+) (.*)$")
+# "skel-shadow:" is the line's name before step 3 (2026-11-16).
+STAT = re.compile(r"^\[\S+ (\S+)\].*skel(?:-shadow)?: (?:mode (\w+) )?frame (\d+) (.*)$")
+DIV = re.compile(r"^\[\S+ (\S+)\].*skel(?:-shadow)?: divergent vs (\w+) (.*)$")
+JUMP = re.compile(r"^\[\S+ (\S+)\].*skel: jump (.*)$")
 FIELD = re.compile(r"(\w+)=(\d+)")
 GROUP = re.compile(r"(\w+)\[([^\]]*)\]")
-PLAIN = re.compile(r"\b(items|built|unmapped) (\d+)")
+PLAIN = re.compile(r"\b(items|built|served|tail|unmapped) (\d+)")
 
 
 def find_log(arg: str) -> Path:
@@ -66,12 +72,15 @@ def main() -> int:
                     hi = ln.split()[1]
         tot = collections.Counter()
         divs = []
+        jumps = []
+        modes = set()
         nlines = 0
         for ln in lines:
             m = STAT.search(ln)
             if m and lo <= m.group(1) <= hi:
                 nlines += 1
-                body = m.group(3)
+                modes.add(m.group(2) or "shadow")
+                body = m.group(4)
                 for k, v in PLAIN.findall(body):
                     tot[k] += int(v)
                 for g, inner in GROUP.findall(body):
@@ -83,9 +92,13 @@ def main() -> int:
             d = DIV.search(ln)
             if d and lo <= d.group(1) <= hi and len(divs) < a.top:
                 divs.append(f"vs {d.group(2)} {d.group(3)}")
-        print(f"== {arg}{' (reel only)' if a.reel else ''}: {nlines} stat lines")
+            j = JUMP.search(ln)
+            if j and lo <= j.group(1) <= hi and len(jumps) < a.top:
+                jumps.append(f"{j.group(1)} {j.group(2)}")
+        print(f"== {arg}{' (reel only)' if a.reel else ''}: {nlines} stat lines, "
+              f"mode {'/'.join(sorted(modes)) or '-'}")
         if not nlines:
-            print("  no skel-shadow lines (skeleton cvar off?)")
+            print("  no skel: lines (skeleton cvar off?)")
             failed = True
             continue
         items, built = tot["items"], tot["built"]
@@ -99,6 +112,11 @@ def main() -> int:
         print("  store    " + "  ".join(f"{k}={tot['store.' + k]}" for k in
                                         ("ticks", "unpacked", "unowned", "foreign", "ltow_var",
                                          "part_skip", "part_bad", "pose_unread")))
+        if "on" in modes:
+            print(f"  served   {tot['served']} pieces, {tot['tail']} more in the rescued tail")
+        print("  jumps    " + "  ".join(f"{k}={tot['jump.' + k]}" for k in ("root", "gap", "parts")))
+        for jl in jumps:
+            print(f"    jump {jl}")
         for d in divs:
             print(f"    {d}")
         ndiv = tot["bank.div"] + tot["serve.div"]
