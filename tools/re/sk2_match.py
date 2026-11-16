@@ -556,22 +556,56 @@ NAMES = REPO / "docs/re/names_sk2.tsv"
 def export() -> None:
     """The match table as docs/re/names_sk2.tsv: names only (no Skate 2
     addresses or code), one line per TU3 function."""
-    rows = []
+    names2 = {}
+    for line in open(SK2 / "functions.tsv"):
+        a, _s, n = line.rstrip("\n").split("\t", 2)
+        names2[int(a, 16)] = n
+    best: dict[int, tuple[str, str, str]] = {}  # TU3 -> (name, method, confidence)
     for line in open(OUT / "sk2_tu3.tsv"):
         a3, _a2, how, name = line.rstrip("\n").split("\t", 3)
-        rows.append((a3, name, how, CONFIDENCE.get(how, "guess")))
+        best[int(a3, 16)] = (name, how, CONFIDENCE.get(how, "guess"))
+    # Ghidra Auto Version Tracking (tools/re/sk2_vt.py), when it has run: its
+    # accepted matches fill gaps and win over everything but our exact and
+    # string pairs (it agreed with those 99-100%).
+    vt_file = OUT / "vt_matches.tsv"
+    vt_added = vt_won = 0
+    if vt_file.exists():
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import sk2_vt
+        strong = {"Exact Function Bytes Match": "vt-bytes",
+                  "Exact Function Instructions Match": "vt-instructions",
+                  "Exact Function Mnemonics Match": "vt-mnemonics",
+                  "Combined Function and Data Reference Match": "vt-references"}
+        weak = {"Duplicate Function Instructions Match": "vt-duplicate",
+                "Implied Match": "vt-implied"}
+        for a3, (a2, corr, _sim, _st) in sk2_vt.load_vt().items():
+            if a2 not in names2:
+                continue
+            how = strong.get(corr) or weak.get(corr) or "vt"
+            row = (names2[a2], how, "likely" if corr in strong else "guess")
+            cur = best.get(a3)
+            if cur is None:
+                best[a3] = row
+                vt_added += 1
+            elif cur[1] not in ("exact", "strings") and cur[0] != row[0]:
+                best[a3] = row
+                vt_won += 1
     with open(NAMES, "w") as f:
         f.write("# Skate 3 (TU3) function names transferred from the Skate 2 debug build's PDB\n"
-                "# by tools/re/sk2_match.py (roadmap RE-2; docs/re/README.md). Generated: do not\n"
-                "# edit; confirmed names go in symbols.toml, which takes priority.\n"
+                "# by tools/re/sk2_match.py and Ghidra Auto Version Tracking (tools/re/sk2_vt.py)\n"
+                "# (roadmap RE-2; docs/re/README.md). Generated: do not edit; confirmed names go\n"
+                "# in symbols.toml, which takes priority.\n"
                 "# Precision, measured by hiding 30% of the exact pairs (sk2_match.py match\n"
-                "# --holdout 0.3): exact ~100%, strings ~100%, callgraph ~93%, layout ~95%,\n"
-                "# vtable ~84%, layout-align ~80%, on functions unchanged since Skate 2;\n"
-                "# lower on changed ones. Treat every name as a lead until a probe confirms it.\n"
+                "# --holdout 0.3) and by agreement with Version Tracking: exact, strings and\n"
+                "# vt-* (exact correlators) ~99-100%; callgraph ~93%, layout ~95%, vtable\n"
+                "# ~84%, layout-align ~80%; on functions unchanged since Skate 2, lower on\n"
+                "# changed ones. Treat every name as a lead until a probe confirms it.\n"
                 "# address\tname\tmethod\tconfidence\n")
-        for r in rows:
-            f.write("\t".join(r) + "\n")
-    print(f"{len(rows)} names -> {NAMES}")
+        for a3 in sorted(best):
+            name, how, conf = best[a3]
+            f.write(f"{a3:08X}\t{name}\t{how}\t{conf}\n")
+    print(f"{len(best)} names -> {NAMES} (Version Tracking: {vt_added} added, "
+          f"{vt_won} replaced a weaker pair)")
 
 
 def lookup(q: str) -> int:

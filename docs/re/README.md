@@ -86,12 +86,25 @@ game code. It stays outside the repo (game code); its folder goes in
   and leaves them out of call sequences.
 - `sk2_match.py match --holdout 0.3`: measures precision by hiding 30% of the
   exact pairs and letting the other passes find them again.
-- `sk2_match.py export`: writes [names_sk2.tsv](names_sk2.tsv) (names only:
+- `tools/re/sk2_vt.py import | run | export | compare`: Ghidra's Auto Version
+  Tracking (Skate 2 source, TU3 destination) in a copy of the Ghidra project
+  (`out/re/ghidra-vt/`). The Skate 2 import and analysis take about 6 minutes;
+  `run` takes about 20 minutes, using up to 10 GB, and prints nothing while it
+  works. `compare` checks VT's accepted matches against `sk2_match.py`'s.
+- `sk2_match.py export`: merges both (VT fills gaps and wins over everything
+  but our exact and string pairs) and writes [names_sk2.tsv](names_sk2.tsv) (names only:
   address, name, method, confidence). `re_symbols.py lookup` and symbolize
   read it (symbolize marks these names `sk2?`); `symbols.toml` takes priority.
 
-**2026-11-15, first pass:**
-- **Coverage:** 8,020 of 47,938 functions named (16.7%).
+**2026-11-15:**
+- **Coverage:** 9,326 of 47,938 functions named (19.5%): 8,020 from
+  `sk2_match.py`, plus 1,306 from Version Tracking.
+- **Cross-check:** where both named a function, VT agreed with our exact and
+  string pairs 99-100% of the time, with callgraph and layout 93-97%, and with
+  vtable and layout-align 79-85%. Those figures match the hold-out estimates.
+  VT's own correlators agreed with our exact and string pairs 98-100%.
+- **The rest is mostly code Skate 3 added or changed.** Next: BSim, or
+  similarity on decompiler output.
 - **Precision**, on unchanged functions:
   - exact and strings: about 100%;
   - callgraph and layout: about 93-95%;

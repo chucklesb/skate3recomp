@@ -23,10 +23,10 @@ the linked pages; the backlog is [open-work.md](open-work.md).
 **Reverse engineering** (a primary goal; plan approved 2026-11-15, [re/README.md](re/README.md)):
 - RE-1 [x] **Toolkit:** `mem` search (unknown values included), portable
   snapshots, names in symbolize, the Toolkit section.
-- RE-2 [~] **Names from the Skate 2 debug build:** first pass done, 8,020
-  functions (16.7%). Next: raise coverage (Ghidra Version Tracking or BSim on
-  the remaining functions), and transfer types (class layouts from the PDB)
-  into `docs/re/types.md` where a probe confirms them.
+- RE-2 [~] **Names from the Skate 2 debug build:** 9,326 functions (19.5%)
+  from `sk2_match.py` plus Ghidra Version Tracking, cross-checked. Next:
+  types (class layouts from the PDB) into `docs/re/types.md` where a probe
+  confirms them; more coverage via BSim.
 - RE-3 [ ] **Skate 3's own code:** script bindings (Lua name to function),
   the message table, debug strings.
 - RE-4 [ ] **Career pilot:** board sales and challenge state, a harness verb
