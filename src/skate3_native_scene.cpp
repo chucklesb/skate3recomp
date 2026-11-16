@@ -10754,6 +10754,7 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
     // pending rescues cannot see (no capture happened at all).
     if (REXCVAR_GET(skate3_native_render_scene_lw_gap_fill)) {
       const uint64_t now = g_guest_frame;
+      const size_t gap_first = scene.items.size();
       for (auto it = g_lw_last_items.begin(); it != g_lw_last_items.end();) {
         if (dyn_slot.find(it->first) != dyn_slot.end()) {
           ++it;  // published live this frame; refreshed below
@@ -10781,7 +10782,17 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
         }
         ++it;
       }
-      for (const DrawItem& item : scene.items) {
+      // Pedestrians in the skeleton store (skeleton_lw = on, RE-5b): a
+      // gap-filled item takes the entity's newest tick instead of the pose
+      // it was retained with (the game draws its last packed m_matrices,
+      // which is that tick).
+      if (scene.items.size() > gap_first) {
+        skate3::native_skeleton::ServeRange(base, scene, gap_first);
+      }
+      for (size_t ii = 0; ii < gap_first; ++ii) {
+        // Only live items refresh the retained set: the gap-filled tail
+        // (dbg_src 9, or 14 once the store re-served it) must age out.
+        const DrawItem& item = scene.items[ii];
         // NOTE: lw_entity is not stamped yet here (the stamp pass runs just
         // before the smoothing block); LW membership is enforced at FILL
         // time by the store lookup; non-LW entries simply expire unused.

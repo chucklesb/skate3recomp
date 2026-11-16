@@ -177,6 +177,10 @@ std::atomic<uint64_t> c_srv_unserved{0}, c_bank_none{0};
 std::atomic<uint64_t> c_lw_items{0}, c_lw_built{0}, c_lw_miss{0}, c_lw_served{0},
     c_lw_ticks{0}, c_lw_bad{0}, c_lw_bank_none{0};
 std::atomic<uint64_t> c_lw_bank[4];
+// Gap-filled pedestrian items (dbg_src 9) in ServeRange: served, not
+// servable, no store entry / tick / part, not a mapped LW entity.
+std::atomic<uint64_t> c_lw_tail_served{0}, c_lw_tail_unservable{0}, c_lw_tail_nobuild{0},
+    c_lw_tail_notlw{0};
 std::atomic<uint64_t> g_log_div{0}, g_log_jump{0};
 
 struct Worst {
@@ -576,12 +580,24 @@ uint32_t ServeRange(uint8_t* base, FrameScene& scene, size_t first) {
   uint32_t n = 0;
   for (size_t i = first; i < scene.items.size(); ++i) {
     DrawItem& item = scene.items[i];
-    if (!Servable(item)) continue;
+    const bool gap = item.dbg_src == 9;  // LW gap fill: why it isn't served
+    if (!Servable(item)) {
+      if (gap) c_lw_tail_unservable.fetch_add(1, std::memory_order_relaxed);
+      continue;
+    }
     Shadow s;
     g_rows.clear();
-    if (BuildItem(item, i, &s, false) != Built::kYes) continue;
+    const Built b = BuildItem(item, i, &s, false);
+    if (b != Built::kYes) {
+      if (gap) {
+        (b == Built::kNo ? c_lw_tail_nobuild : c_lw_tail_notlw)
+            .fetch_add(1, std::memory_order_relaxed);
+      }
+      continue;
+    }
     if (s.lw && LwMode() != 2) continue;
     Serve(item, s);
+    if (gap) c_lw_tail_served.fetch_add(1, std::memory_order_relaxed);
     ++n;
   }
   c_served_tail.fetch_add(n, std::memory_order_relaxed);
@@ -819,10 +835,13 @@ void OnFrameBuilt() {
   if (LwMode() != 0) {
     REXLOG_INFO(
         "skel-lw: mode {} frame {} items {} built {} served {} miss {} bank[new={} old={} "
-        "close={} div={} none={}] ticks {} bad {}",
+        "close={} div={} none={}] ticks {} bad {} gapfill[served={} unservable={} "
+        "nobuild={} notlw={}]",
         LwMode() == 2 ? "on" : "shadow", g_frames, X(c_lw_items), X(c_lw_built),
         X(c_lw_served), X(c_lw_miss), X(c_lw_bank[0]), X(c_lw_bank[1]), X(c_lw_bank[2]),
-        X(c_lw_bank[3]), X(c_lw_bank_none), X(c_lw_ticks), X(c_lw_bad));
+        X(c_lw_bank[3]), X(c_lw_bank_none), X(c_lw_ticks), X(c_lw_bad),
+        X(c_lw_tail_served), X(c_lw_tail_unservable), X(c_lw_tail_nobuild),
+        X(c_lw_tail_notlw));
   }
 }
 
