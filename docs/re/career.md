@@ -25,8 +25,16 @@ known, and how the harness sets it. Functions: [symbols.toml](symbols.toml)
     on Windows).
   - **`+0x0C`: online board sales** (the payout's online part; also
     `sub_827CEC78`, called from two online handlers).
-  - **`+0x10`:** set, not added, from an online record (`sub_827CECE0`, from
-    `sub_825F23B0` and `sub_826EFD70`). 0 on both test careers.
+  - **`+0x10`: board sales awarded by the online service**, set (not added)
+    from the `awardedBoardSales` field of the skate.Online login response
+    (`sub_827CECE0`, called by the response handlers `sub_825F23B0` and
+    `sub_826EFD70`). The response's fields are `privacyFlagContainer`,
+    `awardedBoardSales` (64-bit) and `teamInfo`, read at `+0x08`, `+0x10`
+    and `+0x18`; the login request (`StartLoginProcess`) sends
+    `totalBoardSales` and `difficulty`. Likely the royalties for other
+    players downloading or voting on your content (`UpdateNewRoyaltyDownloads`,
+    `UpdateNewRoyaltyVotes`). EA's servers are gone, so it stays 0 (it is 0
+    on both test careers).
   - The reset to 0 for a new career is in `sub_825F2C98`.
 - **The last challenge's rewards:** `R = *(career+0x60)` (also the results
   presenter's `this+0x5C`). The payout adds to it: `+0x3C` base cash,
@@ -217,5 +225,4 @@ without a challenge (`scenarios/career_milestone.toml`, above). Live:
   presenter's class (no RTTI; Skate 2 has no counterpart).
 - The FE stack's third entry: `[0,66,15]` was Customize Teammate, but table
   id 15 is MessengerScreen, so later entries may not be screen ids.
-- `+0x10`'s meaning (an online total, probably).
 - How the save's record is found and checked (header hash, checksum).

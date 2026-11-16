@@ -44,7 +44,8 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   [re/attrib_names.tsv](re/attrib_names.tsv)). With `pay = true`
   the game's own completion pays the reward and shows the results; the
   `results` step walks them and waits for the save. The `.big` archives
-  are readable (`tools/re/big.py`). Left: `+0x10`.
+  are readable (`tools/re/big.py`). All four counters are
+  identified (`+0x10`: board sales the online service awarded).
 - RE-5 [ ] **The character skeleton** ([re/characters.md](re/characters.md)):
   one pose per character per tick; the likely fix for
   [KI-125](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps).

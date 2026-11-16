@@ -317,9 +317,21 @@ confidence = "likely"
 evidence = "decompile; callers sub_826FCB60, sub_826FD028 pass owned = 0"
 
 [sub_827CECE0]
-name = "Career set board-sales counter 4"
+name = "Career set online awarded board sales"
 signature = "(career, value)"
-role = "stats+0x10 = value, then the unlock check; from online records (sub_825F23B0, sub_826EFD70)."
+role = "stats+0x10 = value (awardedBoardSales from the online login response), then the unlock check."
+confidence = "likely"
+evidence = "decompile; callers read the response's awardedBoardSales field (schema strings near 0x82259CB8)"
+
+[sub_825F23B0]
+name = "Online login response handler (A)"
+role = "Event type 0x30: reads the response's privacyFlagContainer (+8), awardedBoardSales (+0x10, to stats+0x10) and teamInfo (+0x18)."
+confidence = "likely"
+evidence = "decompile; field order matches the response schema strings privacyFlagContainer, awardedBoardSales, teamInfo"
+
+[sub_826EFD70]
+name = "Online login response handler (B)"
+role = "Same body as sub_825F23B0, in another class."
 confidence = "likely"
 evidence = "decompile"
 
