@@ -31,10 +31,17 @@ hooked = "src/skate3_native_render.cpp"
 [sub_827C1D38]
 name = "LivingWorld batch pack writer"
 signature = "(cLivingWorldPresEntity* entity /*r3*/)"
-role = "Fused UpdateBoneTransforms + pack for LOD pedestrians: writes the concatenation of per-mesh palettes into m_matrices. Called per entity per sim tick from cLivingWorldPresEntityManager::Update."
-confidence = "likely"
-evidence = "src/skate3_native_render.cpp comment; SnapshotLwEntity"
+role = "UpdateBoneTransforms and PackAndMultiply fused, over the skaters' tables: for each current-LOD instance k (entity[(lod+8)*4], count entity[(lod+5)*4], lod at +0x10) and each mesh of its model (+0x24, count +0x32; skipped above 80 bones, +0x34), row i = transpose(src[remap_k[u16 (mesh+0x4C)[i]]] x m_MatLtoW), three float4, concatenated into the instance's m_matrices (+0x14). src = the vtable +0x60 getter (*(entity+0x4B0)), remap_k = *(entity+0x270+4k), m_MatLtoW at +0x160. Called per entity per sim tick from cLivingWorldPresEntityManager::Update."
+confidence = "confirmed"
+evidence = "disassembly (RE-5b, 2026-11-16); the skeleton store rebuilt from these inputs matches every pedestrian bank capture (scenarios/skel_lw_shadow.toml: Windows 11,006/11,006, Odin 2 10,610/10,610 exact)"
 hooked = "src/skate3_native_render.cpp"
+
+[sub_827B8228]
+name = "LivingWorld pose getter (vtable +0x60)"
+signature = "(cLivingWorldPresEntity* this /*r3*/) -> Matrix44*"
+role = "Returns *(this+0x4B0): the entity's pose array (64-byte Matrix44 per skeleton bone), the batch pack writer's gather source. Slot +0x60 of the three LivingWorld vtables carrying the Update thunk (0x823110F8, 0x823111F8, 0x82311280)."
+confidence = "confirmed"
+evidence = "disassembly (lwz r3,1200(r3); blr); vtable scan of the image (RE-5b)"
 
 [sub_827825B0]
 name = "Sk8::SkaterPresEntity::StartJobs"

@@ -60,8 +60,19 @@ pedestrians, NPC skaters), and the redesign it points to. Functions:
   so they are re-read every tick.
 - **Other characters** pack per instance with
   `cModelInstance::PackAndMultiplyMatricesForUpload` (`sub_827E5B30`).
-  LOD pedestrians use a fused writer (`sub_827C1D38`) that concatenates
-  every mesh's palette into one buffer.
+- **Pedestrians (LivingWorld entities; RE-5b, 2026-11-16):** the batch
+  pack writer `sub_827C1D38` is the same two steps fused, over the same
+  tables:
+  - instances `entity[(lod + 8) * 4]`, count `entity[(lod + 5) * 4]`, `lod`
+    at `+0x10` (the skaters' layout);
+  - the pose array from the vtable `+0x60` getter (`sub_827B8228`:
+    `*(entity + 0x4B0)`), 64-byte matrices;
+  - one remap table per instance at `entity + 0x270 + 4k`;
+  - `localToWorld` = `m_MatLtoW` (`+0x160`).
+
+  So each row is `transpose(src[remap[meshbone]] × m_MatLtoW)`, exactly the
+  skater formula, written straight into `m_matrices`. Models above 80 bones
+  are skipped, as in UBT.
 
 ## Native replacements (RE-7 candidates)
 
@@ -114,6 +125,24 @@ part snapshots, their content match and the 3x4/4x4 layout vote,
 them; for skaters they now only decide whether a piece is drawn, and the
 store sets every pose ([workarounds.md](workarounds.md)). They go with
 RE-5b (pedestrians).
+
+**RE-5b (2026-11-16), pedestrians:** the store takes LivingWorld ticks
+from the batch writer's hook (`OnLwPack`), behind its own switch
+`skate3_native_render_scene_skeleton_lw = off | shadow | on` (default off).
+Check: `scenarios/skel_lw_shadow.toml` (Tresoutta Plaza), then
+`skel_shadow_report.py <run> --lw` (the `skel-lw:` lines).
+
+| Run | Pedestrian pieces | Built | Exact vs bank | Divergent |
+|---|---|---|---|---|
+| Windows Vulkan `20261116-072618_skel_lw_shadow` | 12,678 | all | 11,006 of 11,006 | 0 |
+| Odin 2 `20261116-072854_skel_lw_shadow` | 12,525 | all | 10,610 of 10,610 | 0 |
+
+With `on`, every pedestrian piece is served from the store, the LW gap fill
+included. On Windows that costs nothing measurable (plaza, 3 runs each:
+busy p50 4.81 / 4.60 ms, p99 7.03 / 7.17 ms off / on). char_sync flags
+the same 55-98 frames a run at the plaza with it off and on, mostly
+gap-filled pedestrians at alpha 0 (fading in or out, not visible): a
+char_sync false positive to fix before it can gate pedestrians.
 
 **Step 4 (2026-11-16), the checks before default on:**
 - Held reel stills, each shot with the store off and on
