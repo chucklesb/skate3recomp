@@ -1161,6 +1161,7 @@ extern "C" REX_FUNC(sub_827C1D38) {
   __imp__sub_827C1D38(ctx, base);
   if (skate3::native_render::Enabled()) {
     skate3::native_palette::OnLwPack(base, entity);
+    skate3::native_skeleton::OnLwPack(base, entity);
   }
 }
 

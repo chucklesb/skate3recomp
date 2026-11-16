@@ -34,6 +34,13 @@ REXCVAR_DEFINE_INT32(skate3_native_render_scene_skeleton_log_interval, 120, "Ska
                      "(0 = off)")
     .range(0, 100000)
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_STRING(skate3_native_render_scene_skeleton_lw, "off", "Skate 3",
+                      "Skeleton store for LivingWorld entities (pedestrians, RE-5b): off | "
+                      "shadow | on. Their fused pack writer (sub_827C1D38) gathers from one "
+                      "pose array (*(entity+0x4B0)) with the skaters' formula; shadow builds "
+                      "and compares their pieces (skel-lw: lines), on serves them. Needs "
+                      "skate3_native_render_scene_skeleton on or shadow")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_skeleton_log_jumps, false, "Skate 3",
                     "DEBUG: for 4 frames after a character's jump (skel: jump), log every "
                     "item of that character as drawn (skel-jf: lines)")
@@ -64,6 +71,10 @@ int ReadMode() {
   const std::string v = REXCVAR_GET(skate3_native_render_scene_skeleton);
   return v == "on" ? 2 : v == "shadow" ? 1 : 0;
 }
+
+// LivingWorld entities (RE-5b): 0 off, 1 shadow, 2 on; refreshed per frame.
+std::atomic<int> g_lw_mode{0};
+int LwMode() { return g_lw_mode.load(std::memory_order_relaxed); }
 
 int Mode() {
   int m = g_mode.load(std::memory_order_relaxed);
@@ -162,6 +173,10 @@ std::atomic<uint64_t> c_items{0}, c_built{0}, c_miss_noent{0}, c_miss_notick{0},
 // [0] newest tick exact, [1] older tick exact, [2] close, [3] divergent.
 std::atomic<uint64_t> c_bank[4], c_srv[4];
 std::atomic<uint64_t> c_srv_unserved{0}, c_bank_none{0};
+// The same for LivingWorld entities (RE-5b; the skel-lw: line).
+std::atomic<uint64_t> c_lw_items{0}, c_lw_built{0}, c_lw_miss{0}, c_lw_served{0},
+    c_lw_ticks{0}, c_lw_bad{0}, c_lw_bank_none{0};
+std::atomic<uint64_t> c_lw_bank[4];
 std::atomic<uint64_t> g_log_div{0}, g_log_jump{0};
 
 struct Worst {
@@ -218,6 +233,7 @@ struct Shadow {
   uint32_t ofs_new = 0, ofs_old = 0;
   uint32_t seq = 0, epoch = 0;
   bool have_old = false;
+  bool lw = false;  // a LivingWorld entity (RE-5b)
 };
 std::vector<Shadow> g_shadow;
 std::vector<float> g_rows;
@@ -304,11 +320,14 @@ Built BuildItem(const DrawItem& item, size_t i, Shadow* s, bool count) {
     return Built::kNotSkater;
   }
   using skate3::native_entity::EntClass;
-  if (ident.cls != EntClass::kSkater && ident.cls != EntClass::kColorized &&
-      ident.cls != EntClass::kCac && ident.cls != EntClass::kSkaterAux) {
-    return Built::kNotSkater;  // not a SkaterPresEntity (pedestrians: RE-5b)
+  const bool lw = ident.cls == EntClass::kLivingWorld;
+  if (lw ? LwMode() == 0
+         : (ident.cls != EntClass::kSkater && ident.cls != EntClass::kColorized &&
+            ident.cls != EntClass::kCac && ident.cls != EntClass::kSkaterAux)) {
+    return Built::kNotSkater;
   }
-  if (count) c_items.fetch_add(1, std::memory_order_relaxed);
+  if (count) (lw ? c_lw_items : c_items).fetch_add(1, std::memory_order_relaxed);
+  s->lw = lw;
   s->item = i;
   s->ctx = item.ctx;
   s->mesh = item.mesh;
@@ -316,7 +335,7 @@ Built BuildItem(const DrawItem& item, size_t i, Shadow* s, bool count) {
   std::lock_guard<std::mutex> lock(g_mu);
   const auto it = g_ents.find(ident.entity);
   const auto miss = [&](std::atomic<uint64_t>& c) {
-    if (count) c.fetch_add(1, std::memory_order_relaxed);
+    if (count) (lw ? c_lw_miss : c).fetch_add(1, std::memory_order_relaxed);
     return Built::kNo;
   };
   if (it == g_ents.end()) return miss(c_miss_noent);
@@ -343,7 +362,7 @@ Built BuildItem(const DrawItem& item, size_t i, Shadow* s, bool count) {
     g_rows.resize(g_rows.size() + size_t(n) * 12);
     BuildPiece(*ot, *op, n, g_rows.data() + s->ofs_old);
   }
-  if (count) c_built.fetch_add(1, std::memory_order_relaxed);
+  if (count) (lw ? c_lw_built : c_built).fetch_add(1, std::memory_order_relaxed);
   return Built::kYes;
 }
 
@@ -520,15 +539,15 @@ void BeforeServe(uint8_t* base, FrameScene& scene) {
     if ((item.dbg_src == 1 || item.dbg_src == 2) && !item.caster_bank) {
       Err e;
       const int c = Classify(s, item.bones.data(), &e);
-      c_bank[c].fetch_add(1, std::memory_order_relaxed);
-      if (c == 3) NoteDiv(s, e, "bank", item);
+      (s.lw ? c_lw_bank : c_bank)[c].fetch_add(1, std::memory_order_relaxed);
+      if (c == 3) NoteDiv(s, e, s.lw ? "lw-bank" : "bank", item);
     } else {
-      c_bank_none.fetch_add(1, std::memory_order_relaxed);
+      (s.lw ? c_lw_bank_none : c_bank_none).fetch_add(1, std::memory_order_relaxed);
     }
-    if (mode == 2) {
+    if (mode == 2 && (!s.lw || LwMode() == 2)) {
       Serve(item, s);
-      c_served.fetch_add(1, std::memory_order_relaxed);
-    } else {
+      (s.lw ? c_lw_served : c_served).fetch_add(1, std::memory_order_relaxed);
+    } else if (!s.lw) {
       g_shadow.push_back(s);
     }
   }
@@ -539,7 +558,7 @@ void AfterServe(const FrameScene& scene) {
   for (const Shadow& s : g_shadow) {
     if (s.item >= scene.items.size()) continue;
     const DrawItem& item = scene.items[s.item];
-    if (item.ctx != s.ctx || item.bones.size() < size_t(s.n) * 12) continue;
+    if (s.lw || item.ctx != s.ctx || item.bones.size() < size_t(s.n) * 12) continue;
     if (item.dbg_src != 11) {
       c_srv_unserved.fetch_add(1, std::memory_order_relaxed);
       continue;
@@ -561,11 +580,35 @@ uint32_t ServeRange(uint8_t* base, FrameScene& scene, size_t first) {
     Shadow s;
     g_rows.clear();
     if (BuildItem(item, i, &s, false) != Built::kYes) continue;
+    if (s.lw && LwMode() != 2) continue;
     Serve(item, s);
     ++n;
   }
   c_served_tail.fetch_add(n, std::memory_order_relaxed);
   return n;
+}
+
+void OnLwPack(uint8_t* base, uint32_t entity) {
+  if (!Active() || LwMode() == 0 || entity == 0) return;
+  // The LivingWorld batch pack writer (sub_827C1D38) is UpdateBoneTransforms
+  // and PackAndMultiply fused, with the same tables: instances at
+  // entity[(lod + 8) * 4] (count entity[(lod + 5) * 4], lod at +0x10), the
+  // pose array from the vtable +0x60 getter (*(entity + 0x4B0)), one remap
+  // table per instance at entity + 0x270 + 4k, and localToWorld = m_MatLtoW
+  // (+0x160). So it feeds the store like a skater tick.
+  uint32_t lod = 0, count = 0, parts = 0, src = 0;
+  if (!U32(base, entity + 0x10, &lod) || lod > 8 ||
+      !U32(base, entity + (lod + 5) * 4, &count) ||
+      !U32(base, entity + (lod + 8) * 4, &parts) || !U32(base, entity + 0x4B0, &src) ||
+      count == 0 || count > kMaxParts) {
+    c_lw_bad.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  OnBoneTransforms(base, entity, parts, count, src, entity + 0x270);
+  for (uint32_t k = 0; k < count; ++k) {
+    OnPack(base, entity, parts + k * kInstStride, entity + 0x160);
+  }
+  c_lw_ticks.fetch_add(1, std::memory_order_relaxed);
 }
 
 void LogJumpFrames(uint8_t* base, const FrameScene& scene, bool smoothed) {
@@ -735,6 +778,10 @@ void LogJumpFrames(uint8_t* base, const FrameScene& scene, bool smoothed) {
 
 void OnFrameBuilt() {
   g_mode.store(ReadMode(), std::memory_order_relaxed);
+  {
+    const std::string v = REXCVAR_GET(skate3_native_render_scene_skeleton_lw);
+    g_lw_mode.store(v == "on" ? 2 : v == "shadow" ? 1 : 0, std::memory_order_relaxed);
+  }
   size_t ents = 0;
   Worst worst;
   {
@@ -769,6 +816,14 @@ void OnFrameBuilt() {
       X(c_part_bad), X(c_pose_unread), X(c_jump_root), X(c_jump_gap), X(c_jump_parts),
       worst.trans < 0 ? "-" : worst.vs, worst.entity, worst.k, worst.mesh,
       std::max(worst.trans, 0.0f), worst.rot);
+  if (LwMode() != 0) {
+    REXLOG_INFO(
+        "skel-lw: mode {} frame {} items {} built {} served {} miss {} bank[new={} old={} "
+        "close={} div={} none={}] ticks {} bad {}",
+        LwMode() == 2 ? "on" : "shadow", g_frames, X(c_lw_items), X(c_lw_built),
+        X(c_lw_served), X(c_lw_miss), X(c_lw_bank[0]), X(c_lw_bank[1]), X(c_lw_bank[2]),
+        X(c_lw_bank[3]), X(c_lw_bank_none), X(c_lw_ticks), X(c_lw_bad));
+  }
 }
 
 }  // namespace skate3::native_skeleton

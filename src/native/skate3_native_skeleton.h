@@ -62,6 +62,9 @@ void OnBoneTransforms(uint8_t* base, uint32_t owner, uint32_t parts, uint32_t co
 
 // PackAndMultiplyMatricesForUpload ENTRY: r3 the instance, r4 localToWorld.
 void OnPack(uint8_t* base, uint32_t owner, uint32_t instance, uint32_t local_to_world);
+// LivingWorld batch pack writer (sub_827C1D38) EXIT: r3 the entity. Feeds
+// the store like a skater tick (skate3_native_render_scene_skeleton_lw).
+void OnLwPack(uint8_t* base, uint32_t entity);
 
 // Scene builder, around the first ServeAuthoritativePalettes call. Before
 // builds every covered item's palette from the store, compares it with the

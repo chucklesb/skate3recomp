@@ -1,0 +1,46 @@
+# RE-5b: pedestrians (LivingWorld entities) in the skeleton store, shadow
+# mode. Their fused pack writer (sub_827C1D38) gathers from one pose array
+# with the skaters' formula; shadow builds every pedestrian piece from the
+# store and compares it with the draw's bank capture, drawing nothing from it.
+# Downtown's Tresoutta Plaza, standing, then pushing off through the crowd.
+#
+# Check: the skel-lw: lines (built vs items, bank[new/old/close/div/none]),
+#        tools/harness/skel_shadow_report.py <run> --lw
+name = "skel_lw_shadow"
+timeout_s = 900
+boot = "demo"
+start_spot = "Z_DT_Tresoutta"
+
+[cvars]
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+skate3_native_render_scene_skeleton = "on"
+skate3_native_render_scene_skeleton_lw = "shadow"
+skate3_native_render_scene_skeleton_log_interval = 30
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 600
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 8
+
+[[step]]
+do = "wait"
+frames = 300
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 8
+
+[[step]]
+do = "wait"
+frames = 300

@@ -24,8 +24,13 @@ how many it served, and the bank compare still runs before the serve):
 
     skel_shadow_report.py <run dir | log.txt> ... [--reel] [--max-div N]
 
+    skel-lw: the same for LivingWorld entities (pedestrians, RE-5b;
+              skate3_native_render_scene_skeleton_lw = shadow | on),
+              printed whenever a run has them
+
 --reel limits each run to the reel playback. --max-div N exits 1 when any
-run has more than N divergent pieces (bank or serve) or any miss.
+run has more than N divergent pieces (bank or serve) or any miss; with --lw
+the pedestrian counts must pass too.
 """
 from __future__ import annotations
 
@@ -37,7 +42,9 @@ from pathlib import Path
 
 # "skel-shadow:" is the line's name before step 3 (2026-11-16).
 STAT = re.compile(r"^\[\S+ (\S+)\].*skel(?:-shadow)?: (?:mode (\w+) )?frame (\d+) (.*)$")
-DIV = re.compile(r"^\[\S+ (\S+)\].*skel(?:-shadow)?: divergent vs (\w+) (.*)$")
+DIV = re.compile(r"^\[\S+ (\S+)\].*skel(?:-shadow)?: divergent vs ([\w-]+) (.*)$")
+LW = re.compile(r"^\[\S+ (\S+)\].*skel-lw: mode (\w+) frame (\d+) (.*)$")
+LW_PLAIN = re.compile(r"\b(items|built|served|miss|ticks|bad) (\d+)")
 JUMP = re.compile(r"^\[\S+ (\S+)\].*skel: jump (.*)$")
 FIELD = re.compile(r"(\w+)=(\d+)")
 GROUP = re.compile(r"(\w+)\[([^\]]*)\]")
@@ -59,6 +66,7 @@ def main() -> int:
     ap.add_argument("--reel", action="store_true")
     ap.add_argument("--max-div", type=int, default=None)
     ap.add_argument("--top", type=int, default=6)
+    ap.add_argument("--lw", action="store_true", help="--max-div also gates pedestrians")
     a = ap.parse_args()
     failed = False
     for arg in a.logs:
@@ -71,6 +79,8 @@ def main() -> int:
                 if "harness: reel" in ln and "exit posted" in ln:
                     hi = ln.split()[1]
         tot = collections.Counter()
+        lw = collections.Counter()
+        lw_lines = 0
         divs = []
         jumps = []
         modes = set()
@@ -88,6 +98,15 @@ def main() -> int:
                         continue
                     for k, v in FIELD.findall(inner):
                         tot[f"{g}.{k}"] += int(v)
+                continue
+            w = LW.search(ln)
+            if w and lo <= w.group(1) <= hi:
+                lw_lines += 1
+                for k, v in LW_PLAIN.findall(w.group(4)):
+                    lw[k] += int(v)
+                for g, inner in GROUP.findall(w.group(4)):
+                    for k, v in FIELD.findall(inner):
+                        lw[f"{g}.{k}"] += int(v)
                 continue
             d = DIV.search(ln)
             if d and lo <= d.group(1) <= hi and len(divs) < a.top:
@@ -119,9 +138,19 @@ def main() -> int:
             print(f"    jump {jl}")
         for d in divs:
             print(f"    {d}")
+        if lw_lines:
+            print(f"  pedestrians (skel-lw, {lw_lines} lines): items {lw['items']}, built "
+                  f"{lw['built']} ({100.0 * lw['built'] / max(lw['items'], 1):.2f}%), missing "
+                  f"{lw['miss']}, served {lw['served']}, ticks {lw['ticks']}, bad {lw['bad']}")
+            print("    vs bank " + "  ".join(f"{k}={lw['bank.' + k]}" for k in
+                                             ("new", "old", "close", "div", "none")))
         ndiv = tot["bank.div"] + tot["serve.div"]
-        if a.max_div is not None and (ndiv > a.max_div or miss > 0):
-            print(f"FAIL: {ndiv} divergent pieces (max {a.max_div}), {miss} missing")
+        nmiss = miss
+        if a.lw:
+            ndiv += lw["bank.div"]
+            nmiss += lw["miss"]
+        if a.max_div is not None and (ndiv > a.max_div or nmiss > 0):
+            print(f"FAIL: {ndiv} divergent pieces (max {a.max_div}), {nmiss} missing")
             failed = True
     return 1 if failed else 0
 
