@@ -25,6 +25,7 @@ constexpr VerbEntry kVerbs[] = {
     {"step", Verb::kStep},         {"resume", Verb::kResume},
     {"expect", Verb::kExpect},     {"exit", Verb::kExit},
     {"query", Verb::kQuery},       {"capture", Verb::kCapture},
+    {"video", Verb::kVideo},
     {"crash", Verb::kCrash},       {"teleport", Verb::kTeleport},
     {"play_reel", Verb::kPlayReel},  {"renderer", Verb::kRenderer},
 };
@@ -178,6 +179,12 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
     *error = "speed must be > 0 and <= 4 (play_reel clock rate, 0.25 = quarter speed)";
     return false;
   }
+  s.video = t["video"].value_or(false);
+  s.step_fps = Number(t, "step_fps").value_or(s.video ? 30.0 : 0.0);
+  if (!(s.step_fps == 0.0 || (s.step_fps >= 10.0 && s.step_fps <= 240.0))) {
+    *error = "step_fps must be 0 (the frame's own dt) or 10..240";
+    return false;
+  }
   s.renderer = t["renderer"].value_or(std::string());
   if (const toml::array* arr = t["stills_renderers"].as_array()) {
     for (const toml::node& n : *arr) {
@@ -249,6 +256,12 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
     case Verb::kRenderer:
       if (s.renderer != "native" && s.renderer != "emulated") {
         *error = "renderer needs renderer = \"native\" or \"emulated\"";
+        return false;
+      }
+      break;
+    case Verb::kVideo:
+      if (!s.frames || *s.frames < 1) {
+        *error = "video needs frames = N (how many rendered frames to dump)";
         return false;
       }
       break;

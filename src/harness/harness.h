@@ -17,6 +17,7 @@
 // scenario [[step]]); replies land in <skate3_harness_out>/outbox/.
 // docs/scenario-harness.md documents the scenario format.
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -46,6 +47,13 @@ void Start(CaptureFn capture, CloseFn close = {});
 
 // OnShutdown.
 void Shutdown();
+
+// Frame dump (the `video` verb, play_reel video = true). The app installs
+// the presenter's frame tap; while VideoActive() it reads back each refreshed
+// frame and hands it over here (producer thread; may block on encoder
+// back-pressure, which throttles the game, never drops a frame).
+bool VideoActive();
+void SubmitVideoFrame(const uint8_t* rgbx, size_t stride, uint32_t width, uint32_t height);
 
 bool Enabled();
 

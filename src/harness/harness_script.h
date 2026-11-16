@@ -52,10 +52,13 @@ enum class Verb {
   kTeleport,    // location="Z_UN_ClockTower" (a registry locator) tolerance=5 timeout_s=60
                 // settle=true (false: return on arrival, e.g. a floorless locator)
   kRenderer,    // renderer="native"|"emulated" frames=30: the F5 switch, then settle
+  kVideo,       // frames=N tag="x": every rendered frame as video/<tag>/f<n>.png
   kPlayReel,    // clip=N (a saved skate.Reel replay, 1-based as listed in My Replays):
                 // plays it start to end at 1x with no UI, then returns to free skate;
                 // from="start"|"marker" stills=[s...] settle_frames=20 every_frames=N tag=x
                 // lens=false (true: keep the camera's fisheye and vignette)
+                // video=true: every rendered frame to video/<tag>/ (step_fps=30:
+                // the reel clock steps 1/step_fps per frame; 0 = real dt)
 };
 
 struct Step {
@@ -132,6 +135,8 @@ struct Step {
   std::vector<double> stills;  // reel times (s) to hold at for screenshots
   int64_t settle_frames = 20;  // frames to wait at a still before its screenshot
   double speed = 1.0;          // replay clock rate (0 < speed <= 4; 0.25 = quarter)
+  bool video = false;          // dump every rendered frame (video/<tag>/)
+  double step_fps = 0.0;       // fixed reel clock step 1/step_fps per frame (0 = frame dt)
   std::vector<std::string> stills_renderers;  // shoot each still on these renderers
   // Shoot each still once per variant: set its cvars, settle, screenshot
   // tagged _<tag>. Values persist (a last variant can reset them).

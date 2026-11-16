@@ -895,6 +895,25 @@ void Skate3BaseApp::OnPostSetup() {
   },
                          // A finished run under RenderDoc shuts down normally.
                          [this] { CloseGame(); });
+  // The harness frame dump (the `video` verb): the presenter's frame tap reads
+  // back each refreshed frame while a dump is on.
+  if (skate3::harness::Enabled()) {
+    auto* graphics = static_cast<rex::graphics::GraphicsSystem*>(runtime()->graphics_system());
+    if (rex::ui::Presenter* presenter = graphics ? graphics->presenter() : nullptr) {
+      presenter->SetGuestOutputRefreshedCallback([presenter] {
+        if (!skate3::harness::VideoActive()) {
+          return;
+        }
+        rex::ui::RawImage image;
+        if (presenter->CaptureGuestOutput(image) && image.width) {
+          skate3::harness::SubmitVideoFrame(image.data.data(), image.stride, image.width,
+                                            image.height);
+        }
+      });
+    } else {
+      REXLOG_WARN("harness: no presenter yet; the video verb will record nothing");
+    }
+  }
   // User-facing intro-movie skip (independent of the demo path): the movie
   // completion override polls the merged UI pad state through this provider.
   skate3::demo_path::SetUiInputProvider(

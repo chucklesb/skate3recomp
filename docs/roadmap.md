@@ -40,6 +40,9 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   passed on retry, no symbols); watch for a repeat.
 
 **Done recently:**
+- 2026-11-15: **frame dumps** for videos: `play_reel video = true` and the
+  `video` verb write every rendered frame (the presenter's frame tap), the
+  reel clock stepping 1/30 s per frame; `video_reel_forearm.toml`.
 - 2026-11-15: **v2.1.0-aarch64.4** released. The forearm that froze,
   vanished and floated (KI-117 follow-up): root cause fixed, fallbacks off by
   default, the char_sync check, `repro_reel_forearm.toml`.

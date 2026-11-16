@@ -322,6 +322,21 @@ struct Run {
   std::mutex shot_mu;
   std::condition_variable shot_cv;
   std::deque<Shot> shot_queue;
+
+  // Frame dump (video): while video_on, every refreshed guest frame (the
+  // presenter's frame tap, producer thread) becomes video_dir/f<n>.png plus a
+  // frames.jsonl line; video_threads encode in parallel. Guarded by video_mu.
+  std::atomic<bool> video_on{false};
+  std::mutex video_mu;
+  std::condition_variable video_cv;
+  std::deque<Shot> video_queue;
+  int video_busy = 0;
+  fs::path video_dir;
+  std::ofstream video_meta;
+  uint64_t video_frames = 0;
+  uint64_t video_failed = 0;
+  uint64_t video_waits = 0;  // frames that waited for a free encoder slot
+  std::vector<std::thread> video_threads;
 };
 
 Run* g_run = nullptr;
@@ -484,6 +499,11 @@ void DrainShots(Run& r, std::chrono::milliseconds limit) {
   r.shot_cv.wait_until(lk, deadline, [&] { return r.shot_queue.empty(); });
 }
 
+struct VideoResult {
+  uint64_t frames = 0, failed = 0, waits = 0;
+};
+VideoResult StopVideo(Run& r);  // frame dump, below
+
 [[noreturn]] void FinishAndExit(Run& r, int code, std::string_view status,
                                 std::string_view reason) {
   bool expected = false;
@@ -500,6 +520,9 @@ void DrainShots(Run& r, std::chrono::milliseconds limit) {
     r.paused = false;
   }
   r.cv.notify_all();
+  if (r.video_on.load()) {
+    StopVideo(r);
+  }
   DrainShots(r, std::chrono::seconds(20));
   {
     std::lock_guard lk(r.mu);
@@ -569,6 +592,83 @@ void EncoderLoop(Run& r) {
     }
     r.shot_cv.notify_all();
   }
+}
+
+// ------------------------------------------------------------ frame dump
+
+constexpr size_t kVideoQueue = 24;  // frames in flight before the producer waits
+
+void VideoLoop(Run& r) {
+  for (;;) {
+    Run::Shot shot;
+    {
+      std::unique_lock lk(r.video_mu);
+      r.video_cv.wait(lk, [&] { return !r.video_queue.empty() || r.stop.load(); });
+      if (r.video_queue.empty()) {
+        return;
+      }
+      shot = std::move(r.video_queue.front());
+      r.video_queue.pop_front();
+      ++r.video_busy;
+    }
+    r.video_cv.notify_all();
+    std::string error;
+    const bool ok = WritePng(shot.path, shot.rgba.data(), shot.w, shot.h, &error);
+    if (!ok) {
+      REXLOG_WARN("harness: video frame {} failed: {}", shot.path.string(), error);
+    }
+    {
+      std::lock_guard lk(r.video_mu);
+      --r.video_busy;
+      r.video_failed += ok ? 0 : 1;
+    }
+    r.video_cv.notify_all();
+  }
+}
+
+// Starts dumping every frame into <run>/<sub>/. False if one is running or
+// there is no frame tap.
+bool StartVideo(Run& r, const std::string& sub, std::string* error) {
+  std::lock_guard lk(r.video_mu);
+  if (r.video_on.load()) {
+    *error = "a video is already recording";
+    return false;
+  }
+  r.video_dir = r.dir / sub;
+  std::error_code ec;
+  fs::create_directories(r.video_dir, ec);
+  r.video_meta.open(r.video_dir / "frames.jsonl", std::ios::binary | std::ios::trunc);
+  if (!r.video_meta) {
+    *error = "cannot write " + (r.video_dir / "frames.jsonl").string();
+    return false;
+  }
+  r.video_frames = r.video_failed = r.video_waits = 0;
+  if (r.video_threads.empty()) {
+    const unsigned n = std::clamp(std::thread::hardware_concurrency() / 2, 2u, 6u);
+    for (unsigned k = 0; k < n; ++k) {
+      r.video_threads.emplace_back([&r] { VideoLoop(r); });
+    }
+  }
+  r.video_on.store(true, std::memory_order_release);
+  return true;
+}
+
+// Stops the dump and waits for the encoders (up to 60 s).
+VideoResult StopVideo(Run& r) {
+  r.video_on.store(false, std::memory_order_release);
+  r.video_cv.notify_all();
+  std::unique_lock lk(r.video_mu);
+  r.video_cv.wait_for(lk, std::chrono::seconds(60),
+                      [&] { return r.video_queue.empty() && r.video_busy == 0; });
+  r.video_meta.close();
+  return {r.video_frames, r.video_failed, r.video_waits};
+}
+
+std::string VideoJson(const Run& r, const VideoResult& v) {
+  return "\"video\":\"" + JsonEscape(fs::relative(r.video_dir, r.dir).generic_string()) +
+         "\",\"video_frames\":" + std::to_string(v.frames) +
+         ",\"video_failed\":" + std::to_string(v.failed) +
+         ",\"video_waits\":" + std::to_string(v.waits);
 }
 
 bool WaitFrames(Run& r, int64_t frames, double timeout_s);
@@ -1061,6 +1161,23 @@ Outcome Execute(Run& r, const Step& st) {
       return Fail("the fault did not crash the process");
     }
 
+    case Verb::kVideo: {
+      // Every rendered frame for the next `frames` frames.
+      const std::string tag = st.tag.empty() ? "video" : SafeName(st.tag);
+      std::string verr;
+      if (!StartVideo(r, "video/" + tag, &verr)) {
+        return Fail(verr);
+      }
+      const bool ok = WaitFrames(r, *st.frames, std::max(30.0, st.timeout_s));
+      const VideoResult v = StopVideo(r);
+      if (!ok) {
+        return Fail("game stopped presenting frames during the video");
+      }
+      Outcome o;
+      o.result_json = VideoJson(r, v);
+      return o;
+    }
+
     case Verb::kCapture: {
       const std::string tag = st.tag.empty() ? "capture" : SafeName(st.tag);
       const int64_t frames = st.frames ? std::max<int64_t>(1, *st.frames) : 1;
@@ -1275,6 +1392,7 @@ Outcome Execute(Run& r, const Step& st) {
       game::ReelOptions opts;
       opts.from_marker = st.from == "marker";
       opts.speed = static_cast<float>(st.speed);
+      opts.step_s = st.step_fps > 0.0 ? static_cast<float>(1.0 / st.step_fps) : 0.0f;
       for (double v : st.stills) {
         opts.stills_s.push_back(static_cast<float>(v));
       }
@@ -1322,6 +1440,25 @@ Outcome Execute(Run& r, const Step& st) {
                     "\"speed\":%.3f",
                     s.duration_s, st.from.c_str(), s.start_s, s.marker_s, st.speed);
       Event(r, "reel_start", clip + buf);
+      std::string video_json;
+      struct VideoGuard {  // a failed play_reel stops its dump
+        Run& r;
+        ~VideoGuard() {
+          if (r.video_on.load()) {
+            StopVideo(r);
+          }
+        }
+      } video_guard{r};
+      if (st.video) {
+        // Every rendered frame from here to the end (the reel clock steps
+        // 1/step_fps per frame, so a slow capture drops nothing).
+        std::string verr;
+        const std::string vtag =
+            !st.tag.empty() ? st.tag : !st.reel.empty() ? "reel_" + st.reel : "reel" + std::to_string(clip_n);
+        if (!StartVideo(r, "video/" + SafeName(vtag), &verr)) {
+          return Fail("play_reel video: " + verr);
+        }
+      }
       const uint64_t start_frame = r.state.frame;
       const auto start_time = Clock::now();
       // While playing: screenshots every `every_frames` frames (tag defaults to
@@ -1437,6 +1574,11 @@ Outcome Execute(Run& r, const Step& st) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
       WaitUntil(r, left(), [&] { return phase() != ReelPhase::kPlaying; });
+      if (st.video) {
+        const VideoResult v = StopVideo(r);
+        video_json = "," + VideoJson(r, v) + ",\"step_fps\":" + std::to_string(st.step_fps);
+        Event(r, "reel_video", clip + video_json);
+      }
       s = game::GetReelStatus();
       const double wall = std::chrono::duration<double>(Clock::now() - start_time).count();
       std::snprintf(buf, sizeof(buf),
@@ -1457,7 +1599,7 @@ Outcome Execute(Run& r, const Step& st) {
       }
       Event(r, "reel_exit", clip);
       Outcome o;
-      o.result_json = clip + played + ",\"stills\":[" + stills_json + "],\"shots\":[";
+      o.result_json = clip + played + video_json + ",\"stills\":[" + stills_json + "],\"shots\":[";
       for (size_t i = 0; i < shots.size(); ++i) {
         o.result_json += (i ? ",\"" : "\"") + JsonEscape(shots[i]) + "\"";
       }
@@ -1773,6 +1915,54 @@ void Prepare() {
         "\"scenario\":\"" + JsonEscape(r->scenario ? r->scenario->path : "") + "\"");
 }
 
+bool VideoActive() {
+  Run* r = g_run;
+  return r && r->video_on.load(std::memory_order_acquire);
+}
+
+void SubmitVideoFrame(const uint8_t* rgbx, size_t stride, uint32_t width, uint32_t height) {
+  Run* r = g_run;
+  if (!r || !r->video_on.load(std::memory_order_acquire) || !rgbx || !width || !height) {
+    return;
+  }
+  Run::Shot shot;
+  shot.w = width;
+  shot.h = height;
+  shot.rgba.resize(size_t(width) * height * 4);
+  for (uint32_t y = 0; y < height; ++y) {
+    const uint8_t* src = rgbx + y * stride;
+    uint8_t* dst = shot.rgba.data() + size_t(y) * width * 4;
+    std::memcpy(dst, src, size_t(width) * 4);
+    for (uint32_t x = 0; x < width; ++x) {
+      dst[x * 4 + 3] = 255;  // RGBX: the X byte is undefined
+    }
+  }
+  const uint64_t frame = r->frame_atomic.load(std::memory_order_relaxed);
+  const float reel_t = game::GetReelStatus().t_s;
+  std::unique_lock lk(r->video_mu);
+  if (r->video_queue.size() >= kVideoQueue) {
+    ++r->video_waits;
+    r->video_cv.wait(lk, [&] {
+      return r->video_queue.size() < kVideoQueue || !r->video_on.load() || r->stop.load();
+    });
+  }
+  if (!r->video_on.load() || r->stop.load()) {
+    return;
+  }
+  const uint64_t n = r->video_frames++;
+  char name[32];
+  std::snprintf(name, sizeof(name), "f%06llu.png", static_cast<unsigned long long>(n));
+  shot.path = r->video_dir / name;
+  char line[160];
+  std::snprintf(line, sizeof(line), "{\"i\":%llu,\"frame\":%llu,\"t\":%.3f,\"reel_t\":%.4f}\n",
+                static_cast<unsigned long long>(n), static_cast<unsigned long long>(frame),
+                Seconds(*r), reel_t);
+  r->video_meta << line;
+  r->video_queue.push_back(std::move(shot));
+  lk.unlock();
+  r->video_cv.notify_all();
+}
+
 void Start(CaptureFn capture, CloseFn close) {
   Run* r = g_run;
   if (!r) {
@@ -1802,6 +1992,13 @@ void Shutdown() {
   }
   r->cv.notify_all();
   r->shot_cv.notify_all();
+  r->video_on.store(false);
+  r->video_cv.notify_all();
+  for (std::thread& t : r->video_threads) {
+    if (t.joinable()) {
+      t.join();
+    }
+  }
   // After FinishAndExit asked for a normal close, the thread that called it
   // (runner or watchdog) never returns: detach instead of joining. Run is
   // never freed, so a detached thread can't touch freed memory.
