@@ -53,7 +53,9 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   part `k` is the entity's LOD instance `k` (the part ↔ draw link,
   checked over a reel). The pack is `transpose(gather × m_MatLtoW)`, exact.
   Steps 1-2 (the store, shadow mode): every skater piece exact against the
-  game's upload on Windows and the Odin 2. Next: serve from it (step 3).
+  game's upload on Windows and the Odin 2. Step 3 (serve, one reset per
+  character) behind `on`. KI-125's remaining piece is the cloth (hair); next.
+  Then default on and cleanup (steps 4-5).
 - RE-6 [ ] **Who issues the emulated passes** native-only must replace
   (pitches 160 and 1200).
 - RE-7 [ ] **`src/re/` shadow-mode replacements.**

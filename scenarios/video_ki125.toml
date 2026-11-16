@@ -1,0 +1,35 @@
+# KI-125: every frame of the reel jump (ki124_motion_native.toml's reel from
+# its marker) to video/k125/, so the frame or two after the jump, when the
+# skater came apart, is captured (screenshots land every few frames).
+# The reel clock steps exactly 1/30 s per frame; char_sync stays on.
+#
+# A/B: append after `--`  --skate3_native_render_scene_skeleton=on
+# Check: the first frames of video/k125/, and
+#        tools/harness/char_sync_report.py <run> --reel
+name = "video_ki125"
+timeout_s = 1500
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+skate3_native_render_scene_char_sync = true
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "renderer"
+renderer = "native"
+frames = 30
+
+[[step]]
+do = "play_reel"
+reel = "88a86b704bcf2d71"
+from = "marker"
+video = true
+step_fps = 30
+tag = "k125"

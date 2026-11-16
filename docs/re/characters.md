@@ -92,7 +92,30 @@ them.
 
 ## The redesign (in progress)
 
-**Status (2026-11-15): steps 1 and 2 done, in shadow mode.**
+**Status (2026-11-16): step 3 done behind `on`** (still off by default).
+`skate3_native_render_scene_skeleton = on` serves every skinned piece of a
+skater-family entity from the store (`dbg_src` 14). Each character also gets
+one jump counter, raised for:
+- a root step that the last two ticks' motion doesn't explain (over 1.5 m);
+- a gap of more than 100 ms;
+- an LOD switch.
+
+Served pieces smooth in rings keyed by their draw context and reset together
+when the counter changes, instead of each piece deciding on its own
+distance gate. Check: `scenarios/skel_on.toml`, then
+`skel_shadow_report.py <run> --max-div 0` and `char_sync_report.py <run> --reel`.
+
+| Run | Served | Exact vs bank | char_sync (reel) |
+|---|---|---|---|
+| Windows Vulkan `20261116-001153_skel_on` | 6,336 | all | 0 bad frames |
+| Odin 2 `20261116-002508_skel_on` | 4,634 | all | 0 bad frames |
+
+KI-125 (every frame of the reel jump, `scenarios/video_ki125.toml`, Odin 2):
+the skater's body is whole on the first frame after the jump with the store
+on and off, but the cloth-simulated pieces (ropa: the long hair, likely the
+sleeve) are not. They are outside the store's reach; see KI-125.
+
+**Steps 1 and 2 (2026-11-15), shadow mode:**
 `src/native/skate3_native_skeleton.{h,cpp}` keeps one pose per skater per
 tick and rebuilds every piece from it. It's behind
 `skate3_native_render_scene_skeleton = off | shadow`, default off. In shadow

@@ -707,8 +707,9 @@ editor), the skater is drawn wrong for a frame or two: an arm missing from
 its sleeve, a hand or leg floating apart from the body, and no ground
 shadow. The game's own (emulated) frames at the same moment are fine.
 
-**How to see it:** `scenarios/ki124_motion_native.toml` on the Odin 2, the
-second shot after the jump: `out/harness-runs/20261112-191628_ki124_motion_native/shots/f0000764_reel_88a86b704bcf2d71_00.png`
+**How to see it:** `scenarios/video_ki125.toml` (every frame; the first
+frame after the jump), or `scenarios/ki124_motion_native.toml` on the
+Odin 2, the second shot after the jump: `out/harness-runs/20261112-191628_ki124_motion_native/shots/f0000764_reel_88a86b704bcf2d71_00.png`
 (found by the user). Compare `20261112-191250_ki124_motion_emulated`.
 
 **Status:** open · **Severity:** low (one or two frames; mostly hurts
@@ -717,12 +718,29 @@ replay stills and repros) · **Found:** 2026-11-12 by the user.
 <details>
 <summary>Technical details</summary>
 
-Not investigated. Likely the pose smoothing (KI-117/KI-120: the body and
-cloth pose rings, and the 8-tap boxcar the drawn pose is filtered with)
-spanning the jump, so pieces are drawn from poses on either side of it,
-and the shadow casters drop out for those frames. Suspected fix: detect
-the discontinuity (a large root jump between consecutive poses, or the
-replay clock jumping) and reset the rings, as a teleport should.
+**Every frame of the jump (2026-11-16, `scenarios/video_ki125.toml`, Odin 2,
+runs `20261116-001858_video_ki125` with the skeleton store on and
+`20261116-002021_video_ki125` without):** only the first frame after the
+jump is wrong, the same in both. A second head of hair sits beside the
+skater's head (the user: "this detaching hair bug"), and the left arm is
+missing from its sleeve. From the second frame on the skater is whole.
+
+- **The body is not the cause:** with the skeleton store on
+  (`skate3_native_render_scene_skeleton = on`, RE-5 step 3), every skinned
+  body piece is served from the character's one pose of the newest tick
+  and the pieces reset their smoothing together. The frame looks the same.
+- **The cloth pieces are the lead.** The skater's long hair is a cloth-simulated
+  garment (ropa, `char_sync`: "not measured: rigid, ropa"). It draws with
+  the character's world matrix and the cloth sim's decoded shape. On the
+  first frame after a reset the garment draws raw, with no shape weights
+  (`char_track`: `raw=1 sc=0`), so the draw binds the newest decoded
+  generation. Right after a jump that decode can still be the old pose's
+  drape, placed with the new world: hair beside the head. Not yet confirmed
+  (the decode generation against the jump tick needs logging).
+- **Next:** log the hair's drawn generation against the store's jump tick.
+  If that confirms it, on a character jump draw the garment only with a
+  generation decoded after the jump, and hold the pre-jump state until one
+  exists.
 
 </details>
 
