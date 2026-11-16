@@ -41,18 +41,32 @@ int ReadMode() {
   return v == "on" ? 2 : v == "shadow" ? 1 : 0;
 }
 
-bool U32(uint8_t* base, uint32_t addr, uint32_t* out) {
-  if (addr < 0x10000) return false;
+// Direct guest reads, as the recompiled functions do. These replacements
+// only touch the addresses the guest code itself would touch on the same
+// call, so a plain load is as safe as the original; the fault-guarded
+// GuestTryCopy (a non-inlined SEH / sigsetjmp call per read) made the
+// native path slower than the recompiled one. The address checks keep
+// garbage pointers (null-ish values) out.
+inline bool Readable(uint32_t addr, uint32_t n) {
+  return addr >= 0x10000 && uint64_t(addr) + n <= 0x100000000ull;
+}
+
+inline bool Copy(void* dst, uint8_t* base, uint32_t addr, uint32_t n) {
+  if (!Readable(addr, n)) return false;
+  std::memcpy(dst, base + addr, n);
+  return true;
+}
+
+inline bool U32(uint8_t* base, uint32_t addr, uint32_t* out) {
   uint32_t raw = 0;
-  if (!GuestTryCopy(&raw, base + addr, 4)) return false;
+  if (!Copy(&raw, base, addr, 4)) return false;
   *out = __builtin_bswap32(raw);
   return true;
 }
 
-bool U16(uint8_t* base, uint32_t addr, uint16_t* out) {
-  if (addr < 0x10000) return false;
+inline bool U16(uint8_t* base, uint32_t addr, uint16_t* out) {
   uint16_t raw = 0;
-  if (!GuestTryCopy(&raw, base + addr, 2)) return false;
+  if (!Copy(&raw, base, addr, 2)) return false;
   *out = __builtin_bswap16(raw);
   return true;
 }
@@ -63,8 +77,7 @@ constexpr uint32_t Vec(uint32_t addr) { return addr & ~15u; }
 // 16 big-endian floats (one Matrix44) from guest memory, as lvx reads them.
 bool Load16(uint8_t* base, uint32_t addr, float out[16]) {
   uint32_t raw[16];
-  addr = Vec(addr);
-  if (addr < 0x10000 || !GuestTryCopy(raw, base + addr, sizeof(raw))) return false;
+  if (!Copy(raw, base, Vec(addr), sizeof(raw))) return false;
   for (int i = 0; i < 16; ++i) out[i] = std::bit_cast<float>(__builtin_bswap32(raw[i]));
   return true;
 }
@@ -148,7 +161,7 @@ bool ComputeUbt(uint8_t* base, uint32_t parts, uint32_t count, uint32_t src, uin
         const uint32_t from = Vec(src + (sb << 6));
         const size_t at = e->words.size();
         e->words.resize(at + 16);
-        if (from < 0x10000 || !GuestTryCopy(e->words.data() + at, base + from, 64)) return false;
+        if (!Copy(e->words.data() + at, base, from, 64)) return false;
         e->addr.push_back(Vec(out));
         out += 64;
       }
