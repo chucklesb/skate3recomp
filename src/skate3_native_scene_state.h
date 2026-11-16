@@ -165,6 +165,21 @@ struct DynDecodeJob {
   std::vector<uint8_t> ib;
 };
 inline std::deque<DynDecodeJob> g_dyn_jobs;  // FIFO; guarded by g_prewarm_mutex
+// Ropa payload snapshots, the same bytes each cloth decode job got, the last
+// few per mesh by fingerprint. A garment drawn RAW (no shape-generation
+// weights: the first frames after a reset or camera cut) binds the resident
+// decode, which lands a frame after its job; right after a jump that is the
+// pre-jump drape at the new world (KI-125's detaching hair). The draw then
+// decodes its own frame's snapshot from here instead
+// (skate3_native_render_scene_ropa_raw_sync). Guarded by g_ropa_snap_mutex.
+struct RopaSnap {
+  uint64_t fingerprint = 0;
+  uint64_t seq = 0;
+  std::vector<uint8_t> vb;
+  std::vector<uint8_t> ib;
+};
+inline std::mutex g_ropa_snap_mutex;
+inline std::unordered_map<uint32_t, std::array<RopaSnap, 3>> g_ropa_snaps;
 // Push-side dedupe: clone instances share one tRModelData, so the same mesh
 // registers many times per load, but a permanent per-address set silently
 // DISABLED the prewarm for re-streamed content (the streamer reuses the
@@ -915,6 +930,10 @@ inline std::atomic<uint64_t> g_rej_dyn_range{0};
 // loses its bone binding produces no (or wrong) pixels with no other trace.
 inline std::atomic<uint64_t> g_rr_decode_fail{0};
 inline std::atomic<uint64_t> g_rr_no_bones{0};
+// Raw-drawn ropa garments re-decoded from their own frame's snapshot (see
+// RopaSnap) / with no snapshot for their fingerprint (drawn stale).
+inline std::atomic<uint64_t> g_rr_ropa_raw_sync{0};
+inline std::atomic<uint64_t> g_rr_ropa_raw_sync_miss{0};
 // DecodeMesh refusals (KI-27), counted on whichever thread decodes:
 // malformed vertex layout / counts / short payload (ValidateMeshDecodeInput),
 // and upload-buffer Map() failures. Both fail the decode like any other

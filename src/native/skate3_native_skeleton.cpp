@@ -33,6 +33,10 @@ REXCVAR_DEFINE_INT32(skate3_native_render_scene_skeleton_log_interval, 120, "Ska
                      "(0 = off)")
     .range(0, 100000)
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_skeleton_log_jumps, false, "Skate 3",
+                    "DEBUG: for 4 frames after a character's jump (skel: jump), log every "
+                    "item of that character as drawn (skel-jf: lines)")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
 namespace skate3::native_skeleton {
 namespace {
@@ -561,6 +565,171 @@ uint32_t ServeRange(uint8_t* base, FrameScene& scene, size_t first) {
   }
   c_served_tail.fetch_add(n, std::memory_order_relaxed);
   return n;
+}
+
+void LogJumpFrames(uint8_t* base, const FrameScene& scene, bool smoothed) {
+  if (Mode() == 0 || !REXCVAR_GET(skate3_native_render_scene_skeleton_log_jumps)) return;
+  // entity -> {last epoch seen, frames left to log}; render thread only.
+  struct Watch {
+    uint32_t epoch = 0;
+    int left = 0;
+    int nth = 0;
+  };
+  static std::unordered_map<uint32_t, Watch> s_watch;
+  // Skater pieces drawn without a store entry for their entity (a character
+  // on its first frames): log 4 frames of every character item near the
+  // camera, with each piece's palette source.
+  static int s_unstored_left = 0;
+  static int s_unstored_nth = 0;
+  {
+    bool unstored = false;
+    for (const DrawItem& it : scene.items) {
+      if (!it.skinned || it.ctx == 0 || it.char_family == 0 || it.char_family > 5) continue;
+      skate3::native_entity::CtxInfo ident;
+      if (!skate3::native_entity::LookupCtx(it.ctx, &ident) || ident.entity == 0) {
+        unstored = true;
+        break;
+      }
+      using skate3::native_entity::EntClass;
+      if (ident.cls != EntClass::kSkater && ident.cls != EntClass::kColorized &&
+          ident.cls != EntClass::kCac && ident.cls != EntClass::kSkaterAux) {
+        continue;  // pedestrians are not in the store
+      }
+      std::lock_guard<std::mutex> lock(g_mu);
+      const auto e = g_ents.find(ident.entity);
+      if (e == g_ents.end() || e->second.Newest() == nullptr) {
+        unstored = true;
+        break;
+      }
+    }
+    static int s_triggers = 0;
+    if (unstored && s_unstored_left == 0 && s_triggers < 12) {
+      ++s_triggers;
+      s_unstored_left = 4;
+      s_unstored_nth = 0;
+    }
+  }
+  if (s_unstored_left > 0) {
+    --s_unstored_left;
+    ++s_unstored_nth;
+    for (size_t i = 0; i < scene.items.size(); ++i) {
+      const DrawItem& it = scene.items[i];
+      if (it.char_family == 0 && !it.ropa) continue;
+      const bool skn = it.skinned && it.bones.size() >= 12;
+      const float tx = skn ? it.bones[3] : it.world[12];
+      const float ty = skn ? it.bones[7] : it.world[13];
+      const float tz = skn ? it.bones[11] : it.world[14];
+      const float rx = tx - scene.cam_pos[0], ry = ty - scene.cam_pos[1],
+                  rz = tz - scene.cam_pos[2];
+      if (rx * rx + ry * ry + rz * rz > 100.0f) continue;
+      skate3::native_entity::CtxInfo ident;
+      const bool mapped = it.ctx != 0 && skate3::native_entity::LookupCtx(it.ctx, &ident);
+      bool stored = false;
+      if (mapped) {
+        std::lock_guard<std::mutex> lock(g_mu);
+        const auto e = g_ents.find(ident.entity);
+        stored = e != g_ents.end() && e->second.Newest() != nullptr;
+      }
+      REXLOG_INFO(
+          "skel-new: f {} smoothed {} +{} item {} owner {:08X} stored {} fam {} ctx {:08X} "
+          "mesh {:08X} ropa {} hair {} skinned {} src {} mode {} pose ent {:08X} seq {} part {} "
+          "prevpack {} pframe {} t ({:.3f},{:.3f},{:.3f})",
+          g_frames, smoothed ? 1 : 0, s_unstored_nth, i, mapped ? ident.entity : 0u,
+          stored ? 1 : 0, it.char_family, it.ctx, it.mesh, it.ropa ? 1 : 0, it.hair ? 1 : 0,
+          it.skinned ? 1 : 0, it.dbg_src, it.draw_mode, it.pose_entity, it.pose_seq,
+          it.pose_part, it.pose_set, it.pose_frame, tx, ty, tz);
+    }
+  }
+  {
+    std::lock_guard<std::mutex> lock(g_mu);
+    for (const auto& [ent, e] : g_ents) {
+      Watch& w = s_watch[ent];
+      if (w.epoch != e.epoch) {  // a jump, or a character appearing (epoch 0)
+        w.left = 4;
+        w.nth = 0;
+      }
+      w.epoch = e.epoch;
+    }
+  }
+  for (auto& [ent, w] : s_watch) {
+    if (w.left <= 0) continue;
+    --w.left;
+    ++w.nth;
+    float er[12];
+    // The character's root: its entity world, through any of its items.
+    float root[3] = {};
+    bool have_root = false;
+    for (const DrawItem& it : scene.items) {
+      skate3::native_entity::CtxInfo ident;
+      if (it.ctx != 0 && skate3::native_entity::LookupCtx(it.ctx, &ident) &&
+          ident.entity == ent && skate3::native_entity::ReadEntityWorldRows(base, it.ctx, er)) {
+        root[0] = er[3];
+        root[1] = er[7];
+        root[2] = er[11];
+        have_root = true;
+        break;
+      }
+    }
+    if (!have_root) {
+      // Its pieces aren't mapped to it this frame: log around the camera.
+      root[0] = scene.cam_pos[0];
+      root[1] = scene.cam_pos[1];
+      root[2] = scene.cam_pos[2];
+      REXLOG_INFO("skel-jf: ent {:08X} epoch {} +{} has no mapped item; logging near the camera",
+                  ent, w.epoch, w.nth);
+    }
+    const float reach2 = have_root ? 9.0f : 64.0f;
+    // Every item within 3 m of it, whichever entity it maps to (or none).
+    for (size_t i = 0; i < scene.items.size(); ++i) {
+      const DrawItem& it = scene.items[i];
+      const bool skn = it.skinned && it.bones.size() >= 12;
+      const float tx = skn ? it.bones[3] : it.world[12];
+      const float ty = skn ? it.bones[7] : it.world[13];
+      const float tz = skn ? it.bones[11] : it.world[14];
+      const float rx = tx - root[0], ry = ty - root[1], rz = tz - root[2];
+      if (rx * rx + ry * ry + rz * rz > reach2) continue;
+      if (!have_root && it.char_family == 0 && !it.ropa) continue;
+      skate3::native_entity::CtxInfo ident;
+      const bool mapped = it.ctx != 0 && skate3::native_entity::LookupCtx(it.ctx, &ident);
+      // A rigid cloth piece's drape as the guest VB holds it now: the
+      // centroid of 32 sample verts in model space, and placed by the world.
+      float cm[3] = {}, cw[3] = {};
+      if (it.ropa && !skn) {
+        skate3::native_scene::SkinSampleVert sv[32];
+        if (skate3::native_scene::ReadSkinSamplesGuest(base, it, 32, sv)) {
+          for (const auto& v : sv) {
+            for (int k = 0; k < 3; ++k) cm[k] += v.p[k] / 32.0f;
+          }
+          for (int c = 0; c < 3; ++c) {
+            cw[c] = cm[0] * it.world[c] + cm[1] * it.world[4 + c] + cm[2] * it.world[8 + c] +
+                    it.world[12 + c];
+          }
+        }
+      }
+      const bool eok = it.ctx != 0 && skate3::native_entity::ReadEntityWorldRows(base, it.ctx, er);
+      REXLOG_INFO(
+          "skel-jf: f {} smoothed {} ent {:08X} epoch {} +{} item {} owner {:08X} cls {} lw {:08X} fam {} "
+          "ctx {:08X} mesh {:08X} ropa {} hair {} "
+          "skinned {} rows {} src {} mode {} lag {:.0f}ms ret {} cb {} pend {} vb {:08X} "
+          "shapes {} t ({:.3f},{:.3f},{:.3f}) ent ({:.3f},{:.3f},{:.3f}) d {:.3f} "
+          "rot0 ({:.3f},{:.3f},{:.3f}) flag {:.6f} vbage {}ms vbaddr {:08X} fp {:016X} "
+          "drape model ({:.3f},{:.3f},{:.3f}) world ({:.3f},{:.3f},{:.3f})",
+          g_frames, smoothed ? 1 : 0, ent, w.epoch, w.nth, i, mapped ? ident.entity : 0u, mapped ? int(ident.cls) : -1,
+          it.lw_entity, it.char_family, it.ctx, it.mesh, it.ropa ? 1 : 0, it.hair ? 1 : 0,
+          it.skinned ? 1 : 0, it.bones.size() / 12, it.dbg_src, it.draw_mode, it.draw_lag_ms,
+          it.retained ? 1 : 0, it.caster_bank ? 1 : 0, it.pending ? 1 : 0, it.vb_obj,
+          it.shape_count, tx, ty, tz, eok ? er[3] : 0.0f, eok ? er[7] : 0.0f,
+          eok ? er[11] : 0.0f,
+          eok ? std::sqrt((tx - er[3]) * (tx - er[3]) + (ty - er[7]) * (ty - er[7]) +
+                          (tz - er[11]) * (tz - er[11]))
+              : -1.0f,
+          skn ? it.bones[0] : it.world[0], skn ? it.bones[1] : it.world[1],
+          skn ? it.bones[2] : it.world[2], it.ropa_flag,
+          it.ropa ? skate3::native_entity::RopaVbAgeMs(it.vb_obj) : int64_t(-2), it.vb_addr,
+          it.fingerprint, cm[0], cm[1], cm[2], cw[0], cw[1], cw[2]);
+    }
+  }
+  if (s_watch.size() > 256) s_watch.clear();
 }
 
 void OnFrameBuilt() {

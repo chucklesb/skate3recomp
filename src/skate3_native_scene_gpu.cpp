@@ -107,6 +107,8 @@ REXCVAR_DECLARE(bool, skate3_native_render_scene_ropa_blend);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_char_track);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_shadow_ropa_drawn_shape);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_ropa_inline);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_skeleton_log_jumps);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_ropa_raw_sync);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_selection_outline);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_shadow_caster_parity);
 REXCVAR_DECLARE(bool, skate3_native_render_scene_shadow_pcss);
@@ -9897,8 +9899,71 @@ bool RenderScene(const NativeGuestOutputRenderContext& context, void* /*user_dat
       buffers.fingerprint = item.fingerprint;
       it = g_r.meshes.emplace(item.mesh, buffers).first;
     }
+    // A RAW-drawn cloth garment (no shape-generation weights: the first
+    // frames after a pose reset or camera cut) binds the resident decode,
+    // and the async decode of this frame's drape lands a frame later. Right
+    // after a jump the resident one is the pre-jump drape, placed with the
+    // new world: the detaching hair of KI-125. Decode this frame's own
+    // snapshot (the bytes its job got) now instead.
+    if (item.ropa && !item.skinned && item.shape_count <= 0 &&
+        it->second.fingerprint != item.fingerprint &&
+        REXCVAR_GET(skate3_native_render_scene_ropa_raw_sync)) {
+      RopaSnap snap;
+      bool found = false;
+      {
+        std::lock_guard<std::mutex> lock(g_ropa_snap_mutex);
+        const auto sit = g_ropa_snaps.find(item.mesh);
+        if (sit != g_ropa_snaps.end()) {
+          for (const RopaSnap& s : sit->second) {
+            if (s.seq != 0 && s.fingerprint == item.fingerprint) {
+              snap = s;
+              found = true;
+              break;
+            }
+          }
+        }
+      }
+      MeshBuffers fresh;
+      if (found &&
+          DecodeMesh(g_r.device, base, item, fresh, snap.vb.data(),
+                     snap.ib.empty() ? nullptr : snap.ib.data(), snap.vb.size(), snap.ib.size())) {
+        fresh.fingerprint = item.fingerprint;
+        fresh.dyn_seq = snap.seq;
+        PoolMeshBuffer(g_r.device, it->second.vb);
+        PoolMeshBuffer(g_r.device, it->second.ib);
+        it->second = std::move(fresh);
+        const uint64_t n = g_rr_ropa_raw_sync.fetch_add(1, std::memory_order_relaxed);
+        if (n < 32 || n % 512 == 0) {
+          REXLOG_INFO("native-scene: ropa raw sync mesh={:08X} hair={} seq={} (n={})", item.mesh,
+                      item.hair ? 1 : 0, snap.seq, n);
+        }
+      } else {
+        const uint64_t n = g_rr_ropa_raw_sync_miss.fetch_add(1, std::memory_order_relaxed);
+        if (n < 32 || n % 512 == 0) {
+          REXLOG_INFO("native-scene: ropa raw sync MISSED mesh={:08X} hair={} (no snapshot for "
+                      "fp {:016X}; drawn with the previous decode) (n={})",
+                      item.mesh, item.hair ? 1 : 0, item.fingerprint, n);
+        }
+      }
+    }
     it->second.last_used_frame = frame_number;
     const MeshBuffers& buffers = it->second;
+    // Diagnostic (skeleton_log_jumps): a raw-drawn cloth piece (the first
+    // frames after a reset) and the decode it binds: does the resident
+    // decode belong to this frame's payload?
+    if (item.ropa && !item.skinned && item.draw_mode <= 1 &&
+        REXCVAR_GET(skate3_native_render_scene_skeleton_log_jumps)) {
+      static std::atomic<uint32_t> s_n{0};
+      if (s_n.fetch_add(1, std::memory_order_relaxed) < 4000) {
+        REXLOG_INFO(
+            "skel-draw: frame {} mode {} mesh {:08X} ctx {:08X} hair {} vb {:08X} payload fp {:016X} "
+            "resident fp {:016X} dyn_seq {} shapes {} {}",
+            frame_number, item.draw_mode, item.mesh, item.ctx, item.hair ? 1 : 0, item.vb_addr,
+            item.fingerprint,
+            buffers.fingerprint, buffers.dyn_seq, item.shape_count,
+            buffers.fingerprint == item.fingerprint ? "same" : "STALE");
+      }
+    }
     if (prof_items) {
       di_t1 = PerfClock::now();
     }

@@ -654,6 +654,12 @@ bool ServeRopaWorld(uint8_t* base, uint32_t ctx, uint32_t vb_obj,
   return true;
 }
 
+int64_t RopaVbAgeMs(uint32_t vb_obj) {
+  std::lock_guard<std::mutex> lock(g_vb_mu);
+  const auto it = g_vb_fresh.find(vb_obj);
+  return it == g_vb_fresh.end() ? -1 : int64_t(NowMs() - it->second);
+}
+
 void EmitStats() {
   if (!REXCVAR_GET(skate3_native_render_scene_entity_ident) ||
       !REXCVAR_GET(skate3_native_render_scene_entity_ident_log)) {

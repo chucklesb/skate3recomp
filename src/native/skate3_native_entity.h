@@ -152,6 +152,11 @@ bool ReadEntityWorldRows(uint8_t* base, uint32_t ctx, float out_rows[12]);
 void NoteAcceptedWorldCompare(const float bank_rows[12],
                               const float ent_rows[12]);
 
+// Milliseconds since the game last completed a cloth tick into this
+// deformed VB object (SkaterPresEntity::DoubleBuffer), -1 = never seen.
+// Diagnostics.
+int64_t RopaVbAgeMs(uint32_t vb_obj);
+
 // Rate-limited ident[] stats line; call once per built frame.
 void EmitStats();
 

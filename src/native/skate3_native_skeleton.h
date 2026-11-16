@@ -77,4 +77,11 @@ uint32_t ServeRange(uint8_t* base, skate3::native_scene::FrameScene& scene, size
 // Frame tail: expiry and the stats line.
 void OnFrameBuilt();
 
+// Diagnostic (skate3_native_render_scene_skeleton_log_jumps): for the 4
+// frames after a character's jump counter rises, log every item of that
+// character as it will be drawn (after the pose smoothing): mode, source,
+// world / bone-0 translation, and the entity's live world. Call once per
+// built frame, after the pose smoothing (smoothed = it ran this frame).
+void LogJumpFrames(uint8_t* base, const skate3::native_scene::FrameScene& scene, bool smoothed);
+
 }  // namespace skate3::native_skeleton

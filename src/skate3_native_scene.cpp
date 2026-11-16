@@ -1007,6 +1007,13 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_ropa_inline, false, "Skate 3",
                     "place on the interpolation play clock, not decode latency. Kept "
                     "for experiments only.")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_ropa_raw_sync, true, "Skate 3",
+                    "A cloth garment drawn raw (no shape-generation weights: the first "
+                    "frames after a pose reset or camera cut) whose async decode of this "
+                    "frame's drape hasn't landed decodes that frame's own payload snapshot "
+                    "at draw time. Off = it binds the previous decode: right after a jump, "
+                    "the pre-jump drape at the new world (KI-125's detaching hair).")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_ropa_blend, true, "Skate 3",
                     "Lerp CPU-cloth shape generations onto the motion-smoothing play "
                     "clock at draw time (pose<->shape pairing via the interp ring); "
@@ -4892,6 +4899,7 @@ bool CaptureSkinnedState(uint8_t* base, uint32_t bank, uint32_t palette_base,
     const bool main_pass = palette_base >= 7;
     const uint32_t flag_reg = main_pass ? 7u : 4u;
     const float flag_x = LoadGuestF32(base, bank + (flag_reg * 4) * 4);
+    item.ropa_flag = flag_x;
     // Diagnosis logging (rate-limited): the flag/matrix registers were
     // verified against an emulated-mode F10 capture; this confirms what the
     // live native-mode banks actually hold at OUR capture moments.
@@ -6861,6 +6869,7 @@ struct CamPose {
 // phase with the smoothed camera; smoothing only the camera concentrated
 // all the sim stepping on the skater ("he definitively judders now").
 double g_smooth_play = 0.0;
+bool g_frame_smoothed = false;  // this frame ran InterpolateDynamicItems (diagnostics)
 bool g_smooth_active = false;
 // Last pose SmoothCamera produced (guest render thread), read by the
 // synthetic-pan probe (mode 3) to measure reconstruction error against the
@@ -11305,6 +11314,16 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
         if (g_ropa_last_seq.size() > 256) {
           g_ropa_last_seq.clear();
         }
+        // The same bytes for a raw draw of this frame (see RopaSnap).
+        std::lock_guard<std::mutex> snap_lock(g_ropa_snap_mutex);
+        if (g_ropa_snaps.size() > 128) {
+          g_ropa_snaps.clear();  // outfit-change growth backstop
+        }
+        RopaSnap& snap = g_ropa_snaps[item.mesh][job.seq % 3];
+        snap.fingerprint = item.fingerprint;
+        snap.seq = job.seq;
+        snap.vb = job.vb;
+        snap.ib = job.ib;
       }
       jobs.push_back(std::move(job));
     }
@@ -11590,8 +11609,12 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
       // Keep the skater/NPCs/props in phase with the smoothed camera:
       // interpolate their palettes/worlds at the same playback time.
       InterpolateDynamicItems(base, scene, now_s);
+      g_frame_smoothed = true;
     }
   }
+  // Debug, off by default: the frames after a character's jump as drawn.
+  skate3::native_skeleton::LogJumpFrames(base, scene, g_frame_smoothed);
+  g_frame_smoothed = false;
   CharSyncLog(scene);
 
   // Off-screen retention (see g_retained_items): re-append statics the game

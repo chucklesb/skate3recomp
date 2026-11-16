@@ -305,6 +305,9 @@ struct DrawItem {
   // the served tick (native_skeleton). The pose smoothing resets every
   // piece of a character together when it changes (KI-125).
   uint32_t skel_epoch = 0;
+  // Ropa capture: the bank's sim flag row x as read (exactly 1.0 = the
+  // game drew the garment sim-inactive / skinned). Diagnostics only.
+  float ropa_flag = 0.0f;
   // Why a skinned capture stayed pending (char_sync): 1 world-path capture,
   // 2 the submit's last draw was not this mesh's, 4 multi-pass mesh, 8 no
   // palette in the bank, 16 refused: aux perspective (portrait) bank, 32
