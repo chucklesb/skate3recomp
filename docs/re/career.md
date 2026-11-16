@@ -12,18 +12,62 @@ known, and how the harness sets it. Functions: [symbols.toml](symbols.toml)
   Searching memory for the total finds nothing.
 - **Where `S` is:** `S = *(*(*0x830CFD94 + 0xE0) + 0x48)`. It was at
   `0x4020D180` in every session so far (Odin 2, 2026-11-15).
-- **The counters:**
-  - **`+0x04`** is where awards go. The Lua binding `AwardBoardSales`
-    (`sub_827D1328`) adds its argument there, and a challenge award landed
-    there too (269,000 → 281,500, 2026-11-15).
-  - **`+0x08`** held 30,000 on the test career. Not identified; the front end
-    also has `GetOnlineBoardSalesReward`, `GetOwnedBoardSalesReward` and
-    `GetKilledBoardSalesReward`, likely sources for the other counters.
-  - **`+0x0C`, `+0x10`:** 0 on the test career.
+- **The counters** come from the challenge payout, `sub_827CDDD8(career,
+  challenge, level, online)`. Completing a challenge pays its Owned reward
+  (cash and board sales from the challenge's data); a Kill (level 2) adds
+  the Killed reward on top:
+  - **`+0x04`: Owned board sales.** The Lua binding `AwardBoardSales`
+    (`sub_827D1328`) adds here too, and a challenge award landed here
+    (269,000 → 281,500, Odin 2, 2026-11-15).
+  - **`+0x08`: Killed board sales** (30,000 on the Odin 2 test career, 73,750
+    on Windows).
+  - **`+0x0C`: online board sales** (the payout's online part; also
+    `sub_827CEC78`, called from two online handlers).
+  - **`+0x10`:** set, not added, from an online record (`sub_827CECE0`, from
+    `sub_825F23B0` and `sub_826EFD70`). 0 on both test careers.
+  - The reset to 0 for a new career is in `sub_825F2C98`.
+- **The last challenge's rewards:** `R = *(career+0x60)` (also the results
+  presenter's `this+0x5C`). The payout adds to it: `+0x3C` base cash,
+  `+0x40` killed bonus cash, `+0x44` online, `+0x48` owned and `+0x4C`
+  killed board sales. The front end reads them back (`GetBaseCashReward`,
+  `GetKilledBonusCashReward`, `GetOnline/Owned/KilledBoardSalesReward`,
+  `sub_825B15A0`..`sub_825B1600`).
 - **Cash:** `S+0x14`, which `GetTotalCash` returns. `AwardCash` adds to
   `+0x14` and `+0x18` (a lifetime total, probably).
-- **`S+0x1C`:** a pointer. When it is set, `AwardBoardSales` calls a notifier
-  (`sub_82C1C2A0`, not examined yet).
+- **`S+0x1C`: the actions tracker** `A` (context of the Lua `Actions` bindings,
+  `ActivateAction`/`DeactivateAction`). `A+0x04` is the list of locked
+  unlock actions (count at `+0x0C`), which the unlock check
+  (`sub_82C1C2A0(A)`, below) fires; `A+0x24` points at the challenge tracker
+  and `A+0x28` back at `S`.
+
+## Challenges
+
+The challenge tracker `C = *(A+0x24)` is the context of the Lua challenge
+bindings (`IsChallengePassed`, `GetChallengeCompletionLevel`,
+`GetNumCompletedChallenges`, ...). It holds three lists, 16 bytes apart, each
+a circular list head with its count 8 bytes later; a node carries the
+challenge's 64-bit name hash at `+8`:
+
+| C+ | Count at | Holds | Windows test career |
+|---|---|---|---|
+| `0x04` | `0x0C` | active challenges | 58 |
+| `0x14` | `0x1C` | **Owned** | 27 |
+| `0x24` | `0x2C` | **Killed** | 28 |
+
+`sub_82C1D988(C, hash)` returns a challenge's completion level: 1 Owned, 2
+Killed, 0 neither (the script enum `EChallengeCompletionLevel` is
+{Owned, Killed}; `eHighScoreTier` adds PersonalBest).
+`GetNumCompletedChallenges` is Owned + Killed. The `career` step reports
+these counts (`challenges`, `locked_actions`).
+
+## The save
+
+The career save (`ALIAS_SKATER/SKATER.P`, 2.6 MB, an `MC02` container) stores
+`S` field by field, each as a big-endian (size = 4, value) pair after a
+record header with hash `CFA69F92`: the four counters, then cash (`+0x14`)
+and `+0x18`. Seen in the Windows save on 2026-11-15 (offset `0x11464C`;
+4,926,250 / 73,750 / 0 / 0 / 2,500 / 2,500). The container likely has a
+checksum, so the harness changes the live object and lets the game save.
 - **Skate 2 has none of this:** its progression is coverage, medals, sponsors
   and unlocks (`Sk8::Progression::tCompletionResults`; `sk2_types.py`).
 
@@ -33,12 +77,12 @@ Crossing a milestone takes two things the game does after an award, not the
 write itself:
 
 1. **The unlock check.** After adding to the counters, the award calls
-   `sub_82C1C2A0(watcher)`, the watcher being `*(S+0x1C)`. The watcher keeps
-   a list of locked unlocks at `+0x04` (circular, a 64-bit hash at node+8;
-   61 on the Windows test career). For each, the check tests its
+   `sub_82C1C2A0(A)`, `A` being the actions tracker `*(S+0x1C)`. It keeps a
+   list of locked unlock actions at `+0x04` (circular, a 64-bit hash at
+   node+8; 61 on the Windows test career). For each, the check tests its
    requirements (`sub_82C1CA48`) and fires the ones now met: they leave the
    list (10 fired going from 537,500 to 1,500,000), and Lua runs on the
-   watcher's context. Nothing shows yet.
+   tracker's context. Nothing shows yet.
 2. **The results presenter.** An object whose update (`sub_827CF570`,
    virtual, vtable slot at `0x82311800`) runs every frame. When its flag at
    `this+0x30` is set and the game isn't busy, it pushes FE 64; a finished
@@ -93,5 +137,7 @@ without a challenge (`scenarios/career_milestone.toml`, above). Live:
   presenter's class (no RTTI; Skate 2 has no counterpart).
 - The FE stack's third entry: `[0,66,15]` was Customize Teammate, but table
   id 15 is MessengerScreen, so later entries may not be screen ids.
-- What `+0x08`..`+0x10` count, and how the save stores `S`.
-- Challenge completion state (`CompleteChallenge`, `sub_8283FD00`).
+- `+0x10`'s meaning (an online total, probably).
+- How the save's record is found and checked (header hash, checksum).
+- Setting a challenge's completion level from the harness (the list nodes'
+  layout beyond the hash; `CompleteChallenge`, `sub_8283FD00`).

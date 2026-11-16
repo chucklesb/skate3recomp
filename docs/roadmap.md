@@ -36,8 +36,10 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   "new team member" prompt is measured (row A). The milestone screens now
   show without a challenge (`career` `notify` + `show`,
   `career_milestone.toml`), and every FE screen id has its name
-  ([re/fe_screens.tsv](re/fe_screens.tsv)). Left: the other three counters,
-  the save layout, challenge completion state.
+  ([re/fe_screens.tsv](re/fe_screens.tsv)). The counters are Owned /
+  Killed / online board sales (the challenge payout), challenge progress is
+  read (Owned and Killed lists), and the save layout is known. Left:
+  setting challenge completion, `+0x10`.
 - RE-5 [ ] **The character skeleton** ([re/characters.md](re/characters.md)):
   one pose per character per tick; the likely fix for
   [KI-125](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps).

@@ -260,8 +260,8 @@ evidence = "binding table 0x823116DC; a challenge award on 2026-11-15 landed in 
 
 [sub_82C1C2A0]
 name = "Career unlock check"
-signature = "(watcher /* *(stats+0x1C) */)"
-role = "Tests each locked unlock on the watcher's list (+0x04) and fires those whose requirements now hold; the awards call it after adding to the counters."
+signature = "(actions tracker /* *(stats+0x1C) */)"
+role = "Tests each locked unlock action on the tracker's list (+0x04) and fires those whose requirements now hold; the awards and the challenge payout call it after adding to the counters."
 confidence = "confirmed"
 evidence = "harness career notify=true, Windows 2026-11-15: the list went 61 -> 51 and the milestone screens followed (with show)"
 
@@ -271,9 +271,9 @@ confidence = "likely"
 evidence = "decompile (called per pending unlock by sub_82C1C2A0)"
 
 [sub_82C1D988]
-name = "Career unlock state"
-signature = "(watcher, u64 unlock_hash)"
-role = "Looks the hash up in the watcher's two state lists (+0x14, +0x24)."
+name = "Challenge completion level"
+signature = "(challenge tracker, u64 name_hash) -> 0 | 1 Owned | 2 Killed"
+role = "Looks the hash up in the tracker's Owned (+0x14) and Killed (+0x24) lists."
 confidence = "likely"
 evidence = "decompile"
 
@@ -301,6 +301,38 @@ evidence = "li r4,65 / li r4,66 before sub_82D0ABE0; FE push log lr=0x827CD1E4 f
 name = "Pushes FirstTeamMember (FE 66)"
 confidence = "confirmed"
 evidence = "FE push log id=66 lr=0x82650574, Windows 2026-11-15"
+
+[sub_827CDDD8]
+name = "Career challenge payout"
+signature = "(career, challenge, level /* 2 = Killed */, online)"
+role = "Adds the challenge's Owned reward (and Killed reward at level 2, online part if set) to the rewards object (career+0x60: +0x3C..+0x4C) and the stats (+4 owned, +8 killed, +0xC online board sales), then runs the unlock check."
+confidence = "likely"
+evidence = "decompile; matches the FE getter names (GetOwned/Killed/OnlineBoardSalesReward read the same reward fields) and the Odin 2 award landing in +4"
+
+[sub_827CEC78]
+name = "Career add owned + online board sales"
+signature = "(career, owned, online)"
+role = "stats+4 += owned, stats+0xC += online, then the unlock check."
+confidence = "likely"
+evidence = "decompile; callers sub_826FCB60, sub_826FD028 pass owned = 0"
+
+[sub_827CECE0]
+name = "Career set board-sales counter 4"
+signature = "(career, value)"
+role = "stats+0x10 = value, then the unlock check; from online records (sub_825F23B0, sub_826EFD70)."
+confidence = "likely"
+evidence = "decompile"
+
+[sub_825F2C98]
+name = "Career stats reset (new career)"
+confidence = "guess"
+evidence = "stores 0 to stats+4..+0x10"
+
+[sub_827D0DE0]
+name = "Lua GetChallengeCompletionLevel"
+role = "sub_82C1D988(challenge tracker, hash(name)): 1 Owned, 2 Killed, 0 neither."
+confidence = "likely"
+evidence = "binding table 0x823115FC; decompile"
 
 [sub_827D1210]
 name = "Lua AwardCash"

@@ -1267,6 +1267,21 @@ Outcome Execute(Run& r, const Step& st) {
                     s, static_cast<unsigned long long>(others + c[0]),
                     static_cast<unsigned long long>(want), first, c[1], c[2], c[3]);
       std::string json = buf;
+      // Challenge progress: the actions tracker A = *(S+0x1C) points at the
+      // challenge tracker C (A+0x24), whose lists hold the active (C+0x04),
+      // Owned (C+0x14) and Killed (C+0x24) challenges, counts 8 bytes after
+      // each head (the Lua bindings GetNumChallengesAtCompletionLevel etc.).
+      uint32_t actions = 0, chal = 0, n[4] = {};
+      if (ReadU32(base, s + 0x1C, &actions) && actions && ReadU32(base, actions + 0x24, &chal) &&
+          chal && ReadU32(base, actions + 0x0C, &n[0]) && ReadU32(base, chal + 0x0C, &n[1]) &&
+          ReadU32(base, chal + 0x1C, &n[2]) && ReadU32(base, chal + 0x2C, &n[3])) {
+        char cb[200];
+        std::snprintf(cb, sizeof(cb),
+                      ",\"locked_actions\":%u,\"challenges\":{\"active\":%u,\"owned\":%u,"
+                      "\"killed\":%u}",
+                      n[0], n[1], n[2], n[3]);
+        json += cb;
+      }
       if (st.career_notify) {
         // The check the game's awards run after adding (AwardBoardSales ->
         // sub_82C1C2A0): crossing a milestone this way shows its screens.
