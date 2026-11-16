@@ -24,9 +24,10 @@ the linked pages; the backlog is [open-work.md](open-work.md).
 - RE-1 [x] **Toolkit:** `mem` search (unknown values included), portable
   snapshots, names in symbolize, the Toolkit section.
 - RE-2 [~] **Names from the Skate 2 debug build:** 9,326 functions (19.5%)
-  from `sk2_match.py` plus Ghidra Version Tracking, cross-checked. Next:
-  types (class layouts from the PDB) into `docs/re/types.md` where a probe
-  confirms them; more coverage via BSim.
+  from `sk2_match.py` plus Ghidra Version Tracking, cross-checked; class
+  layouts with `sk2_types.py` and [re/types.md](re/types.md) (four
+  structures, every offset we use confirmed). Left: more coverage via BSim,
+  more layouts as the work reaches them.
 - RE-3 [ ] **Skate 3's own code:** script bindings (Lua name to function),
   the message table, debug strings.
 - RE-4 [ ] **Career pilot:** board sales and challenge state, a harness verb

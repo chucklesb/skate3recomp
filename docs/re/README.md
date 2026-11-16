@@ -14,6 +14,7 @@ implementation and then deleted.
 |---|---|
 | [symbols.toml](symbols.toml) | The function map: address, name, signature, role, confidence, evidence |
 | [workarounds.md](workarounds.md) | Every host-side layer that guesses instead of knowing, and what would replace it |
+| [types.md](types.md) | Structure layouts, from the Skate 2 PDB, with what TU3 is known to keep or change |
 | [characters.md](characters.md) | Characters: skeleton, parts, palettes, the pack and bone-transform functions |
 
 ## Conventions
@@ -103,6 +104,15 @@ game code. It stays outside the repo (game code); its folder goes in
   string pairs 99-100% of the time, with callgraph and layout 93-97%, and with
   vtable and layout-align 79-85%. Those figures match the hold-out estimates.
   VT's own correlators agreed with our exact and string pairs 98-100%.
+- **Types:** `tools/re/sk2_types.py show NAME [--flat]` prints a Skate 2 class
+  layout (offsets, field names and types, base classes expanded with
+  `--flat`). `find REGEX` searches class names; `check` validates
+  [types.md](types.md) against the PDB. On the four structures we read, every
+  offset our code relies on matches a named Skate 2 field.
+  `cModelInstance` and `SkaterPresEntity` are unchanged where we use them;
+  `MeshContext` (0x34 to 0x50) and `cLivingWorldPresEntity` grew in Skate 3.
+  Board sales don't exist in Skate 2: the career pilot (RE-4) needs Skate 3's
+  own code.
 - **The rest is mostly code Skate 3 added or changed.** Next: BSim, or
   similarity on decompiler output.
 - **Precision**, on unchanged functions:
