@@ -30,10 +30,12 @@ In order; the roadmap has the context ([roadmap.md](roadmap.md), RE-5/RE-7):
 4. **RE-5b:** pedestrians. Found and built 2026-11-16: the LivingWorld
    batch writer is the skater gather and pack fused, and the store rebuilds
    every pedestrian piece exactly and serves them (`skeleton_lw = on` by
-   default, no frame-time cost). Left: the remaining char_sync flags at
-   Tresoutta Plaza (visible gap-filled pieces for 1-3 frames, mode
-   switches; `scenarios/skel_lw_shadow.toml`), then delete the remaining
-   per-piece guesses ([re/workarounds.md](re/workarounds.md)).
+   default, no frame-time cost). The remaining guesses were measured
+   (`skel-src:`, 2026-11-16): the post-draw fix-up is the main capture path
+   (~95%) and stays; rescue and gap fill are rare (0.2%, 48 pieces at the
+   plaza) and the store re-poses them. The few char_sync flags left at the
+   plaza are pedestrians in their first frames, before the store has a
+   tick for them.
 5. **RE-7:** native replacements of `UpdateBoneTransforms` and
    `PackAndMultiplyMatricesForUpload`, shadow first
    ([re/characters.md](re/characters.md#native-replacements-re-7-candidates)).
