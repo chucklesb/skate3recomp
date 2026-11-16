@@ -73,7 +73,7 @@ timestamps}`), and `DebugGpuDeadlock` after a long stall. The word is a GPU
 write-back in the physical mirror (e.g. `0xFFCA3000`; on Windows native
 reads must add the 0x1000 host offset, as `REX_LOAD_U32` does).
 
-`skate3_native_fence_wait = on`: the poll hook blocks on the SDK's GPU
+`skate3_native_fence_wait = on` (the default since 2026-11-16): the poll hook blocks on the SDK's GPU
 write-back signal (`rex::graphics::WaitGpuWriteback`, raised after every
 command-processor write to guest memory) while the word has not moved,
 2 ms timeout, then runs the original poll. `fence:` lines (`missed` =

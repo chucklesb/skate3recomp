@@ -173,7 +173,7 @@ constant. So the rows can be built without the buffer pairing: per-entity
 rows read from the entity at the draw, frame-global rows from any validated
 capture this frame, material rows per mesh.
 
-**Built (2026-11-16):** `skate3_native_render_scene_char_rows_entity =
+**Built and on by default (2026-11-16):** `skate3_native_render_scene_char_rows_entity =
 off | shadow | on`. The bank → `char_rows` transform is one function
 (`CharRowsTransform`); each validated capture keeps its raw rows (c0..c39)
 per (mesh, ctx). A rebuild takes those rows, overwrites the entity rows

@@ -85,8 +85,13 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   `replace_report.py`; the pose functions run on it. Character path:
   BindConstants specified and its register map measured (the lighting rows
   come from entity fields through a pointer, [re/characters.md](re/characters.md)).
-  Next: build `char_rows` from the entity (no buffer pairing), shadowed
-  against the bank; then cheap candidates from the ranking.
+  Done and on by default: `char_rows` rebuilt from the entity for pieces
+  whose capture fails (no stale caches; 96.8% bit-exact in shadow, the rest
+  pedestrian fade opacity), and the D3D fence wait blocks instead of
+  spinning (Odin 2 uncapped: render thread -20% CPU, better 1% lows;
+  [re/hot-functions.md](re/hot-functions.md)). Next: the job system's idle
+  spin, then cheap candidates from the ranking (DoFrustumCulling, the
+  vrsqrtefp helper).
 
 **Parked** (the user's call; don't start without asking):
 - The photo challenge's jerky closing animation and snapping pose
