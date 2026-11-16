@@ -11,20 +11,18 @@ Update it with every commit that finishes or starts an item. Details live in
 the linked pages; the backlog is [open-work.md](open-work.md).
 
 **Now** (finishing milestone 1, phase 0):
-1. [ ] **The tour on the Odin 2:** `native_tour` and `native_tour_boot`, the
-   audit and fps per screen, recorded in [native-only.md](native-only.md).
-2. [ ] **Photo-challenge reference shots:** a short live session (the user
+1. [ ] **Photo-challenge reference shots:** a short live session (the user
    plays, screenshots by command) for the running challenge and the
    shot-choosing screen. *Needs the user.*
-3. [ ] **The career "new team member" prompt (row A):** a save placed just
+2. [ ] **The career "new team member" prompt (row A):** a save placed just
    before it, or the user plays to it in a live session.
-4. [ ] **Branches:** `native-only` here and in the SDK fork.
+3. [ ] **Branches:** `native-only` here and in the SDK fork.
 
 **Next:**
-5. [ ] **Native-only phase 1** (offscreen 2D compose), then phases 2-5.
+4. [ ] **Native-only phase 1** (offscreen 2D compose), then phases 2-5.
    Row D, the offscreen skater pass in challenges (72-96 emulated draws a
    frame), is the biggest remaining cost; it's phase 4.
-6. [ ] **Reverse engineering: the character skeleton**
+5. [ ] **Reverse engineering: the character skeleton**
    ([re/characters.md](re/characters.md)): link `UpdateBoneTransforms`'
    part records to draw items, then one pose per character per tick. It
    replaces most of the "Characters" guesses in
@@ -40,6 +38,9 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   passed on retry, no symbols); watch for a repeat.
 
 **Done recently:**
+- 2026-11-15: **the Odin 2 tour**: audit and fps per screen recorded in
+  [native-only.md](native-only.md) (30 fps everywhere; Import Skater's photo
+  pass runs 23 draws a frame on the device, 4 on Windows).
 - 2026-11-15: **frame dumps** for videos: `play_reel video = true` and the
   `video` verb write every rendered frame (the presenter's frame tap), the
   reel clock stepping 1/30 s per frame; `video_reel_forearm.toml`.

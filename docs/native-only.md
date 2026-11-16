@@ -107,9 +107,9 @@ fallback until phase 5. The sizes are relative.
     **v2.1.0-aarch64.4** (full release, 2026-11-15);
   - item 3, mostly: the tour reaches every row except A's career prompt
     (C and D were measured from a live photo-challenge session instead);
-  - items 4 and 5 on Windows (audit and reference shots).
+  - items 4 and 5 on Windows (audit and reference shots), and the Odin 2
+    tour run with fps per screen (below).
 - **Still to do:**
-  - the Odin 2 tour run, with fps per screen (items 4 and 5 on the device);
   - reference shots of a running photo challenge and the shot-choosing
     screen (a short live session);
   - the career "new team member" prompt (row A);
@@ -167,6 +167,32 @@ executed per frame.
 - **Not reached by the tour:** a photo challenge's running, shutter and
   photo screens (rows C and D), measured below from a live session instead,
   and the career "new team member" prompt (row A), still unmeasured.
+
+**Odin 2, 2026-11-15** (build `ga49a5c9`; runs `20261115-181111_native_tour`,
+`20261115-181622_native_tour_boot`; fps from `fps_by_screen.py`, capped at
+30, the first second after each screen change left out):
+
+| Context (FE stack) | Draws/frame | Pitches beyond the base 80: 6, 320: 4 | fps median / p5 / min | Table row |
+|---|---|---|---|---|
+| Free skate `[0]` | 10.0 | - | 30.0 / 29.9 / 29.6 | E |
+| Intro movies and title `[0,47]` `[0,5]` `[0,24]` `[0,22:0]` | 10.0 | - | 30.0 / 29.9 / 29.9 | E, F |
+| Challenge map `[0,17]`, challenge `[0,1]` | 10.0-10.1 | 160: 0.1 | 30.0 / 30.0 / 30.0 | E |
+| Pause `[0,56]` | 10.6 | 560: 0.2, 600: 0.3 | 30.0 / 29.9 / 29.9 | B |
+| Team screen `[0,56,63]` | 15.1 | 560: 2, 600: 3 | 30.0 / 29.9 / 29.9 | B |
+| Create-a-Skater `[0,56,63,15]` | 17.2 | 560: 2, 600: 3, 1200: 1.9 | 30.0 / 29.7 / 27.4 | A, B |
+| Import Skater `[0,56,63,68]` | **38.7** | 560: 2, 600: 3, **1200: 23.4** | 30.0 / 27.2 / 27.2 | A, B |
+| Replay editor `[0,56,12]` | 11.2 | 560, 600, 640: 0.6 | 30.0 / 29.9 / 29.0 | B |
+| My Replays `[0,56,59]` | 10.5 | 560, 600 | 30.0 / 29.9 / 29.9 | B |
+| Photo viewer `[0,56,59,36]` | 15.0 | 560: 2, 600: 3 | 30.0 / 29.9 / 29.9 | B |
+
+- **Matches Windows** everywhere except Import Skater, and no frame was
+  presented emulated. The device holds 30 fps on every screen; the two
+  Create-a-Skater screens are the only ones that dip (to 27).
+- **Import Skater draws the skater photo (pitch 1200) 23.4 times a frame on
+  the Odin 2, 4.1 on Windows,** over the same 394 frames and the same screen
+  (the shots match). Likely the portrait re-rendering until its assets
+  stream in, which takes longer on the device; it goes away with row A's
+  phase either way, so it's recorded, not chased.
 
 **Photo challenges, Odin 2, 2026-11-15** (run `20261115-153557_live`: the
 user played two photo challenges live with the census on; no input replay):
