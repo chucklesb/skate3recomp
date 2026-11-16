@@ -63,6 +63,21 @@ pedestrians, NPC skaters), and the redesign it points to. Functions:
   LOD pedestrians use a fused writer (`sub_827C1D38`) that concatenates
   every mesh's palette into one buffer.
 
+## Native replacements (RE-7 candidates)
+
+The goal is to replace recompiled game code with native code that is
+known to be right. RE-5 gives the first two fully specified functions, and
+the skeleton store already reimplements them on the host:
+- `Sk8::UpdateBoneTransforms` (`sub_827A52C8`): a pure gather (above).
+- `PackAndMultiplyMatricesForUpload` (`sub_827E5B30`): each gathered row
+  times `localToWorld`, transposed to three float4 rows.
+
+The store's `BuildPiece` (`src/native/skate3_native_skeleton.cpp`) matched
+the game's own upload on every skater piece in shadow mode (6,336 on
+Windows, 4,016 on the Odin 2). A native replacement would run the host code
+in place of the recompiled function and write the same `m_matrices`. Shadow
+first (compare the guest's result each call), then replace. Not started.
+
 ## Structures (known offsets)
 
 | Structure | Offset | Field |
@@ -110,10 +125,36 @@ distance gate. Check: `scenarios/skel_on.toml`, then
 | Windows Vulkan `20261116-001153_skel_on` | 6,336 | all | 0 bad frames |
 | Odin 2 `20261116-002508_skel_on` | 4,634 | all | 0 bad frames |
 
-KI-125 (every frame of the reel jump, `scenarios/video_ki125.toml`, Odin 2):
-the skater's body is whole on the first frame after the jump with the store
-on and off, but the cloth-simulated pieces (ropa: the long hair, likely the
-sleeve) are not. They are outside the store's reach; see KI-125.
+KI-125 (every frame of the reel jump, `scenarios/video_ki125.toml`): the
+skater's body is whole on the first frame after the jump with the store on
+and off. The cloth-simulated pieces (ropa: the long hair and the shirt) are
+not: they are outside the store's reach, and their drape on that frame is
+one the game never draws. See KI-125.
+
+**Cloth (ropa) after a replay seek (2026-11-16):**
+- After the seek the skeleton holds one tick for several frames (the game
+  re-settles), while the cloth payload changes between the first and second
+  frame. The game's frames show the cloth attached throughout.
+- Each garment's deformed VB is a double buffer (`SkaterPresEntity +1936`,
+  two VB objects per garment); `DoubleBuffer` (`sub_82783038`) flips them once
+  per completed cloth tick. Our draws alternate between the two halves
+  frame by frame, as the game's do.
+- The capture's mode test (bank flag row x exactly 1.0 = sim inactive)
+  reads 0.0 for the hair on every frame, including the bad one. So what
+  the game does differently on that frame is still unknown: the next step
+  is a RenderDoc capture of the emulated frame (KI-125).
+
+**Debugging a character frame by frame:**
+`skate3_native_render_scene_skeleton_log_jumps = true` logs, for 4 frames
+after any character's jump counter rises:
+- `skel-jf:` every item of that character as drawn (mode, source, world,
+  cloth flag, cloth tick age, drape centroid);
+- `skel-new:` skater pieces drawn without a store entry;
+- `skel-draw:` raw cloth draws, with whether the decode they bind matches
+  this frame's payload.
+
+Pair it with `scenarios/video_ki125.toml` (every frame to PNG). A one-frame
+bug falls between screenshots; the video catches it.
 
 **Steps 1 and 2 (2026-11-15), shadow mode:**
 `src/native/skate3_native_skeleton.{h,cpp}` keeps one pose per skater per

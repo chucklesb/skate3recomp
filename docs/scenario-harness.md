@@ -277,6 +277,14 @@ positions may change, ids don't. `run_scenario.py reels --pull
 first: a quick `play_reel from = "marker"` (e.g. with `every_frames = 10`)
 logs `harness: reel N: playing from X s (... marker X s ...)`.
 
+**One-frame bugs need every frame.** Screenshots land every few frames
+(`every_frames = 1` is a request, not a guarantee), so a bug that lasts one
+frame falls between them. `play_reel` with `video = true` and `step_fps = 30`
+writes every rendered frame to `video/<tag>/` (the reel clock steps exactly
+1/30 s per frame, so nothing is dropped; the run only gets slower).
+`scenarios/video_ki125.toml` is the pattern. Compare frame by frame with the
+emulated renderer (a copy of the scenario with `renderer = "emulated"`).
+
 ## Helper tools
 
 Small scripts for looking at results, in `tools/harness/` next to

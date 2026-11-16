@@ -14,7 +14,26 @@ what was done).
 | [KI-119](known-issues.md#ki-119-enhanced-shadows-put-sunny-places-in-shade) (remainder) | Core Plaza: the overhead structure's live shadow covers a path the game shows in sun |
 | [KI-121](known-issues.md#ki-121-on-d3d12-the-scene-is-sometimes-drawn-in-shade) | On D3D12, a sunny scene is sometimes drawn in shade |
 | [KI-123](known-issues.md#ki-123-skatereel-playback-is-slow-and-uneven) | Reel playback runs slow and uneven on the Odin 2 |
-| [KI-125](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps) | The skater comes apart for a frame or two after a replay jumps |
+| [KI-125](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps) | For one frame after a replay jumps, the hair and shirt (cloth) sit beside the body. Next: a RenderDoc capture of that frame with the emulated renderer |
+
+## Next up (2026-11-16)
+
+In order; the roadmap has the context ([roadmap.md](roadmap.md), RE-5/RE-7):
+1. **KI-125:** a RenderDoc capture of the first frame after the jump with
+   the emulated renderer on Windows (`video_ki125.toml` with
+   `renderer = "emulated"`): which vertex buffer and mode the game's hair
+   draw uses. Then fix the cloth mode decision.
+2. **RE-5 step 4:** the skeleton store's remaining checks with `on`: reel
+   stills against the baselines (`shots.py classify`), fps, `harness-ab`.
+   Then make `on` the default.
+3. **RE-5 step 5:** delete the per-piece guesses the store replaces for
+   skaters ([re/workarounds.md](re/workarounds.md), rows "in progress").
+4. **RE-5b:** pedestrians, through the LivingWorld pack path (a "where is
+   the pose" probe first).
+5. **RE-7:** native replacements of `UpdateBoneTransforms` and
+   `PackAndMultiplyMatricesForUpload`, shadow first
+   ([re/characters.md](re/characters.md#native-replacements-re-7-candidates)).
+6. **Frame-time follow-ups** (below, under tooling).
 
 ## Rendering
 

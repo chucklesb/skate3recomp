@@ -18,7 +18,7 @@ happen. The technical details follow for whoever works on it.
 | [KI-122](#ki-122-canal-water-reflects-orange-brown-instead-of-blue-sky) | Canal water reflects orange-brown instead of blue sky, depending on the view angle; no shadows on the canals | Fixed |
 | [KI-123](#ki-123-skatereel-playback-is-slow-and-uneven) | Reel playback runs in the teens with uneven pacing, where gameplay holds near 60 | Main cause fixed (confirmed on the Odin 2); smaller replay cost open |
 | [KI-124](#ki-124-shadows-on-the-sun-facing-side-of-the-skaters-sleeves) | A shadow flashes across the skater's shirt for one frame (Odin 2, 1x reel playback) | Fixed (Odin 2) |
-| [KI-125](#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps) | For a frame or two after a replay jumps to a new time, the skater's arms or legs are drawn detached | Open |
+| [KI-125](#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps) | For one frame after a replay jumps to a new time, the skater's hair and shirt are drawn detached from the body | Open |
 | [KI-126](#ki-126-the-skaters-hair-looks-transparent) | The skater's hair looks see-through: a blue veil with the trees behind showing through | Fixed (Odin 2) |
 
 ---
@@ -703,9 +703,9 @@ small areas of the skater's body poking through the shirt in this reel.
 
 **What you see:** right after a replay jumps to another time (the harness
 starting a reel from its marker; likely also scrubbing in the replay
-editor), the skater is drawn wrong for a frame or two: an arm missing from
-its sleeve, a hand or leg floating apart from the body, and no ground
-shadow. The game's own (emulated) frames at the same moment are fine.
+editor), the skater is drawn wrong for one frame: the long hair and the
+shirt sit beside the body, so a second head shows and a sleeve looks empty.
+The game's own (emulated) frames at the same moment are fine.
 
 **How to see it:** `scenarios/video_ki125.toml` (every frame; the first
 frame after the jump), or `scenarios/ki124_motion_native.toml` on the
@@ -718,29 +718,39 @@ replay stills and repros) · **Found:** 2026-11-12 by the user.
 <details>
 <summary>Technical details</summary>
 
-**Every frame of the jump (2026-11-16, `scenarios/video_ki125.toml`, Odin 2,
-runs `20261116-001858_video_ki125` with the skeleton store on and
-`20261116-002021_video_ki125` without):** only the first frame after the
-jump is wrong, the same in both. A second head of hair sits beside the
-skater's head (the user: "this detaching hair bug"), and the left arm is
-missing from its sleeve. From the second frame on the skater is whole.
+**What it is (2026-11-16, every frame recorded with
+`scenarios/video_ki125.toml`, Windows Vulkan and the Odin 2 alike):** only
+the first frame after the jump is wrong. The skater's two cloth-simulated
+pieces (ropa), the long hair and the shirt, are drawn about 15 cm to one
+side of the skinned body. The uncovered head reads as a second head, and the
+displaced sleeve as a missing arm (the user: "this detaching hair bug").
+From the second frame on the skater is whole. The game's own frames
+(emulated, `20261116-003206_video_ki125_emulated`) show the cloth attached on
+every frame after the jump.
 
-- **The body is not the cause:** with the skeleton store on
-  (`skate3_native_render_scene_skeleton = on`, RE-5 step 3), every skinned
-  body piece is served from the character's one pose of the newest tick
-  and the pieces reset their smoothing together. The frame looks the same.
-- **The cloth pieces are the lead.** The skater's long hair is a cloth-simulated
-  garment (ropa, `char_sync`: "not measured: rigid, ropa"). It draws with
-  the character's world matrix and the cloth sim's decoded shape. On the
-  first frame after a reset the garment draws raw, with no shape weights
-  (`char_track`: `raw=1 sc=0`), so the draw binds the newest decoded
-  generation. Right after a jump that decode can still be the old pose's
-  drape, placed with the new world: hair beside the head. Not yet confirmed
-  (the decode generation against the jump tick needs logging).
-- **Next:** log the hair's drawn generation against the store's jump tick.
-  If that confirms it, on a character jump draw the garment only with a
-  generation decoded after the jump, and hold the pre-jump state until one
-  exists.
+- **Ruled out:**
+  - **the body:** with the skeleton store on (RE-5 step 3) every skinned piece
+    comes from the character's one pose and is correct on that frame;
+  - **the cloth's world matrix:** the entity's matrix and the constant-bank
+    copy the game drew with give the same picture
+    (`skate3_native_render_scene_entity_ropa_world_primary=false`);
+  - **a stale decode:** raw cloth draws did bind the previous frame's decode
+    (fixed: `skate3_native_render_scene_ropa_raw_sync`, on), and the frame
+    is unchanged.
+- **What the logs show** (`skate3_native_render_scene_skeleton_log_jumps`):
+  after the seek the skeleton stays on one tick for several frames, but the
+  cloth payload changes between the first and second frame (decode
+  fingerprint `C115...` to `5257...`). The cloth flag reads active (0.0) and
+  the cloth ticked 35 ms earlier.
+- **Lead:** on the first frame the cloth vertex buffer still holds the
+  drape from before the cloth sim re-ran after the seek, and the game does
+  not draw that drape. It probably draws the garment another way on that
+  frame (skinned, or not at all), which our capture's mode test does not
+  see.
+- **Next:** a RenderDoc capture of that frame with the emulated renderer on
+  Windows (`video_ki125.toml` with `renderer = "emulated"`): which vertex
+  buffer and which mode the game's hair draw uses. Then fix the capture's
+  mode decision.
 
 </details>
 

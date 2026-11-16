@@ -23,9 +23,9 @@ hooked = "src/skate3_native_render.cpp"
 [sub_827E5B30]
 name = "cModelInstance::PackAndMultiplyMatricesForUpload"
 signature = "(cModelInstance* this /*r3*/, Matrix44& localToWorld)"
-role = "Packs an instance's bone matrices into m_matrices (+0x14): the 4x3 column-major palette the vertex shader consumes."
+role = "Packs an instance's bone matrices into m_matrices (+0x14) in place: row i = transpose(m_matrices[i] x localToWorld), rows 0-2 (the 3 float4 per bone the vertex shader consumes). EndJobs passes the entity's m_MatLtoW (+0x160)."
 confidence = "confirmed"
-evidence = "post-call snapshot matches the draw-time constant bank (palette serve, src/native/skate3_native_palette.cpp)"
+evidence = "post-call snapshot matches the draw-time constant bank (palette serve); RE-5 probe: 170/170 packs match the formula; the skeleton store reproduces it on every skater piece (shadow mode, Windows and Odin 2)"
 hooked = "src/skate3_native_render.cpp"
 
 [sub_827C1D38]
