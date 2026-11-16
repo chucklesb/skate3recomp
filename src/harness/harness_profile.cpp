@@ -39,7 +39,7 @@ extern PPCFuncMapping skate3_PPCFuncMappings[];
 namespace skate3::harness::profile {
 namespace {
 
-constexpr int kMaxThreads = 8;
+constexpr int kMaxThreads = 16;
 constexpr int kMaxDepth = 16;
 
 struct Sample {
