@@ -80,9 +80,13 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   ranking in [re/hot-functions.md](re/hot-functions.md): at the 30 fps cap
   the Odin 2 uses ~9.7 ms of CPU per frame over all game threads, flat (no
   function over ~0.5 ms), so replacements are for understanding and
-  correctness more than frame time. Next: the character path
-  (BindConstants, the lighting rows), then cheap candidates from the
-  ranking (DoFrustumCulling, the vrsqrtefp helper).
+  correctness more than frame time (and CPU, i.e. battery and heat).
+  Replacement framework (2026-11-16): `native_replace::Run` +
+  `replace_report.py`; the pose functions run on it. Character path:
+  BindConstants specified and its register map measured (the lighting rows
+  come from entity fields through a pointer, [re/characters.md](re/characters.md)).
+  Next: build `char_rows` from the entity (no buffer pairing), shadowed
+  against the bank; then cheap candidates from the ranking.
 
 **Parked** (the user's call; don't start without asking):
 - The photo challenge's jerky closing animation and snapping pose

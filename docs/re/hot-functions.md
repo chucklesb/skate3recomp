@@ -46,9 +46,31 @@ Its absolute numbers are higher and less exact: it samples wall time and
 drops idle samples by a cycle threshold. Host code in the release exe has no
 names there (no PDB); the Odin 2 binary names it.
 
+## Plaza uncapped, 2026-11-16 (`scenarios/profile_plaza_uncapped.toml`)
+Odin 2, run `20261116-133617_profile_plaza_uncapped`: the profile window ran
+1,066 frames in 9.1 s, **~117 fps** (the run's overall 299 fps counts loads
+and menus). CPU per frame (~8.5 ms frames):
+
+| Thread | CPU ms/frame | Largest item |
+|---|---|---|
+| main | 0.78 | libc, job dispatch |
+| render | 2.06 | **`D3D::CDevice::BlockOnFence` (`sub_82B755C0`) 0.80 ms incl, 39% of the thread**: the guest spins on the GPU fence (`sub_82B76080` 0.34 ms self, calling `GetCurrentThreadId` each turn); the native renderer (`BuildFrameScene`) 0.26 ms |
+| jobs | 1.31 | `DoFrustumCulling` 0.23 ms; job dispatcher self + `sub_82AE30F0` 0.22 ms (spinning) |
+
+Even at ~117 fps no thread is CPU-bound (the busiest uses ~25% of a frame),
+so the limit is the GPU or pacing. **Busy-waiting is the largest CPU cost**:
+the fence spin on the render thread and the job system's spin/backoff. On a
+handheld that is battery and heat for nothing. Replacing the fence wait with
+a blocking wait on the host (the fence is ours: the native renderer and the
+emulated GPU know when it signals) is the top battery target; the job
+system's idle spin is the second.
+
 ## Next
-- Profile uncapped (`skate3_guest_fps_cap = 0`) to find the critical path
-  at 60 fps.
+- `D3D::CDevice::BlockOnFence` (`sub_82B755C0` / `sub_82B76080`): specify
+  the spin, replace it with a host wait on the fence (RE-7 framework; not
+  a pure-function replacement, so it needs its own check: no frame-time
+  regression, CPU per frame down).
+- The job system's idle spin (`RunSingleJob` self, `sub_82AE30F0`).
 - Identify `sub_82D1DE08` / `sub_82E89B80`.
 - Candidates by cost × specifiability: `DoFrustumCulling`, the
   `vrsqrtefp` helper (SDK), the job-wake signaling (SDK), RefPack
