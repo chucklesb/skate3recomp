@@ -139,9 +139,14 @@ transfer can't. They rank above the Skate 2 names.
   ids with their names and Flash movies (`tools/re/fe_screens.py`, from the
   table at `0x8302F490`), for reading the harness's `fe` stacks and the FE
   push log (e.g. 22 CrossBar, the pause menu; 64 MilestoneUnlock).
-- **Name hashes:** the game keys names by a 64-bit lookup8 hash
-  (`sub_82B73AC0`); `tools/re/challenges.py hash NAME` computes it.
-  [challenges.tsv](challenges.tsv) names 94 career challenges.
+- **Data keys:** the game keys names by a 64-bit lookup8 hash
+  (`sub_82B73AC0`; `tools/re/challenges.py hash NAME`). Its data lives in
+  EA Attrib vaults inside the `.big` archives (`tools/re/big.py` lists and
+  extracts them to `out/re/big/`); [attrib_names.tsv](attrib_names.tsv)
+  names 8,870 vault classes and records by hash (`tools/re/attrib.py names`,
+  `lookup HASH|TEXT`), so 64-bit constants in the code read as names
+  (`0xA5970491380FF1BE` = `progression_action`). Game data itself stays in
+  `out/`.
 - **Messages:** [messages.tsv](messages.tsv), 368 `cMsg` types by id (from
   `tools/re/messages.py`), for reading the RE probe's message census.
 - **Bindings as a check on the Skate 2 names:** on 82 functions named both

@@ -66,10 +66,10 @@ hash, `sub_82B73AC0`: Bob Jenkins' lookup8 with `a = b = 0xABCDEF0011223344`
 (confirmed: `hom_univ_04_sp` hashes to the Owned list's `91941878C48D7834`).
 Names look like `<type>_<district>_<NN>[_suffix]`: `film_dwtn_01`,
 `photo_univ_03`, `race_indu_02`, `hom_univ_04_sp`, `tut_sksc_01`.
-[challenges.tsv](challenges.tsv) has 94, which cover 98 of the 119 challenges
-the Windows test career tracks (`tools/re/challenges.py names`, from a
-career snapshot and the game data; `hash` hashes any name, `show` lists a
-snapshot's challenges by name). The locked actions use other names.
+Every challenge, unlock action and other data record is named in
+[attrib_names.tsv](attrib_names.tsv) (below). `tools/re/challenges.py hash`
+hashes any name; `challenges.py show SNAP` lists a career snapshot's
+challenges and locked actions by name.
 
 **From the harness:** `career` with `complete = "name"` (or `"0x<hash>"`)
 and `level = "owned"` or `"killed"`:
@@ -111,6 +111,33 @@ killed, online)`, which moves the challenge onto the Owned or Killed list.
 The challenge object it takes (vtable `0x82326AF4`) has the name hash at
 `+8`; the harness skips it and calls `sub_82C1D878` directly. The `career` step reports
 these counts (`challenges`, `locked_actions`).
+
+## The game's data: names for every key
+
+The `.big` archives (`data/big/*.big`, EA "EB" version 3, RefPack
+compression) are read by `tools/re/big.py` (`list`, `extract` to
+`out/re/big/`, `grep`). The databases inside are EA Attrib vaults
+(`.vlt`/`.bin` pairs), each with a summary report naming its records as
+`/<class>.class/<record>.xml`. The code looks records up by the lookup8 hash
+of the class and record names, so `tools/re/attrib.py names` turns the
+reports into [attrib_names.tsv](attrib_names.tsv): 8,870 names in 329
+classes, and `attrib.py lookup` resolves a constant. For the career:
+
+- `0xA5970491380FF1BE`, the table the unlock check reads, is the class
+  **`progression_action`**; the 53 locked actions on the Windows test career
+  are all its records, e.g. `branding_level_10_complete`,
+  `stadium_contest_complete`, `team_film_unlock_complete`,
+  `skateschool_unlock_intermediate`, `thrasher_1_unlock_complete`.
+- `0x4429D52046FC5D6D` is `progression_action/milestone_actions`.
+- `GetNextBoardSaleMilestone`'s gate (`sub_827CD728`) tests
+  `challenge_global_data/photo_univ_05`.
+- Challenges are `challenge_local_data` records; every one the test careers
+  track has a name. Other progression classes: `progression_state`,
+  `progression_handler`, `progression_rewards`, `progression_stategraph`,
+  `progression_group`.
+- Not covered: attribute (field) keys such as the payout's reward fields
+  (`0x8915E3FCB76529BA`, `0x3DBC2F9C0083DF86`, `0x2E4824C81FDAE87C`); the
+  reports list records, not fields.
 
 ## The save
 
@@ -191,4 +218,3 @@ without a challenge (`scenarios/career_milestone.toml`, above). Live:
   id 15 is MessengerScreen, so later entries may not be screen ids.
 - `+0x10`'s meaning (an online total, probably).
 - How the save's record is found and checked (header hash, checksum).
-- The locked actions' names.

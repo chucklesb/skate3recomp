@@ -40,10 +40,11 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   Killed / online board sales (the challenge payout), challenge progress is
   read (Owned and Killed lists), and the save layout is known. Challenges can be
   completed from the harness (`complete = "name"`; names from the game's
-  lookup8 hash, [re/challenges.tsv](re/challenges.tsv)). With `pay = true`
+  lookup8 hash; every data key named from the game's vaults,
+  [re/attrib_names.tsv](re/attrib_names.tsv)). With `pay = true`
   the game's own completion pays the reward and shows the results; the
-  `results` step walks them and waits for the save. Left: `+0x10`, the
-  locked actions' names.
+  `results` step walks them and waits for the save. The `.big` archives
+  are readable (`tools/re/big.py`). Left: `+0x10`.
 - RE-5 [ ] **The character skeleton** ([re/characters.md](re/characters.md)):
   one pose per character per tick; the likely fix for
   [KI-125](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps).
