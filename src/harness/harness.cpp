@@ -37,6 +37,7 @@
 
 #include "harness/harness_crash.h"
 #include "harness/harness_game.h"
+#include "harness/harness_mem.h"
 #include "harness/harness_pad.h"
 #include "harness/harness_png.h"
 #include "harness/harness_reels.h"
@@ -339,9 +340,6 @@ struct Run {
   uint64_t video_waits = 0;  // frames that waited for a free encoder slot
   std::vector<std::thread> video_threads;
 
-  // mem verb: candidate addresses from the last find / refine (runner thread).
-  std::vector<uint32_t> mem_hits;
-  std::string mem_hits_type;
 };
 
 Run* g_run = nullptr;
@@ -674,57 +672,6 @@ std::string VideoJson(const Run& r, const VideoResult& v) {
          "\",\"video_frames\":" + std::to_string(v.frames) +
          ",\"video_failed\":" + std::to_string(v.failed) +
          ",\"video_waits\":" + std::to_string(v.waits);
-}
-
-// ------------------------------------------------------------ mem verb
-
-// The value as the guest stores it (big-endian), for comparing raw words.
-uint32_t MemWord(const std::string& type, double v) {
-  uint32_t w = 0;
-  if (type == "f32") {
-    const float f = static_cast<float>(v);
-    std::memcpy(&w, &f, 4);
-  } else {
-    w = static_cast<uint32_t>(static_cast<int64_t>(v));
-  }
-  return __builtin_bswap32(w);
-}
-
-std::string MemValueJson(const std::string& type, uint32_t be) {
-  const uint32_t w = __builtin_bswap32(be);
-  if (type == "f32") {
-    float f;
-    std::memcpy(&f, &w, 4);
-    char buf[48];
-    std::snprintf(buf, sizeof(buf), "%.6g", f);
-    return buf;
-  }
-  return std::to_string(w);
-}
-
-// Every 4-byte-aligned guest address holding `word`, over the whole 4 GB
-// space a 64 KB page at a time (unmapped pages fail the guarded copy and are
-// skipped). Stops at `cap` hits.
-std::vector<uint32_t> MemFind(uint8_t* base, uint32_t word, size_t cap) {
-  std::vector<uint32_t> hits;
-  std::vector<uint32_t> page(0x10000 / 4);
-  for (uint64_t a = 0x10000; a < 0x100000000ull && hits.size() < cap; a += 0x10000) {
-    if (a >= 0x7FC00000 && a < 0x80000000) {
-      continue;  // GPU registers (MMIO): reads there are emulated, not memory
-    }
-    if (!native_scene::GuestTryCopy(page.data(), base + a, 0x10000)) {
-      continue;
-    }
-    for (size_t i = 0; i < page.size(); ++i) {
-      if (page[i] == word) {
-        hits.push_back(static_cast<uint32_t>(a + i * 4));
-        if (hits.size() >= cap) {
-          break;
-        }
-      }
-    }
-  }
-  return hits;
 }
 
 bool WaitFrames(Run& r, int64_t frames, double timeout_s);
@@ -1139,6 +1086,46 @@ Outcome Execute(Run& r, const Step& st) {
       return {};
 
     case Verb::kSnapshot: {
+      if (!st.native_snapshot) {
+        // The harness writes it (any platform): the guest held at a frame
+        // boundary while the pages are read.
+        uint8_t* base = g_base.load();
+        if (!base) {
+          return Fail("snapshot: no guest frame yet");
+        }
+        bool was_paused;
+        {
+          std::lock_guard lk(r.mu);
+          was_paused = r.paused;
+          r.paused = true;
+          r.step_budget = 0;
+        }
+        r.cv.notify_all();
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        fs::create_directories(r.dir / "snapshots");
+        const std::string name = (st.tag.empty() ? "snapshot" : SafeName(st.tag)) + ".gsnap";
+        const fs::path path = r.dir / "snapshots" / name;
+        uint64_t bytes = 0;
+        uint32_t regions = 0;
+        std::string err;
+        const auto t0 = Clock::now();
+        const bool ok = mem::WriteSnapshot(base, path.string(), &bytes, &regions, &err);
+        const double secs = std::chrono::duration<double>(Clock::now() - t0).count();
+        if (!was_paused) {
+          std::lock_guard lk(r.mu);
+          r.paused = false;
+        }
+        r.cv.notify_all();
+        if (!ok) {
+          return Fail("snapshot: " + err);
+        }
+        char buf[200];
+        std::snprintf(buf, sizeof(buf), "\"file\":\"snapshots/%s\",\"mb\":%.1f,\"regions\":%u,\"s\":%.1f",
+                      name.c_str(), bytes / 1048576.0, regions, secs);
+        Outcome o;
+        o.result_json = buf;
+        return o;
+      }
       rex::cvar::SetFlagByName("skate3_native_render_capture_hotkeys", "true");
       const fs::path dir{rex::cvar::Query<std::string>("skate3_native_render_snapshot_dir")};
       std::error_code ec;
@@ -1222,54 +1209,27 @@ Outcome Execute(Run& r, const Step& st) {
       if (!base) {
         return Fail("mem: no guest frame yet");
       }
-      constexpr size_t kCap = 100000;
-      auto list = [&](const std::vector<uint32_t>& v) {
-        std::string out = "\"count\":" + std::to_string(v.size()) + ",\"addrs\":[";
-        for (size_t i = 0; i < v.size() && i < 64; ++i) {
-          char buf[16];
-          std::snprintf(buf, sizeof(buf), "%s\"%08X\"", i ? "," : "", v[i]);
-          out += buf;
-        }
-        return out + "]";
-      };
-      Outcome o;
-      if (st.mem_op == "find") {
-        r.mem_hits = MemFind(base, MemWord(st.mem_type, *st.value), kCap);
-        r.mem_hits_type = st.mem_type;
-        o.result_json = list(r.mem_hits) +
-                        (r.mem_hits.size() >= kCap ? ",\"capped\":true" : "");
-      } else if (st.mem_op == "refine") {
-        if (r.mem_hits.empty() || r.mem_hits_type != st.mem_type) {
-          return Fail("mem refine: no " + st.mem_type + " find to refine");
-        }
-        const uint32_t word = MemWord(st.mem_type, *st.value);
-        std::vector<uint32_t> kept;
-        for (uint32_t a : r.mem_hits) {
-          uint32_t raw;
-          if (native_scene::GuestTryCopy(&raw, base + a, 4) && raw == word) {
-            kept.push_back(a);
-          }
-        }
-        r.mem_hits = std::move(kept);
-        o.result_json = list(r.mem_hits);
-      } else {
-        uint32_t raw = 0;
-        if (st.mem_op == "write") {
-          const uint32_t word = MemWord(st.mem_type, *st.value);
-          uint32_t old = 0;
-          if (!native_scene::GuestTryCopy(&old, base + st.addr, 4)) {
-            return Fail("mem write: address not mapped");
-          }
-          std::memcpy(base + st.addr, &word, 4);
-          Event(r, "mem_write", "\"addr\":\"" + std::to_string(st.addr) + "\",\"old\":" +
-                                    MemValueJson(st.mem_type, old) + ",\"new\":" +
-                                    MemValueJson(st.mem_type, word));
-        }
-        if (!native_scene::GuestTryCopy(&raw, base + st.addr, 4)) {
-          return Fail("mem read: address not mapped");
-        }
-        o.result_json = "\"value\":" + MemValueJson(st.mem_type, raw);
+      mem::Request req;
+      req.op = st.mem_op;
+      req.type = st.mem_type;
+      req.cmp = st.mem_cmp;
+      req.value = st.value;
+      req.addr = st.addr;
+      if (st.mem_hi) {
+        req.lo = st.mem_lo;
+        req.hi = st.mem_hi;
       }
+      std::string json, err;
+      if (!mem::Run(base, req, &json, &err)) {
+        return Fail("mem " + st.mem_op + ": " + err);
+      }
+      if (st.mem_op == "write") {
+        char a[16];
+        std::snprintf(a, sizeof(a), "%08X", st.addr);
+        Event(r, "mem_write", std::string("\"addr\":\"") + a + "\"," + json);
+      }
+      Outcome o;
+      o.result_json = json;
       return o;
     }
 

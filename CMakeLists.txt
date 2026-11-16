@@ -336,6 +336,7 @@ set(SKATE3_COMMON_SOURCES
     src/harness/harness_crash.cpp
     src/harness/harness_game.cpp
     src/harness/harness_overlay.cpp
+    src/harness/harness_mem.cpp
     src/harness/harness_png.cpp
     src/harness/harness_re.cpp
     src/harness/harness_reels.cpp

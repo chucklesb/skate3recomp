@@ -1,5 +1,7 @@
 #include "harness/harness_script.h"
 
+#include "harness/harness_mem.h"
+
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -181,7 +183,26 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
     return false;
   }
   s.mem_op = t["op"].value_or(std::string());
+  s.native_snapshot = t["native"].value_or(false);
   s.mem_type = t["type"].value_or(std::string("u32"));
+  s.mem_cmp = t["cmp"].value_or(std::string());
+  if (const toml::array* rg = t["range"].as_array()) {
+    auto hex = [](const toml::node& n, uint64_t* out) {
+      auto v = n.value<std::string>();
+      if (!v) return false;
+      try {
+        *out = std::stoull(*v, nullptr, 16);
+      } catch (const std::exception&) {
+        return false;
+      }
+      return true;
+    };
+    if (rg->size() != 2 || !hex((*rg)[0], &s.mem_lo) || !hex((*rg)[1], &s.mem_hi) ||
+        s.mem_hi <= s.mem_lo || s.mem_hi > 0x100000000ull) {
+      *error = "range must be [\"0xLO\", \"0xHI\"] (hex strings, lo < hi <= 0x100000000)";
+      return false;
+    }
+  }
   s.value = Number(t, "value");
   if (auto a = t["addr"].value<std::string>()) {
     try {
@@ -277,12 +298,16 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
         *error = "mem needs op = \"find\", \"refine\", \"read\" or \"write\"";
         return false;
       }
-      if (s.mem_type != "u32" && s.mem_type != "f32") {
-        *error = "mem type must be \"u32\" or \"f32\"";
+      if (!mem::ValidType(s.mem_type)) {
+        *error = "mem type must be u8, u16, u32, f32 or f64";
         return false;
       }
-      if ((s.mem_op == "find" || s.mem_op == "refine" || s.mem_op == "write") && !s.value) {
-        *error = "mem " + s.mem_op + " needs value = N";
+      if (!mem::ValidCmp(s.mem_cmp)) {
+        *error = "mem cmp must be changed, unchanged, increased or decreased";
+        return false;
+      }
+      if (s.mem_op == "write" && !s.value) {
+        *error = "mem write needs value = N";
         return false;
       }
       if ((s.mem_op == "read" || s.mem_op == "write") && !s.addr) {

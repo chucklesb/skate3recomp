@@ -45,6 +45,29 @@ implementation and then deleted.
 4. **Delete the guess** it makes unnecessary
    ([workarounds.md](workarounds.md)); no permanent fallback.
 
+## Toolkit
+
+Use these before writing a new helper; extend them instead of duplicating.
+The usual order: observe live, snapshot, read the code, name it, verify.
+
+| Step | Tool | What it does |
+|---|---|---|
+| Observe live | harness `mem` verb ([scenario-harness.md](../scenario-harness.md)) | Find a value in guest memory (`find`, then `refine` as it changes in game, including unknown values with `cmp`), read it, write it. Live: `rs.sh send mem op=find value=263750` |
+| | `--skate3_harness_re_dump` / `re_poke` cvars (`src/harness/harness_game.cpp`) | One-shot reads (with pointer following) and writes from the command line, on the guest's main thread |
+| | `--skate3_harness_re_probe`, `re_trace` (`src/harness/harness_re.cpp`) | Log the script bindings the game calls and every new message type with its sender; trace the hooks there |
+| Snapshot | harness `snapshot` verb | Whole guest memory to `snapshots/<tag>.gsnap`, on Windows or the Odin 2 |
+| | `tools/re/gsnap.py` | Search a snapshot (`find-u32`, `find-f32`), diff two, read, and name objects by their RTTI class (`classof`, `owner`, `refs`) |
+| | `tools/re/registry.py`, `messages.py` | The game's object registry (names by hash) and the message id → `cMsg` class table, from a snapshot |
+| Read the code | `tools/re/xrefs.py` | From `generated/`: callers, callees, functions that build an address (`refs`), disassembly (`dis`) |
+| | `tools/re/decomp.py ADDR` | Ghidra's decompiled C (one-time project: `tools/re/ghidra/setup.py SNAP.gsnap`; output cached in `out/re/decomp/`, never committed) |
+| Name it | [symbols.toml](symbols.toml), `tools/harness/re_symbols.py` | The map; `lookup`, `coverage`, `check`. `run_scenario.py symbolize` and crash summaries print map names next to `sub_` addresses |
+| Verify | scenarios, char_sync, the census | A probe or scenario that shows the role; `confidence = "confirmed"` only then |
+
+**Reference build:** a Skate 2 debug build with a full PDB (Xbox 360, Jan 2009)
+is the source for bulk names and types (roadmap RE-2). It stays outside the
+repo; set its folder in `SKATE3_RE_REF_DIR`. There are no public Skate 3
+symbols.
+
 ## How a replacement works (ReXGlue)
 
 Every recompiled game function is a C++ function `sub_XXXXXXXX(ctx, base)`

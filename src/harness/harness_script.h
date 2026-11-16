@@ -40,7 +40,8 @@ enum class Verb {
   kScreenshot,  // tag="x" count=1 every_frames=1
   kState,       // tag="x" (one line now) | every_frames=N (trace interval)
   kMark,        // text="..."
-  kSnapshot,    // full guest-memory snapshot via the diagnostics trigger file
+  kSnapshot,    // tag="x": full guest-memory snapshot, snapshots/<tag>.gsnap (any platform);
+                // native=true: the native renderer's capture via its trigger file (Windows)
   kPause,       // hold the game at the next frame boundary
   kStep,        // frames=N while paused
   kResume,
@@ -53,8 +54,9 @@ enum class Verb {
                 // settle=true (false: return on arrival, e.g. a floorless locator)
   kRenderer,    // renderer="native"|"emulated" frames=30: the F5 switch, then settle
   kVideo,       // frames=N tag="x": every rendered frame as video/<tag>/f<n>.png
-  kMem,         // op="find"|"refine"|"read"|"write" type="u32"|"f32" value=N addr="0x..."
-                // (live debugging: find a game value in guest memory and change it)
+  kMem,         // op="find"|"refine"|"read"|"write" type="u8|u16|u32|f32|f64" value=N
+                // cmp="changed|unchanged|increased|decreased" addr="0x..." range=["lo","hi"]
+                // (live RE: find a game value in guest memory and change it; harness_mem.h)
   kPlayReel,    // clip=N (a saved skate.Reel replay, 1-based as listed in My Replays):
                 // plays it start to end at 1x with no UI, then returns to free skate;
                 // from="start"|"marker" stills=[s...] settle_frames=20 every_frames=N tag=x
@@ -153,7 +155,12 @@ struct Step {
 
   // mem
   std::string mem_op;           // find | refine | read | write
-  std::string mem_type = "u32"; // u32 | f32 (big-endian, as the guest stores them)
+  std::string mem_type = "u32"; // u8 | u16 | u32 | f32 | f64 (big-endian, as the guest)
+  std::string mem_cmp;          // refine: changed | unchanged | increased | decreased
+  uint64_t mem_lo = 0, mem_hi = 0;  // range (hi = 0: the whole space)
+
+  // snapshot
+  bool native_snapshot = false;  // native = true: the native renderer's capture (Windows)
   std::optional<double> value;
   uint32_t addr = 0;
 };

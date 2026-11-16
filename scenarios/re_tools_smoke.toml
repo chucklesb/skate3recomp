@@ -1,0 +1,41 @@
+# Smoke test for the RE tools (docs/re/README.md "Toolkit"): a whole-memory
+# snapshot, a known-value find (the image's first word, 0x4D5A9000 "MZ.." at
+# 0x82000000, also seen at its 0x92000000 mirror), and an unknown-value
+# search narrowed by cmp over a small range.
+# Check: result.json passes; tools/re/gsnap.py regions <run>/snapshots/smoke.gsnap
+name = "re_tools_smoke"
+timeout_s = 600
+boot = "demo"
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "snapshot"
+tag = "smoke"
+
+[[step]]
+do = "mem"
+op = "find"
+value = 1297780736
+
+[[step]]
+do = "mem"
+op = "read"
+addr = "0x82000000"
+
+[[step]]
+do = "mem"
+op = "find"
+range = ["0x82000000", "0x82100000"]
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "mem"
+op = "refine"
+cmp = "unchanged"

@@ -1042,9 +1042,32 @@ def resolve(target: str, config: str, addrs: list[str]) -> tuple[dict[str, list[
                 line = fr.get("Line", 0)
                 # Release builds: a symbol name but no line table.
                 where = f"{path}:{line}" if path and line else (path or "")
-                out.append(f"{fr['FunctionName']}  {where}".rstrip())
+                out.append(f"{game_names(fr['FunctionName'])}  {where}".rstrip())
             resolved[spec] = out
     return resolved, errors
+
+
+_GAME_NAMES: dict[str, str] | None = None
+
+
+def game_names(text: str) -> str:
+    """Append the RE map's name to each game function in text
+    (sub_827A52C8 -> sub_827A52C8 [Sk8::UpdateBoneTransforms]); docs/re/symbols.toml."""
+    global _GAME_NAMES
+    if _GAME_NAMES is None:
+        _GAME_NAMES = {}
+        try:
+            import tomllib
+            with open(REPO / "docs/re/symbols.toml", "rb") as f:
+                for k, e in tomllib.load(f).items():
+                    if e.get("name"):
+                        _GAME_NAMES[k.upper()] = e["name"]
+        except (OSError, ValueError):
+            pass
+    return re.sub(r"\b(?:__imp__)?sub_([0-9A-Fa-f]{8})\b",
+                  lambda m: m.group(0) + (f" [{_GAME_NAMES[f'SUB_{m.group(1).upper()}']}]"
+                                          if f"SUB_{m.group(1).upper()}" in _GAME_NAMES else ""),
+                  text)
 
 
 def symbolize(target: str, config: str, addrs: list[str]) -> int:
