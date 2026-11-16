@@ -33,7 +33,7 @@ constexpr VerbEntry kVerbs[] = {
     {"results", Verb::kResults},
     {"crash", Verb::kCrash},       {"teleport", Verb::kTeleport},
     {"play_reel", Verb::kPlayReel},  {"renderer", Verb::kRenderer},
-    {"window", Verb::kWindow},
+    {"window", Verb::kWindow},     {"profile", Verb::kProfile},
 };
 
 // TOML scalar -> the string form rex::cvar::SetFlagByName takes.
@@ -197,6 +197,7 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
   s.career_notify = t["notify"].value_or(false);
   s.career_show = t["show"].value_or(false);
   s.window_show = t["show"].value_or(true);
+  s.profile_hz = Integer(t, "hz").value_or(1000);
   s.career_complete = t["complete"].value_or(std::string());
   s.career_level = t["level"].value_or(std::string("owned"));
   s.career_pay = t["pay"].value_or(false);
@@ -305,6 +306,16 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
     case Verb::kRenderer:
       if (s.renderer != "native" && s.renderer != "emulated") {
         *error = "renderer needs renderer = \"native\" or \"emulated\"";
+        return false;
+      }
+      break;
+    case Verb::kProfile:
+      if (s.mem_op != "start" && s.mem_op != "stop") {
+        *error = "profile needs op = \"start\" or \"stop\"";
+        return false;
+      }
+      if (s.profile_hz < 10 || s.profile_hz > 10000) {
+        *error = "profile hz must be 10..10000";
         return false;
       }
       break;

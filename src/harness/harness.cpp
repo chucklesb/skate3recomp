@@ -28,6 +28,7 @@
 #include <rex/graphics/native_guest_renderer.h>
 
 #include "skate3_native_scene.h"
+#include "harness/harness_profile.h"
 #include <rex/kernel/guest_presence.h>
 #include <rex/logging.h>
 #include <rex/logging/api.h>
@@ -353,6 +354,8 @@ struct Run {
   fs::path video_dir;
   std::ofstream video_meta;
   uint64_t video_frames = 0;
+  std::string profile_json;    // the last profile stop ("profile":{...})
+  uint64_t profile_frame0 = 0;  // frame at profile start
   uint64_t video_failed = 0;
   uint64_t video_waits = 0;  // frames that waited for a free encoder slot
   std::vector<std::thread> video_threads;
@@ -590,6 +593,9 @@ std::string ResultJson(Run& r, int code, std::string_view status, std::string_vi
     }
     os << "  \"frametime\": " << FrameSummaryJson(all) << ",\n";
     os << "  \"frametime_ingame\": " << FrameSummaryJson(ingame) << ",\n";
+    if (!r.profile_json.empty()) {
+      os << "  " << r.profile_json << ",\n";
+    }
     os << "  \"captures\": [";
     for (size_t i = 0; i < r.captures.size(); ++i) {
       os << (i ? ", " : "") << "\"" << JsonEscape(r.captures[i]) << "\"";
@@ -653,6 +659,9 @@ VideoResult StopVideo(Run& r);  // frame dump, below
     }
   }
   WriteFramesCsv(r);
+  if (profile::Active()) {  // a `profile op = "start"` with no stop: stop at the end
+    r.profile_json = profile::Stop(r.dir, r.state.frame - r.profile_frame0);
+  }
   const std::string result = ResultJson(r, code, status, reason);
   {
     std::ofstream out(r.dir / "result.json", std::ios::binary | std::ios::trunc);
@@ -1790,6 +1799,28 @@ Outcome Execute(Run& r, const Step& st) {
       return o;
     }
 
+    case Verb::kProfile: {
+      // Guest CPU profiler (harness_profile.h): op = "start" (hz, default
+      // 1000) or "stop" (writes profile.txt; tools/harness/profile_report.py).
+      if (st.mem_op == "start") {
+        std::string err;
+        if (!profile::Start(static_cast<int>(st.profile_hz), &err)) {
+          return Fail("profile: " + err);
+        }
+        r.profile_frame0 = r.state.frame;
+        Event(r, "profile_start", "\"hz\":" + std::to_string(st.profile_hz));
+        return {};
+      }
+      r.profile_json = profile::Stop(r.dir, r.state.frame - r.profile_frame0);
+      if (r.profile_json.empty()) {
+        return Fail("profile: not running");
+      }
+      Event(r, "profile_stop", r.profile_json);
+      Outcome o;
+      o.result_json = r.profile_json;
+      return o;
+    }
+
     case Verb::kWindow: {
       // Headless runs start with window_hidden = true (run_scenario.py
       // --headless); show the window when a step needs the user, hide it after.
@@ -2516,6 +2547,7 @@ void OnFrame(uint8_t* base) {
     return;
   }
   g_base.store(base, std::memory_order_relaxed);
+  profile::NoteThread("render");  // the guest swap's thread
   const auto now = Clock::now();
 
   // Sample state outside the run lock (guest reads can be slow).

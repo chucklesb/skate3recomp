@@ -1,0 +1,53 @@
+# RE-7: guest CPU profile at a busy spot (Downtown's Tresoutta Plaza, the
+# crowd), standing and then pushing off. Default renderer settings.
+#
+# Check: tools/harness/profile_report.py <run> [--thread main]
+#        (base vs new: profile_report.py <base_run> <new_run>)
+name = "profile_plaza"
+timeout_s = 900
+boot = "demo"
+start_spot = "Z_DT_Tresoutta"
+
+[cvars]
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 150
+
+[[step]]
+do = "profile"
+op = "start"
+hz = 1000
+
+[[step]]
+do = "wait"
+frames = 450
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 8
+
+[[step]]
+do = "wait"
+frames = 300
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 8
+
+[[step]]
+do = "wait"
+frames = 300
+
+[[step]]
+do = "profile"
+op = "stop"

@@ -31,6 +31,8 @@ REXCVAR_DEFINE_STRING(skate3_harness_re_poke, "", "Skate 3",
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
 #include "native/skate3_native_guest_read.h"
+#include "harness/harness.h"
+#include "harness/harness_profile.h"
 
 // The guest functions called below (recompiled; TU3 image addresses).
 REX_EXTERN(sub_82910CE8);  // registry find(map*, u32 key) -> entry* (node + 20) or 0
@@ -1181,6 +1183,9 @@ bool ReelCurtain() {
 }
 
 void OnGuestFrame(PPCContext& ctx, uint8_t* base) {  // main (simulation) thread
+  if (skate3::harness::Enabled()) {
+    skate3::harness::profile::NoteThread("main");
+  }
   ReelTick(ctx, base);
   DoRePoke(base);
   if (const std::string d = REXCVAR_GET(skate3_harness_re_dump); !d.empty()) {
