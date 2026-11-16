@@ -131,7 +131,8 @@ classes, and `attrib.py lookup` resolves a constant. For the career:
 - `0x4429D52046FC5D6D` is `progression_action/milestone_actions`.
 - `GetNextBoardSaleMilestone`'s gate (`sub_827CD728`) tests
   `challenge_global_data/photo_univ_05`.
-- Challenges are `challenge_local_data` records; every one the test careers
+- Challenges are `challenge_global_data` / `challenge_local_data` records
+  (the table keeps one class per name); every one the test careers
   track has a name. Other progression classes: `progression_state`,
   `progression_handler`, `progression_rewards`, `progression_stategraph`,
   `progression_group`.

@@ -8,7 +8,7 @@
 # indicator bottom right; it watches SKATER.P), so the change is kept.
 # Without pay, only the level is recorded (sub_82C1D878), nothing is shown
 # and nothing is saved.
-# Challenge names: challenge_local_data records in docs/re/attrib_names.tsv
+# Challenge names: docs/re/attrib_names.tsv (challenge_global_data / _local_data)
 # (tools/re/attrib.py lookup film_; "0x<hash>" works too). A level is
 # only ever upgraded; an already completed challenge pays nothing again.
 name = "career_complete_challenge"
