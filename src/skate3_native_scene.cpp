@@ -44,6 +44,7 @@
 #include "native/skate3_native_lw.h"
 #include "native/skate3_native_palette.h"
 #include "native/skate3_native_skeleton.h"
+#include "native/skate3_native_pose.h"
 // Offline-compiled SPIR-V for the native shaders (compiled from the HLSL
 // sources with DXC): the Vulkan RHI backend consumes these blobs; the D3D12
 // backend runtime-compiles the embedded HLSL as before.
@@ -12256,6 +12257,7 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
     const auto pal_tail_t0 = PerfClock::now();
     skate3::native_palette::OnFrameBuilt();
     skate3::native_skeleton::OnFrameBuilt();
+    skate3::native_pose::OnFrameBuilt();
     g_frame_pal_tail_ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                  PerfClock::now() - pal_tail_t0)
                                  .count());

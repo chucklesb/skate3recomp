@@ -8,6 +8,7 @@
 #include "native/skate3_native_guest_read.h"
 #include "native/skate3_native_lw.h"
 #include "native/skate3_native_palette.h"
+#include "native/skate3_native_pose.h"
 #include "native/skate3_native_skeleton.h"
 #include "skate3_native_scene.h"
 
@@ -525,7 +526,13 @@ extern "C" REX_FUNC(sub_827E5B30) {
     skate3::native_skeleton::OnPack(base, skate3::native_palette::CurrentPackOwner(), instance,
                                     ctx.r4.u32);
   }
-  __imp__sub_827E5B30(ctx, base);
+  // RE-7: the native version (skate3_native_pose_replace), or the
+  // recompiled one with a shadow compare around it.
+  if (!skate3::native_pose::PackReplace(ctx, base)) {
+    skate3::native_pose::PackBefore(ctx, base);
+    __imp__sub_827E5B30(ctx, base);
+    skate3::native_pose::PackAfter(base);
+  }
   skate3::harness::re_skeleton::OnPackExit(base, instance);
   if (skate3::native_render::Enabled()) {
     skate3::native_palette::OnPackPalette(base, instance);
@@ -541,7 +548,11 @@ extern "C" REX_FUNC(sub_827A52C8) {
   const uint32_t count = ctx.r4.u32;
   const uint32_t src_palette = ctx.r5.u32;
   const uint32_t remaps = ctx.r6.u32;
-  __imp__sub_827A52C8(ctx, base);
+  if (!skate3::native_pose::UbtReplace(ctx, base)) {  // RE-7, as for the pack
+    skate3::native_pose::UbtBefore(ctx, base);
+    __imp__sub_827A52C8(ctx, base);
+    skate3::native_pose::UbtAfter(base);
+  }
   if (skate3::native_render::Enabled()) {
     skate3::native_skeleton::OnBoneTransforms(base, skate3::native_palette::CurrentPackOwner(),
                                               parts, count, src_palette, remaps);
@@ -1158,7 +1169,11 @@ extern "C" REX_FUNC(sub_82B79FC0) {
 // entity; post-call m_matrices holds the packed rows.
 extern "C" REX_FUNC(sub_827C1D38) {
   const uint32_t entity = ctx.r3.u32;
-  __imp__sub_827C1D38(ctx, base);
+  if (!skate3::native_pose::LwReplace(ctx, base)) {  // RE-7, as for the pack above
+    skate3::native_pose::LwBefore(ctx, base);
+    __imp__sub_827C1D38(ctx, base);
+    skate3::native_pose::LwAfter(base);
+  }
   if (skate3::native_render::Enabled()) {
     skate3::native_palette::OnLwPack(base, entity);
     skate3::native_skeleton::OnLwPack(base, entity);
