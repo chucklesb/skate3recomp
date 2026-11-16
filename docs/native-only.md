@@ -108,11 +108,12 @@ fallback until phase 5. The sizes are relative.
   - item 3: every row is measured. The tour reaches most; C and D came from
     a live photo-challenge session, and A's career prompt from a live session
     with the board sales set by the harness (`career` step, RE-4);
+  - item 2: the branches exist (2026-11-15). `native-only` in this repo
+    tracks the SDK fork's `native-only` (`.gitmodules` on that branch);
   - items 4 and 5 on Windows (audit and reference shots), the Odin 2 tour
     run with fps per screen, and the photo-challenge reference shots (all
     below).
-- **Still to do:**
-  - item 2, the branches.
+- Phase 0 is complete.
 
 1. **A known-good build for testers:** publish the current state as a testing
    pre-release before phase 1 lands, so there is something to compare

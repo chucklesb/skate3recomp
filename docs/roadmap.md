@@ -11,7 +11,8 @@ Update it with every commit that finishes or starts an item. Details live in
 the linked pages; the backlog is [open-work.md](open-work.md).
 
 **Now** (finishing milestone 1, phase 0):
-1. [ ] **Branches:** `native-only` here and in the SDK fork.
+1. [x] **Branches:** `native-only` here and in the SDK fork (`native-only`, from
+   `linux-aarch64-cross` e010699 and SDK `vulkan-debug-labels` 4ef36cf).
 
 **Next:**
 2. [ ] **Native-only phase 1** (offscreen 2D compose), then phases 2-5.
