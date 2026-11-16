@@ -181,6 +181,11 @@ std::atomic<uint64_t> c_lw_bank[4];
 // servable, no store entry / tick / part, not a mapped LW entity.
 std::atomic<uint64_t> c_lw_tail_served{0}, c_lw_tail_unservable{0}, c_lw_tail_nobuild{0},
     c_lw_tail_notlw{0};
+// Served items by the dbg_src they arrived with ([0] skaters, [1] LW):
+// 1 bank capture, 2 post-draw fix-up, 3 / 13 rescue (re-anchored), 4 ropa
+// rescue, 6 incoherent-palette heal, 9 LW gap fill; the last slot = other.
+constexpr int kSrcSlots = 16;
+std::atomic<uint64_t> c_src[2][kSrcSlots];
 std::atomic<uint64_t> g_log_div{0}, g_log_jump{0};
 
 struct Worst {
@@ -371,6 +376,10 @@ Built BuildItem(const DrawItem& item, size_t i, Shadow* s, bool count) {
 }
 
 void Serve(DrawItem& item, const Shadow& s) {
+  // Which path produced the item the store now poses (the skel-src: line):
+  // the per-piece guesses it still depends on.
+  c_src[s.lw ? 1 : 0][item.dbg_src < kSrcSlots ? item.dbg_src : kSrcSlots - 1].fetch_add(
+      1, std::memory_order_relaxed);
   std::memcpy(item.bones.data(), g_rows.data() + s.ofs_new, size_t(s.n) * 12 * sizeof(float));
   // Rows past the game's own count are never indexed by the mesh.
   std::fill(item.bones.begin() + size_t(s.n) * 12, item.bones.end(), 0.0f);
@@ -832,6 +841,19 @@ void OnFrameBuilt() {
       X(c_part_bad), X(c_pose_unread), X(c_jump_root), X(c_jump_gap), X(c_jump_parts),
       worst.trans < 0 ? "-" : worst.vs, worst.entity, worst.k, worst.mesh,
       std::max(worst.trans, 0.0f), worst.rot);
+  {
+    // Which path delivered each served item (see c_src).
+    const auto srcs = [&](int w) {
+      std::string out;
+      for (int k = 0; k < kSrcSlots; ++k) {
+        const uint64_t v = X(c_src[w][k]);
+        if (v != 0) out += fmt::format(" {}={}", k == kSrcSlots - 1 ? "other" : std::to_string(k), v);
+      }
+      return out;
+    };
+    const std::string sk = srcs(0), lw = srcs(1);
+    REXLOG_INFO("skel-src: frame {} skater[{} ] lw[{} ]", g_frames, sk, lw);
+  }
   if (LwMode() != 0) {
     REXLOG_INFO(
         "skel-lw: mode {} frame {} items {} built {} served {} miss {} bank[new={} old={} "
