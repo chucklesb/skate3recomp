@@ -9775,8 +9775,11 @@ void CharSyncLog(const FrameScene& scene) {
   const uint64_t frame = g_guest_frame;
   std::vector<const DrawItem*> pieces;
   for (const DrawItem& it : scene.items) {
+    // Pedestrians at opacity 0 (fading in or out) draw nothing visible;
+    // their gap-filled pieces read as stale and swamped the plaza counts.
+    const bool invisible = it.lw_alpha >= 0.0f && it.lw_alpha < 0.01f;
     if (it.skinned && !it.ropa && it.ctx != 0 && it.char_family >= 1 &&
-        it.char_family <= 5 && !it.caster_bank && !it.draws.empty()) {
+        it.char_family <= 5 && !it.caster_bank && !it.draws.empty() && !invisible) {
       pieces.push_back(&it);
     }
   }
