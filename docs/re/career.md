@@ -10,7 +10,9 @@ known, and how the harness sets it. Functions: [symbols.toml](symbols.toml)
   `S+0x04`, `+0x08`, `+0x0C` and `+0x10`. The total the game shows is their
   sum: the front end's `GetTotalBoardSales` (`sub_825B1630`) adds them.
   Searching memory for the total finds nothing.
-- **Where `S` is:** `S = *(*(*0x830CFD94 + 0xE0) + 0x48)`. It was at
+- **Where `S` is:** `S = *(*(*0x830CFD94 + 0xE0) + 0x48)`. The career
+  object `K = *(*0x830CFD94 + 0xE0)` also holds the challenge tracker at
+  `K+0x44` and the last challenge's rewards at `K+0x60`. It was at
   `0x4020D180` in every session so far (Odin 2, 2026-11-15).
 - **The counters** come from the challenge payout, `sub_827CDDD8(career,
   challenge, level, online)`. Completing a challenge pays its Owned reward
@@ -57,7 +59,15 @@ challenge's 64-bit name hash at `+8`:
 `sub_82C1D988(C, hash)` returns a challenge's completion level: 1 Owned, 2
 Killed, 0 neither (the script enum `EChallengeCompletionLevel` is
 {Owned, Killed}; `eHighScoreTier` adds PersonalBest).
-`GetNumCompletedChallenges` is Owned + Killed. The `career` step reports
+`GetNumCompletedChallenges` is Owned + Killed.
+
+**Completing a challenge:** the Lua `CompleteChallenge` (`sub_8283FD00`)
+ends up in a career method, `sub_827CDB10` (`this` = `K+4`; vtable slot at
+`0x823117EC`), with (challenge, level). It runs the payout
+(`sub_827CDDD8`), then records the level with `sub_82C1D878(C, hash,
+killed, online)`, which moves the challenge onto the Owned or Killed list.
+Calling it from the harness needs a challenge object, found by name (not
+done yet). The `career` step reports
 these counts (`challenges`, `locked_actions`).
 
 ## The save

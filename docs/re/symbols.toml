@@ -334,6 +334,19 @@ role = "sub_82C1D988(challenge tracker, hash(name)): 1 Owned, 2 Killed, 0 neithe
 confidence = "likely"
 evidence = "binding table 0x823115FC; decompile"
 
+[sub_827CDB10]
+name = "Career complete challenge"
+signature = "(career + 4, challenge, level /* 1 Owned, 2 Killed */)"
+role = "Runs the payout (sub_827CDDD8), then records the completion level (sub_82C1D878) on the challenge tracker (career+0x44)."
+confidence = "likely"
+evidence = "decompile; vtable slot 0x823117EC; reached from Lua CompleteChallenge (sub_8283FD00)"
+
+[sub_82C1D878]
+name = "Challenge set completion level"
+signature = "(challenge tracker, u64 name_hash, bool killed, bool online)"
+confidence = "guess"
+evidence = "decompile of its caller sub_827CDB10"
+
 [sub_827D1210]
 name = "Lua AwardCash"
 signature = "(lua_State* L) : stats+0x14 += n; stats+0x18 += n"
