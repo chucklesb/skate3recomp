@@ -43,6 +43,7 @@
 #include "native/skate3_native_guest_read.h"
 #include "native/skate3_native_lw.h"
 #include "native/skate3_native_palette.h"
+#include "native/skate3_native_skeleton.h"
 // Offline-compiled SPIR-V for the native shaders (compiled from the HLSL
 // sources with DXC): the Vulkan RHI backend consumes these blobs; the D3D12
 // backend runtime-compiles the embedded HLSL as before.
@@ -10387,7 +10388,9 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
     // FIRST so the sanity gate below validates the authoritative rows and
     // the rescue caches learn them; unmapped items keep the bank pipeline.
     const auto pal_t0 = PerfClock::now();
+    skate3::native_skeleton::ShadowBeforeServe(base, scene);  // RE-5 shadow (off by default)
     g_pal_served_frame = skate3::native_palette::ServeAuthoritativePalettes(base, scene);
+    skate3::native_skeleton::ShadowAfterServe(scene);
     StampServedFrames(scene, 0);
     g_frame_bpal_ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                    PerfClock::now() - pal_t0)
@@ -12143,6 +12146,7 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
   {
     const auto pal_tail_t0 = PerfClock::now();
     skate3::native_palette::OnFrameBuilt();
+    skate3::native_skeleton::OnFrameBuilt();
     g_frame_pal_tail_ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                  PerfClock::now() - pal_tail_t0)
                                  .count());

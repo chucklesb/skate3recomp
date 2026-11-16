@@ -52,6 +52,8 @@ void OnLwPack(uint8_t* base, uint32_t entity);
 // returned previous value after the original call. Snapshots taken inside
 // the bracket carry the owning entity for identity-exact serving.
 uint32_t ExchangePackOwner(uint32_t entity);
+// The current thread's pack owner (0 = outside every bracket).
+uint32_t CurrentPackOwner();
 
 // Called from BuildFrameScene while the frame's items are finalized:
 // replaces each mapped skinned character item's captured bank palette with

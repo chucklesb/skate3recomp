@@ -1,0 +1,37 @@
+# RE-5 step 2: the skeleton store in shadow mode. Free skate for a while,
+# then the forearm reel (KI-117 class) with char_sync on. The store rebuilds
+# every skater piece's palette from one pose per tick and compares it with
+# the bank capture (the game's own upload) and with today's palette serve;
+# nothing it builds is drawn.
+#
+# Check:  tools/harness/skel_shadow_report.py <run> [--reel] [--max-div N]
+# Expect: every built piece matching the bank or the serve exactly
+# ("new" = the newest tick, "old" = the tick before), no "div", no misses
+# for skater entities.
+name = "skel_shadow"
+timeout_s = 1200
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+skate3_native_render_scene_char_sync = true
+skate3_native_render_scene_skeleton = "shadow"
+skate3_native_render_scene_skeleton_log_interval = 30
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 300
+
+[[step]]
+do = "play_reel"
+reel = "a9bbe6156adca014"
+from = "marker"
+every_frames = 3
+tag = "rf"

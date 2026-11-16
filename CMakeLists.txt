@@ -354,6 +354,7 @@ set(SKATE3_COMMON_SOURCES
     src/native/skate3_native_guest_read.cpp
     src/native/skate3_native_lw.cpp
     src/native/skate3_native_palette.cpp
+    src/native/skate3_native_skeleton.cpp
     src/skate3_native_debug_dialog.cpp
     src/skate3_native_render.cpp
     src/skate3_native_scene.cpp

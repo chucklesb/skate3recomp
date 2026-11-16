@@ -8,6 +8,7 @@
 #include "native/skate3_native_guest_read.h"
 #include "native/skate3_native_lw.h"
 #include "native/skate3_native_palette.h"
+#include "native/skate3_native_skeleton.h"
 #include "skate3_native_scene.h"
 
 #include "generated/skate3_init.h"
@@ -496,6 +497,10 @@ extern "C" REX_FUNC(sub_82C9A618) {
 extern "C" REX_FUNC(sub_827E5B30) {
   const uint32_t instance = ctx.r3.u32;
   skate3::harness::re_skeleton::OnPackEnter(base, instance, ctx.r4.u32);  // RE-5 probe (off by default)
+  if (skate3::native_render::Enabled()) {
+    skate3::native_skeleton::OnPack(base, skate3::native_palette::CurrentPackOwner(), instance,
+                                    ctx.r4.u32);
+  }
   __imp__sub_827E5B30(ctx, base);
   skate3::harness::re_skeleton::OnPackExit(base, instance);
   if (skate3::native_render::Enabled()) {
@@ -515,6 +520,8 @@ extern "C" REX_FUNC(sub_827A52C8) {
   __imp__sub_827A52C8(ctx, base);
   if (skate3::native_render::Enabled()) {
     skate3::native_palette::OnBoneTransforms(base, parts, count);
+    skate3::native_skeleton::OnBoneTransforms(base, skate3::native_palette::CurrentPackOwner(),
+                                              parts, count, src_palette, remaps);
   }
   skate3::harness::re_skeleton::OnBoneTransforms(base, parts, count, src_palette,
                                                   remaps);  // RE-5 probe (off by default)

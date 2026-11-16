@@ -936,6 +936,8 @@ uint32_t ExchangePackOwner(uint32_t entity) {
   return prev;
 }
 
+uint32_t CurrentPackOwner() { return tl_pack_owner; }
+
 void OnPackPalette(uint8_t* base, uint32_t instance) {
   if (instance == 0 || !CaptureActive()) {
     return;
