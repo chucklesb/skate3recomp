@@ -756,7 +756,7 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_caster_refresh_all, true, "Skate 
                     "bank, the NPC blink). false = legacy oldest-only, non-ropa "
                     "refresh.")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
-REXCVAR_DEFINE_STRING(skate3_native_render_scene_char_rows_entity, "off", "Skate 3",
+REXCVAR_DEFINE_STRING(skate3_native_render_scene_char_rows_entity, "on", "Skate 3",
                       "RE-7: character lighting rows from the entity. off | shadow (rebuild "
                       "each validated capture from the previous one with the entity's rows read "
                       "live, and compare; char-entity: lines) | on (pieces whose capture failed "

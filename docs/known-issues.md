@@ -20,6 +20,7 @@ happen. The technical details follow for whoever works on it.
 | [KI-124](#ki-124-shadows-on-the-sun-facing-side-of-the-skaters-sleeves) | A shadow flashes across the skater's shirt for one frame (Odin 2, 1x reel playback) | Fixed (Odin 2) |
 | [KI-125](#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps) | For one frame after a replay jumps to a new time, the skater's hair and shirt are drawn detached from the body | Open |
 | [KI-126](#ki-126-the-skaters-hair-looks-transparent) | The skater's hair looks see-through: a blue veil with the trees behind showing through | Fixed (Odin 2) |
+| [KI-127](#ki-127-a-teleport-load-can-crash-at-uncapped-frame-rates) | The game can crash while a district loads after a teleport, at uncapped frame rates (~300 fps) | Open |
 
 ---
 
@@ -849,3 +850,31 @@ transparency; see the KI-124 note on harsh character shading.
   the Odin 2's settings).
 
 </details>
+
+## KI-127: A teleport load can crash at uncapped frame rates
+
+**What you see:** the game crashes (closes) a second or two into the
+load after a teleport into another district.
+
+**How to see it:** `scenarios/profile_plaza_uncapped.toml` on the Odin 2
+(the start-spot teleport to Tresoutta Plaza with `skate3_guest_fps_cap = 0`,
+~300 fps through the load): 3 crashes in 26 runs on 2026-11-16, with and
+without `skate3_native_fence_wait` (2 of 13 on, 1 of 13 off).
+
+**Status:** open, not investigated · **Severity:** low today (the 30 fps
+cap is the device default and no capped run has crashed this way) ·
+**Found:** 2026-11-16, Odin 2 harness runs (build `42f1d8e`).
+
+**What the crashes show:** two signatures, both on the main thread during
+the load:
+- an indirect call to an invalid guest function from `sub_826D7708` under
+  the game tick (`InvalidFunctionTrap`, guest read of `0x70190000`), runs
+  `20261116-141755` and `20261116-143856`;
+- a `memmove` fault under `sub_827A5D60` / `Sk8::PresentationEntity::AddLODModelInstances`
+  (Skate 2 lead), run `20261116-143505`.
+
+Both point at an object used while the district streams in, which faster
+frames make likelier: a race in the game's loading, or in our hooks on the
+presentation entities. Next: rerun capped vs uncapped to confirm the frame
+rate dependence, then the native renderer and its hooks off
+uncapped.

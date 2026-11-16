@@ -65,11 +65,32 @@ a blocking wait on the host (the fence is ours: the native renderer and the
 emulated GPU know when it signals) is the top battery target; the job
 system's idle spin is the second.
 
+## The fence wait (2026-11-16, `src/native/skate3_native_fence.cpp`)
+`BlockOnFence` loops on `sub_82B76080`, one poll: ~32 `db16cyc` spin hints,
+a read of the GPU's completed-fence word `*(device+10896)` against the value
+seen last poll (`state+8`; every caller's state is `{device, ?, seen,
+timestamps}`), and `DebugGpuDeadlock` after a long stall. The word is a GPU
+write-back in the physical mirror (e.g. `0xFFCA3000`; on Windows native
+reads must add the 0x1000 host offset, as `REX_LOAD_U32` does).
+
+`skate3_native_fence_wait = on`: the poll hook blocks on the SDK's GPU
+write-back signal (`rex::graphics::WaitGpuWriteback`, raised after every
+command-processor write to guest memory) while the word has not moved,
+2 ms timeout, then runs the original poll. `fence:` lines (`missed` =
+timeouts after which the word had moved: 0-3 per run, so the signal
+covers the fence writes).
+
+| Plaza uncapped | Render CPU ms/frame | fps | 1% low | p99 |
+|---|---|---|---|---|
+| Windows, off (3 runs) | 6.05 / 6.05 / 6.06 | 164.6-164.8 | 64-66 | 13.6-13.7 ms |
+| Windows, on (3 runs) | ~5.1 / 5.25 / 5.50 | 164.6-164.7 | 64-65 | 12.5-13.6 ms |
+| Odin 2, off | 2.05 / 2.06 | 286-291 | 59-60 | 13.8-14.1 ms |
+| Odin 2, on | 1.63 | 334 | 65 | 12.5 ms |
+
+At the 30 fps cap the guest almost never waits on a fence (1-3 polls per
+run): the saving is above 30 fps.
+
 ## Next
-- `D3D::CDevice::BlockOnFence` (`sub_82B755C0` / `sub_82B76080`): specify
-  the spin, replace it with a host wait on the fence (RE-7 framework; not
-  a pure-function replacement, so it needs its own check: no frame-time
-  regression, CPU per frame down).
 - The job system's idle spin (`RunSingleJob` self, `sub_82AE30F0`).
 - Identify `sub_82D1DE08` / `sub_82E89B80`.
 - Candidates by cost × specifiability: `DoFrustumCulling`, the

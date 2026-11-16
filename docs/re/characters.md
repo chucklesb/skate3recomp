@@ -171,10 +171,30 @@ Every other row the families use is the same for all entities in a frame
 (light direction, key colour, exposure, shadow biases) or a material
 constant. So the rows can be built without the buffer pairing: per-entity
 rows read from the entity at the draw, frame-global rows from any validated
-capture this frame, material rows per mesh. That is the next step (behind a
-cvar, shadowed against the bank first); the three `char_rows` caches
-(per mesh, per instance, per entity) become unnecessary for covered
-entities.
+capture this frame, material rows per mesh.
+
+**Built (2026-11-16):** `skate3_native_render_scene_char_rows_entity =
+off | shadow | on`. The bank → `char_rows` transform is one function
+(`CharRowsTransform`); each validated capture keeps its raw rows (c0..c39)
+per (mesh, ctx). A rebuild takes those rows, overwrites the entity rows
+with the entity's live fields (the map above; gameplay layout only, the
+editor `plus` layout is unverified) and the light row with this frame's
+(any validated capture of the family), and reruns the transform; the decal
+layers come from the cached piece. Shadow compares each validated capture
+with the rebuild from the previous one; on serves the rebuild to pieces
+whose capture failed this frame (before the per-instance cache).
+
+| Check | Windows | Odin 2 |
+|---|---|---|
+| Shadow, forearm reel | 9,781 / 9,783 exact (the 2: the first pieces of a seek frame) | - |
+| Shadow, plaza | 52,468 / 54,564 (96%) | 54,132 / 55,929 (96.8%) |
+| On, plaza: served / char_sync | - | 260 served, 0 frames out of sync |
+| On, forearm reel: char_sync | 0 (nothing to serve: every piece validated) | - |
+
+Every plaza difference is the pedestrians' fade opacity (`ch_misc.x`, bank
+c21), which is not in the verified map (`+528` matched it live only 39% of
+the time): the rebuild carries the previous frame's value, off by ~0.0001
+while a pedestrian fades.
 
 ## Structures (known offsets)
 

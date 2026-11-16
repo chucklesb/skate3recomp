@@ -14,7 +14,7 @@
 
 #include "generated/skate3_init.h"
 
-REXCVAR_DEFINE_STRING(skate3_native_fence_wait, "off", "Skate 3",
+REXCVAR_DEFINE_STRING(skate3_native_fence_wait, "on", "Skate 3",
                       "D3D fence waits (BlockOnFence's poll, sub_82B76080): off = the game's "
                       "spin loop; on = block until the emulated GPU's next memory write-back "
                       "when the fence word has not moved (2 ms timeout), then poll as the "
