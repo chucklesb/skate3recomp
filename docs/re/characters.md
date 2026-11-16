@@ -39,7 +39,9 @@ pedestrians, NPC skaters), and the redesign it points to. Functions:
     MeshContext 0, the one the renderer's draw items carry. Checked over a
     reel (run `20261115-231543_re_ubt_reel`): 135 samples, 7 skater entities
     (the player and the replay's skaters), 1,312 parts, every one part `k`
-    = instance `k`, including an entity switching LOD (8 and 10 parts).
+    = instance `k`, including an entity switching LOD (8 and 10 parts). The
+    Odin 2 agrees (`20261115-231919_re_skeleton_link`: 154 samples, 8
+    entities, 1,468 parts).
 - **Other characters** pack per instance with
   `cModelInstance::PackAndMultiplyMatricesForUpload` (`sub_827E5B30`).
   LOD pedestrians use a fused writer (`sub_827C1D38`) that concatenates
