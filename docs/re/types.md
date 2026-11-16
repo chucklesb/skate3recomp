@@ -40,10 +40,31 @@ TU3 0x50 (`confirmed`: the stride `skate3_native_lw.cpp` walks).
 
 | Offset | Field | Type | In TU3 |
 |---|---|---|---|
-| +0x00 | `m_pMesh` | `pegasus::tRModelData::tMeshData*` | likely |
+| +0x00 | `m_pMesh` | `pegasus::tRModelData::tMeshData*` | confirmed (RE-5: a UBT part's per-frame copy and the instance's persistent context point at the same mesh) |
 | +0x04 | `m_pEffectList` | `Sk8::ShaderSystem::cEffectList*` (pass count at +0x44) | confirmed |
 | +0x14 | `m_PassCount` | `unsigned` | not checked |
 | +0x30 | `m_islandDrawList` | `renderengine::DrawIndexedParameters*` | moved: the draw list is at +0x48 in TU3 |
+
+### `pegasus::tRModelData` and its mesh data
+
+What `Sk8::UpdateBoneTransforms` reads (TU3 disassembly, RE-5). The model
+matches Skate 2; the mesh data does not.
+
+| Structure | Offset | Field | In TU3 |
+|---|---|---|---|
+| `tRModelData` | +0x24 | `m_pMeshTable` (8-byte entries, mesh data pointer first) | confirmed |
+| | +0x32 | `m_iNumMeshes` | confirmed |
+| | +0x34 | `m_iNumBones` (UBT skips models above 80) | confirmed |
+| mesh data (`tRMeshData`) | +0x48 | the mesh's bone count (palette length) | confirmed; Skate 2 has `m_uiNumBoneMats` at +0x40 and `m_pBlendShapeTable` here |
+| | +0x4C | u16 list: mesh bone → model bone | confirmed; Skate 2 has `m_szBlendShapeNames` here |
+
+### `Sk8::Render::cModelInstance` as a UBT part
+
+| Offset | Field | In TU3 |
+|---|---|---|
+| +0x00 | `m_model` | confirmed (RE-5) |
+| +0x04 | `m_arrMeshContext` (one context per UBT part) | confirmed |
+| +0x14 | `m_matrices`: UBT writes whole 64-byte Matrix44s here | confirmed |
 
 ### `Sk8::SkaterPresEntity`
 

@@ -15,9 +15,9 @@
 [sub_827A52C8]
 name = "Sk8::UpdateBoneTransforms"
 signature = "(cModelInstance* parts /*r3, stride 0x28*/, uint count /*r4*/, Matrix44* srcPalette, uint** remaps, Matrix44& out)"
-role = "Writes each part's palette from the skater's full pose (srcPalette) through per-part bone remaps. The one moment all of the player's pieces are posed from one tick; the parts array is per-frame scratch."
-confidence = "likely"
-evidence = "hook in src/skate3_native_render.cpp (OnBoneTransforms); part snapshots served as UBT packs"
+role = "A gather: part p's palette[i] = srcPalette[remaps[p][mesh u16 (m+0x4C)[i]]] for each mesh m of p->m_model (64-byte Matrix44 copies); part k of a StartJobs call is the entity's LOD instance k."
+confidence = "confirmed"
+evidence = "disassembly (the gather; RE-5); probe --skate3_harness_re_ubt over a reel (part k = LOD instance k, run 20261115-231543_re_ubt_reel); hook in src/skate3_native_render.cpp"
 hooked = "src/skate3_native_render.cpp"
 
 [sub_827E5B30]

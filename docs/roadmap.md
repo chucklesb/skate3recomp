@@ -46,9 +46,12 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   `results` step walks them and waits for the save. The `.big` archives
   are readable (`tools/re/big.py`). All four counters are
   identified (`+0x10`: board sales the online service awarded).
-- RE-5 [ ] **The character skeleton** ([re/characters.md](re/characters.md)):
+- RE-5 [~] **The character skeleton** ([re/characters.md](re/characters.md)):
   one pose per character per tick; the likely fix for
   [KI-125](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps).
+  Done: UBT is a pure gather from one pose array (`srcPalette`), and UBT
+  part `k` is the entity's LOD instance `k` (the part ↔ draw link,
+  checked over a reel). Next: capture the pose there (shadow mode).
 - RE-6 [ ] **Who issues the emulated passes** native-only must replace
   (pitches 160 and 1200).
 - RE-7 [ ] **`src/re/` shadow-mode replacements.**

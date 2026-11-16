@@ -2,6 +2,7 @@
 
 #include "harness/harness.h"
 #include "harness/harness_game.h"
+#include "harness/harness_re_skeleton.h"
 #include "native/skate3_native_diag.h"
 #include "native/skate3_native_entity.h"
 #include "native/skate3_native_guest_read.h"
@@ -511,6 +512,7 @@ extern "C" REX_FUNC(sub_827A52C8) {
   if (skate3::native_render::Enabled()) {
     skate3::native_palette::OnBoneTransforms(base, parts, count);
   }
+  skate3::harness::re_skeleton::OnBoneTransforms(base, parts, count);  // RE-5 probe (off by default)
 }
 
 // Sk8::cLivingWorldPresEntity::Update: post-call, this+528 holds the
@@ -529,7 +531,9 @@ extern "C" REX_FUNC(sub_827C1188) {
 // UpdateBoneTransforms calls inside stamp their snapshots with this entity.
 extern "C" REX_FUNC(sub_827825B0) {
   const uint32_t prev_owner = skate3::native_palette::ExchangePackOwner(ctx.r3.u32);
+  skate3::harness::re_skeleton::SetOwner(ctx.r3.u32);
   __imp__sub_827825B0(ctx, base);
+  skate3::harness::re_skeleton::SetOwner(0);
   skate3::native_palette::ExchangePackOwner(prev_owner);
 }
 
