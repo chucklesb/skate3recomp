@@ -79,8 +79,12 @@ over the desktop. The game renders as usual, and screenshots, `video`
 dumps, frame times and RenderDoc captures work the same. `--window` shows
 the window for the whole run, and a `window show = true` step shows it
 partway (for a step that needs the user; `show = false` hides it again).
-`live` keeps the window. The Odin 2 has no headless mode: its screen is
-shown or hidden with scrcpy. Every run's `result.json` names the `version`,
+`live` keeps the window. The Odin 2 has no headless mode: show its screen
+on this PC with `tools/harness/odin2_screen.ps1 show` (PowerShell; `hide`
+closes it). That scrcpy window forwards a controller plugged into the PC
+as a HID gamepad on the device (`--gamepad=uhid`) while it has focus. Not
+yet tested end to end (2026-11-16): the PC's pad wasn't awake, and whether
+the DroidDeck guest picks up a UHID pad still needs checking. Every run's `result.json` names the `version`,
 `platform` and `build_config` it came from.
 
 **Windows from WSL.** `windows` runs `skate3.exe` from the stage
