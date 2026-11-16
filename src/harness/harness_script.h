@@ -163,7 +163,9 @@ struct Step {
   // career
   std::optional<double> board_sales;
   bool career_show = false;    // show = true: then set the results presenter's flag
-  bool career_notify = false;  // notify = true: run the game's unlock check afterwards
+  bool career_notify = false;
+  std::string career_complete;  // complete = "challenge name" or "0x<64-bit hash>"
+  std::string career_level = "owned";  // level = "owned" | "killed"  // notify = true: run the game's unlock check afterwards
 
   // snapshot
   bool native_snapshot = false;  // native = true: the native renderer's capture (Windows)

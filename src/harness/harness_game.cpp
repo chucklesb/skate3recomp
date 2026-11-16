@@ -36,6 +36,7 @@ REXCVAR_DEFINE_STRING(skate3_harness_re_poke, "", "Skate 3",
 REX_EXTERN(sub_82910CE8);  // registry find(map*, u32 key) -> entry* (node + 20) or 0
 REX_EXTERN(sub_82706F50);  // teleport sequencer(teleporter, matrix*, id, flag, b, b, b) -> bool
 REX_EXTERN(sub_8271A828);  // memcard owner event handler(owner, ref<event>*) -> 1 handled / 2 not
+REX_EXTERN(sub_82C1D878);  // challenge set completion(tracker, u64 hash, level 0 Owned / 1 Killed, online)
 REX_EXTERN(sub_82C1C2A0);  // career unlock notifier(watcher): fires unlocks whose condition now holds
 REX_EXTERN(sub_82B938D8);  // post message(msg*, recipient*, priority) (queued)
 REX_EXTERN(__imp__RtlEnterCriticalSection);  // 0x82F9CB44
@@ -367,6 +368,78 @@ uint32_t NameHash(std::string_view name) {
     }
   }
   return h;
+}
+
+// The game's 64-bit name hash (sub_82B73AC0): Bob Jenkins' lookup8 with
+// a = b = 0xABCDEF0011223344. Challenge and unlock names are keyed by it.
+uint64_t NameHash64(std::string_view name) {
+  auto mix = [](uint64_t& a, uint64_t& b, uint64_t& c) {
+    a -= b; a -= c; a ^= (c >> 43);
+    b -= c; b -= a; b ^= (a << 9);
+    c -= a; c -= b; c ^= (b >> 8);
+    a -= b; a -= c; a ^= (c >> 38);
+    b -= c; b -= a; b ^= (a << 23);
+    c -= a; c -= b; c ^= (b >> 5);
+    a -= b; a -= c; a ^= (c >> 35);
+    b -= c; b -= a; b ^= (a << 49);
+    c -= a; c -= b; c ^= (b >> 11);
+    a -= b; a -= c; a ^= (c >> 12);
+    b -= c; b -= a; b ^= (a << 18);
+    c -= a; c -= b; c ^= (b >> 22);
+  };
+  auto le = [](const unsigned char* p) {
+    uint64_t v = 0;
+    for (int i = 7; i >= 0; --i) v = (v << 8) | p[i];
+    return v;
+  };
+  const auto* k = reinterpret_cast<const unsigned char*>(name.data());
+  size_t len = name.size();
+  uint64_t a = 0xABCDEF0011223344ull, b = a, c = 0x9E3779B97F4A7C13ull;
+  while (len >= 24) {
+    a += le(k);
+    b += le(k + 8);
+    c += le(k + 16);
+    mix(a, b, c);
+    k += 24;
+    len -= 24;
+  }
+  c += name.size();
+  for (size_t j = len; j-- > 0;) {
+    if (j >= 16) {
+      c += uint64_t(k[j]) << (8 * (j - 15));
+    } else if (j >= 8) {
+      b += uint64_t(k[j]) << (8 * (j - 8));
+    } else {
+      a += uint64_t(k[j]) << (8 * j);
+    }
+  }
+  mix(a, b, c);
+  return c;
+}
+
+bool CareerComplete(uint64_t hash, bool killed, double timeout_s, std::string* error) {
+  bool had = false;
+  const bool ran = RunOnGameThread(
+      [&](PPCContext& ctx, uint8_t* base) {
+        uint32_t p = 0, k = 0, tracker = 0;
+        if (!Read32(base, 0x830CFD94, &p) || !Read32(base, p + 0xE0, &k) ||
+            !Read32(base, k + 0x44, &tracker) || !tracker) {
+          return;
+        }
+        had = true;
+        const PPCContext saved = ctx;
+        ctx.r3.u64 = tracker;
+        ctx.r4.u64 = hash;
+        ctx.r5.u64 = killed ? 1 : 0;
+        ctx.r6.u64 = 0;
+        sub_82C1D878(ctx, base);
+        ctx = saved;
+      },
+      timeout_s, error);
+  if (ran && !had && error) {
+    *error = "no career challenge tracker (not in a career?)";
+  }
+  return ran && had;
 }
 
 namespace {

@@ -1252,14 +1252,17 @@ Outcome Execute(Run& r, const Step& st) {
         }
       }
       const uint64_t others = uint64_t(c[1]) + c[2] + c[3];
-      const uint64_t want = static_cast<uint64_t>(*st.board_sales);
+      const uint64_t want =
+          st.board_sales ? static_cast<uint64_t>(*st.board_sales) : others + c[0];
       if (want < others) {
         return Fail("career: board_sales below the other three counters' " +
                     std::to_string(others));
       }
       const uint32_t first = static_cast<uint32_t>(want - others);
-      const uint32_t be = __builtin_bswap32(first);
-      std::memcpy(base + s + 4, &be, 4);
+      if (st.board_sales) {
+        const uint32_t be = __builtin_bswap32(first);
+        std::memcpy(base + s + 4, &be, 4);
+      }
       char buf[200];
       std::snprintf(buf, sizeof(buf),
                     "\"stats\":\"%08X\",\"old_total\":%llu,\"board_sales\":%llu,"
@@ -1267,6 +1270,27 @@ Outcome Execute(Run& r, const Step& st) {
                     s, static_cast<unsigned long long>(others + c[0]),
                     static_cast<unsigned long long>(want), first, c[1], c[2], c[3]);
       std::string json = buf;
+      // complete = "name": mark a challenge Owned or Killed (the tracker's
+      // own call, sub_82C1D878; no reward is paid). Before the counts below,
+      // and before notify, so unlocks gated on challenges can fire.
+      if (!st.career_complete.empty()) {
+        uint64_t hash = 0;
+        const std::string& name = st.career_complete;
+        if (name.size() > 2 && name[0] == '0' && (name[1] == 'x' || name[1] == 'X')) {
+          hash = std::strtoull(name.c_str() + 2, nullptr, 16);
+        } else {
+          hash = game::NameHash64(name);
+        }
+        std::string cerr;
+        if (!game::CareerComplete(hash, st.career_level == "killed", 10.0, &cerr)) {
+          return Fail("career: " + cerr);
+        }
+        char hb[160];
+        std::snprintf(hb, sizeof(hb), ",\"completed\":\"%s\",\"hash\":\"%016llX\",\"level\":\"%s\"",
+                      SafeName(name).c_str(), static_cast<unsigned long long>(hash),
+                      st.career_level.c_str());
+        json += hb;
+      }
       // Challenge progress: the actions tracker A = *(S+0x1C) points at the
       // challenge tracker C (A+0x24), whose lists hold the active (C+0x04),
       // Owned (C+0x14) and Killed (C+0x24) challenges, counts 8 bytes after

@@ -343,9 +343,24 @@ evidence = "decompile; vtable slot 0x823117EC; reached from Lua CompleteChalleng
 
 [sub_82C1D878]
 name = "Challenge set completion level"
-signature = "(challenge tracker, u64 name_hash, bool killed, bool online)"
-confidence = "guess"
-evidence = "decompile of its caller sub_827CDB10"
+signature = "(challenge tracker, u64 name_hash, level /* 0 Owned, 1 Killed */, bool online)"
+role = "Moves the challenge from the active list to the Owned or Killed list (upgrades only)."
+confidence = "confirmed"
+evidence = "harness career complete=photo_univ_03 level=killed, Windows 2026-11-15: active 64 -> 63, Killed 28 -> 29"
+hooked = "called by src/harness/harness_game.cpp (CareerComplete)"
+
+[sub_82B73AC0]
+name = "Name hash (64-bit)"
+signature = "(const char* s, u32 len) -> u64"
+role = "Bob Jenkins' lookup8 with a = b = 0xABCDEF0011223344; challenge, unlock and data names are keyed by it."
+confidence = "confirmed"
+evidence = "hom_univ_04_sp hashes to the Owned list's 91941878C48D7834; tools/re/challenges.py"
+
+[sub_82C1D7D0]
+name = "Challenge activate"
+signature = "(challenge tracker, u64 name_hash, bool force)"
+confidence = "likely"
+evidence = "Lua ActivateChallenge (sub_827D0960) hashes the name and calls it"
 
 [sub_827D1210]
 name = "Lua AwardCash"

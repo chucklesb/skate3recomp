@@ -1,0 +1,27 @@
+# Mark a career challenge Owned or Killed without playing it (career step,
+# complete = "name"; docs/re/career.md). This is the tracker's own call
+# (sub_82C1D878): the challenge leaves the active list and unlocks gated on
+# it can fire. It doesn't pay the challenge's reward: set board_sales for
+# that, and add notify + show for any milestone screens. Challenge names:
+# docs/re/challenges.tsv (a 64-bit hash "0x..." works too). Completion only
+# upgrades (Owned -> Killed), so re-running is harmless.
+name = "career_complete_challenge"
+timeout_s = 600
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 150   # let the location title pass
+
+[[step]]
+do = "career"
+complete = "photo_univ_03"
+level = "killed"

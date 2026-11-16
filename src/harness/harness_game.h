@@ -121,6 +121,13 @@ bool RunOnGameThread(std::function<void(PPCContext&, uint8_t*)> fn, double timeo
 // the counters (docs/re/career.md). False if the stats object has no watcher.
 bool CareerNotify(uint32_t stats, double timeout_s, std::string* error);
 
+// The game's 64-bit name hash (sub_82B73AC0, lookup8), e.g. challenge names.
+uint64_t NameHash64(std::string_view name);
+
+// Marks a challenge Owned or Killed on the career's challenge tracker
+// (sub_82C1D878), as completing it does, without paying its reward.
+bool CareerComplete(uint64_t hash, bool killed, double timeout_s, std::string* error);
+
 // The career results presenter (captured from its update, sub_827CF570):
 // its state as JSON fields, and CareerShow sets its "show results" flag
 // (this+0x30), which pushes MilestoneUnlock when rewards are pending.

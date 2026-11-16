@@ -188,6 +188,8 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
   s.board_sales = Number(t, "board_sales");
   s.career_notify = t["notify"].value_or(false);
   s.career_show = t["show"].value_or(false);
+  s.career_complete = t["complete"].value_or(std::string());
+  s.career_level = t["level"].value_or(std::string("owned"));
   s.mem_type = t["type"].value_or(std::string("u32"));
   s.mem_cmp = t["cmp"].value_or(std::string());
   if (const toml::array* rg = t["range"].as_array()) {
@@ -320,8 +322,16 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
       }
       break;
     case Verb::kCareer:
-      if (!s.board_sales || *s.board_sales < 0 || *s.board_sales > 4e9) {
-        *error = "career needs board_sales = N (the total, 0..4e9)";
+      if (!s.board_sales && s.career_complete.empty() && !s.career_notify && !s.career_show) {
+        *error = "career needs board_sales = N, complete = \"name\", notify or show";
+        return false;
+      }
+      if (s.board_sales && (*s.board_sales < 0 || *s.board_sales > 4e9)) {
+        *error = "career board_sales must be 0..4e9 (the total)";
+        return false;
+      }
+      if (s.career_level != "owned" && s.career_level != "killed") {
+        *error = "career level must be \"owned\" or \"killed\"";
         return false;
       }
       break;

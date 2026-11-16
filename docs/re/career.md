@@ -61,13 +61,31 @@ Killed, 0 neither (the script enum `EChallengeCompletionLevel` is
 {Owned, Killed}; `eHighScoreTier` adds PersonalBest).
 `GetNumCompletedChallenges` is Owned + Killed.
 
-**Completing a challenge:** the Lua `CompleteChallenge` (`sub_8283FD00`)
+**Names:** challenges (and unlocks) are keyed by the game's 64-bit name
+hash, `sub_82B73AC0`: Bob Jenkins' lookup8 with `a = b = 0xABCDEF0011223344`
+(confirmed: `hom_univ_04_sp` hashes to the Owned list's `91941878C48D7834`).
+Names look like `<type>_<district>_<NN>[_suffix]`: `film_dwtn_01`,
+`photo_univ_03`, `race_indu_02`, `hom_univ_04_sp`, `tut_sksc_01`.
+[challenges.tsv](challenges.tsv) has 94, which cover 98 of the 119 challenges
+the Windows test career tracks (`tools/re/challenges.py names`, from a
+career snapshot and the game data; `hash` hashes any name, `show` lists a
+snapshot's challenges by name). The locked actions use other names.
+
+**From the harness:** `career` with `complete = "name"` (or `"0x<hash>"`)
+and `level = "owned"` or `"killed"` calls the tracker's own
+`sub_82C1D878`: the challenge leaves the active list and goes to Owned or
+Killed, and unlock actions gated on it react at once (Windows,
+2026-11-15: `photo_univ_03` Killed, active 64 → 63, Killed 28 → 29, locked
+actions 53 → 52). The game saves it by itself: the next session started with it Killed. It pays no reward (set `board_sales` for that).
+`scenarios/career_complete_challenge.toml`.
+
+**Completing a challenge, as the game does it:** the Lua `CompleteChallenge` (`sub_8283FD00`)
 ends up in a career method, `sub_827CDB10` (`this` = `K+4`; vtable slot at
 `0x823117EC`), with (challenge, level). It runs the payout
 (`sub_827CDDD8`), then records the level with `sub_82C1D878(C, hash,
 killed, online)`, which moves the challenge onto the Owned or Killed list.
-Calling it from the harness needs a challenge object, found by name (not
-done yet). The `career` step reports
+The challenge object it takes (vtable `0x82326AF4`) has the name hash at
+`+8`; the harness skips it and calls `sub_82C1D878` directly. The `career` step reports
 these counts (`challenges`, `locked_actions`).
 
 ## The save
@@ -149,5 +167,6 @@ without a challenge (`scenarios/career_milestone.toml`, above). Live:
   id 15 is MessengerScreen, so later entries may not be screen ids.
 - `+0x10`'s meaning (an online total, probably).
 - How the save's record is found and checked (header hash, checksum).
-- Setting a challenge's completion level from the harness (the list nodes'
-  layout beyond the hash; `CompleteChallenge`, `sub_8283FD00`).
+- Paying a challenge's own reward from the harness (needs its challenge
+  object for the payout, `sub_827CDDD8`).
+- The locked actions' names.
