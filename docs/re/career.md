@@ -56,6 +56,9 @@ from 537,500 to 5,000,000 (2026-11-15), the game showed:
 | `[0,66]` | New Teammate! (pushed by `sub_826504E0`) |
 | `[0,46]` | Receipt, after it |
 
+The Odin 2 showed the same sequence from 311,500 to 1,000,000 (run
+`20261115-204935_career_milestone`).
+
 `sub_827CD150` pushes 65 and 66. The FE ids are indexes into the front
 end's screen table (`0x8302F490`; all 86 names in
 [fe_screens.tsv](fe_screens.tsv), `tools/re/fe_screens.py`): 64
