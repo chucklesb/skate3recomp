@@ -187,15 +187,18 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
   scenarios.
 - **Frame-time follow-ups** (after `frames.csv` and
   `tools/harness/frametime_report.py`, 2026-11-16):
-  - **Log lines next to each hitch:** list the log lines (shader compiles,
-    streaming, saves, audio) logged around each of the worst frames. This
-    needs the run start's wall time so log timestamps map onto `frames.csv`.
+  - ~~**Log lines next to each hitch**~~: done 2026-11-16,
+    `frametime_report.py` lists the `log.txt` lines written during each of
+    the worst frames (`--log-lines`).
   - **Time for the threads beside the game thread:** per-frame time for the
     native renderer's GPU submission thread (and the GPU, from the timestamp
     buckets) as extra `frames.csv` columns. Today they show only when they
     hold the game back (in `swap`).
   - **Odin 2 lead:** in `20261115-235927_skel_shadow`, one in-game 50 ms frame
-    was 36 ms of game-thread time with no event next to it.
+    was 36 ms of game-thread time with no event next to it. The log lines
+    show 8 `native-scene: texture re-decode ... reason=nb` during that frame:
+    re-decoding textures on the game thread is the suspect. Next: time the
+    re-decodes, then move them off the game thread or spread them out.
 
 ## Investigations
 

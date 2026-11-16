@@ -11,7 +11,8 @@ two guest swaps), split into the parts measured at the swap hook:
     harness  the harness's own frame hook
 
 plus the frontend top / depth, flags (1 replay, 2 movie, 4 paused) and the
-running step. Paused frames are left out.
+running step. Paused frames are left out. Under each of the worst frames it
+lists the log.txt lines written during that frame (--log-lines N, 0: none).
 
 Per segment it prints average fps, frame-time percentiles, the 1% / 0.1% lows
 (the fps over the worst 1% / 0.1% of frames), hitches (frames over 2x the
@@ -34,7 +35,10 @@ every step.
 from __future__ import annotations
 
 import argparse
+import bisect
 import csv
+import re
+from datetime import datetime
 import json
 import math
 import sys
@@ -166,7 +170,49 @@ def near_events(events, frame, span=3):
     return ", ".join(out[:4])
 
 
-def print_report(name, rows, events, segs, top):
+_LOG_RE = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3})\] \[[^\]]*\] \[(\w+)\] (?:\[[^\]]*\] )?(.*)$")
+
+
+def load_log(d: Path):
+    """log.txt lines as (t, level, text), t in seconds on frames.csv's clock.
+
+    frames.csv's t counts from the harness run's start; the run's first log
+    line ("harness: enabled") is written a few ms after it, so it anchors the
+    log's wall clock (1 ms log resolution, a few ms of skew)."""
+    p = d / "log.txt"
+    if not p.exists():
+        return []
+    out, t0 = [], None
+    for ln in p.read_text(errors="replace").splitlines():
+        m = _LOG_RE.match(ln)
+        if not m:
+            continue
+        ts = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S.%f").timestamp()
+        if t0 is None:
+            if "harness: enabled" not in m.group(3):
+                continue
+            t0 = ts
+        out.append((ts - t0, m.group(2), m.group(3)))
+    return out
+
+
+def near_log(log, r, n, slack=0.005):
+    """Log lines written during frame r (the dt ending at r['t']), up to n."""
+    if not log or n <= 0:
+        return []
+    lo, hi = r["t"] - r["dt"] / 1000.0 - slack, r["t"] + slack
+    i = bisect.bisect_left(log, (lo,))
+    hits = []
+    while i < len(log) and log[i][0] <= hi:
+        hits.append(log[i])
+        i += 1
+    shown = [f"{lv[:4]} {txt[:110]}" for _, lv, txt in hits[:n]]
+    if len(hits) > n:
+        shown.append(f"... {len(hits) - n} more")
+    return shown
+
+
+def print_report(name, rows, events, segs, top, log=None, log_lines=3):
     print(f"== {name}: {len(rows)} frames")
     print(f"  {'segment':<16} {'frames':>6} {'fps':>6} {'1%low':>6} {'.1%low':>6} {'p50':>6} "
           f"{'p99':>6} {'max':>7} {'jit':>5} {'hitch':>5} {'busy50':>6} {'busy99':>6} | "
@@ -193,6 +239,8 @@ def print_report(name, rows, events, segs, top):
                   f"({parts[dom]:.1f} ms; " + " ".join(f"{p}={r[p]:.1f}" for p in PARTS)
                   + f")  {context(r)}  step {r['step']}"
                   + (f"  [{near_events(events, r['frame'])}]" if near_events(events, r['frame']) else ""))
+            for ln in near_log(log, r, log_lines):
+                print(f"        log: {ln}")
 
 
 def write_svg(path: Path, rows, segs, title):
@@ -275,13 +323,15 @@ def main() -> int:
     ap.add_argument("--svg", nargs="?", const="", default=None)
     ap.add_argument("--fail-pct", type=float, default=None)
     ap.add_argument("--json", action="store_true", help="write frametime.json in the run")
+    ap.add_argument("--log-lines", type=int, default=3,
+                    help="log.txt lines to show under each worst frame (0: none)")
     a = ap.parse_args()
     dirs = [run_dir(x) for x in a.runs]
     if len(dirs) > 1:
         return compare(dirs, a.by_step, a.fail_pct)
     rows, events = load(dirs[0])
     segs = segments(rows, events, a.by_step)
-    print_report(dirs[0].name, rows, events, segs, a.top)
+    print_report(dirs[0].name, rows, events, segs, a.top, load_log(dirs[0]), a.log_lines)
     if a.json:
         (dirs[0] / "frametime.json").write_text(
             json.dumps({n: stats(pick(rows, s)) for n, s in segs.items()}, indent=1))

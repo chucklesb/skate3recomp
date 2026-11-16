@@ -358,7 +358,9 @@ and `frametime_ingame` (frontend `[0]`, no movie: free skate and reels), with:
 
 For more, use `tools/harness/frametime_report.py <run>`. It prints a table per
 segment and the worst in-game frames, each with the part that dominated and
-the events next to it (a step, a screen change, a reel start). `--svg` writes
+the events next to it (a step, a screen change, a reel start), and under it
+the `log.txt` lines written during that frame (`--log-lines N`, default 3, 0
+for none; the log is aligned on the run's first line, within ~5 ms). `--svg` writes
 `frametimes.svg`, the frame and busy times over the run with the reels
 shaded. With `<base> <new>` it prints an A/B table, and `--fail-pct 10` exits 1
 when a shared segment's `ms_p99`, `busy_ms_p99` or 1% low got worse by more
