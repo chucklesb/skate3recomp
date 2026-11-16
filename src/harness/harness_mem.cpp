@@ -354,8 +354,12 @@ bool WriteSnapshot(uint8_t* base, const std::string& path, uint64_t* bytes, uint
     run.clear();
   };
   std::vector<uint8_t> page(kPage);
+  static const std::vector<uint8_t> kZero(kPage, 0);
   ForEachPage(base, 0, 0x100000000ull, [&](uint64_t a) {
-    const bool ok = native_scene::GuestTryCopy(page.data(), base + a, kPage);
+    // All-zero pages are left out: on Linux the whole 4 GB guest space is
+    // mapped readable, untouched pages read as zeros (4 GB snapshots).
+    const bool ok = native_scene::GuestTryCopy(page.data(), base + a, kPage) &&
+                    std::memcmp(page.data(), kZero.data(), kPage) != 0;
     // A gap, a failed page or a full buffer ends the region.
     if (!ok || run.size() >= (64u << 20) || (!run.empty() && run_start + run.size() != a)) {
       flush();

@@ -56,17 +56,48 @@ The usual order: observe live, snapshot, read the code, name it, verify.
 | | `--skate3_harness_re_dump` / `re_poke` cvars (`src/harness/harness_game.cpp`) | One-shot reads (with pointer following) and writes from the command line, on the guest's main thread |
 | | `--skate3_harness_re_probe`, `re_trace` (`src/harness/harness_re.cpp`) | Log the script bindings the game calls and every new message type with its sender; trace the hooks there |
 | Snapshot | harness `snapshot` verb | Whole guest memory to `snapshots/<tag>.gsnap`, on Windows or the Odin 2 |
-| | `tools/re/gsnap.py` | Search a snapshot (`find-u32`, `find-f32`), diff two, read, and name objects by their RTTI class (`classof`, `owner`, `refs`) |
+| | `tools/re/gsnap.py` | Search a snapshot (`find-u32`, `find-f32`), diff two, read, find who points at an object (`refs`). Its RTTI commands (`classof`, `owner`) find nothing in this game: Skate 2 and Skate 3 were both built without MSVC RTTI (checked 2026-11-15) |
 | | `tools/re/registry.py`, `messages.py` | The game's object registry (names by hash) and the message id → `cMsg` class table, from a snapshot |
 | Read the code | `tools/re/xrefs.py` | From `generated/`: callers, callees, functions that build an address (`refs`), disassembly (`dis`) |
 | | `tools/re/decomp.py ADDR` | Ghidra's decompiled C (one-time project: `tools/re/ghidra/setup.py SNAP.gsnap`; output cached in `out/re/decomp/`, never committed) |
 | Name it | [symbols.toml](symbols.toml), `tools/harness/re_symbols.py` | The map; `lookup`, `coverage`, `check`. `run_scenario.py symbolize` and crash summaries print map names next to `sub_` addresses |
 | Verify | scenarios, char_sync, the census | A probe or scenario that shows the role; `confidence = "confirmed"` only then |
 
-**Reference build:** a Skate 2 debug build with a full PDB (Xbox 360, Jan 2009)
-is the source for bulk names and types (roadmap RE-2). It stays outside the
-repo; set its folder in `SKATE3_RE_REF_DIR`. There are no public Skate 3
-symbols.
+## Names from Skate 2 (roadmap RE-2)
+
+There are no public Skate 3 symbols. A Skate 2 debug build (Xbox 360, January
+2009: `sk82_na_m.xex` and a full 86 MB PDB) shares the engine and much of the
+game code. It stays outside the repo (game code); its folder goes in
+`SKATE3_RE_REF_DIR`.
+
+- `tools/re/sk2_match.py prepare`: repacks the PDB (`msf_repack.py`: its old
+  big-directory MSF format stops `llvm-pdbutil`), lists its 52,965 named
+  functions, and unpacks the XEX with `rexglue dump-xex` (devkit key).
+- `sk2_match.py match`: pairs Skate 3 functions with Skate 2 ones, by:
+  - **exact:** the same normalized code (branch and address bits masked);
+  - **strings:** the same string literal, used by one function in each build;
+  - **callgraph:** the callees of matched pairs, by position;
+  - **vtable:** slots of vtables lined up by matched anchors (the PDB names
+    Skate 2's vtables);
+  - **layout / layout-align:** the gaps between matched pairs, in link order.
+
+  The Skate 2 build keeps its asserts (`xcore::FailAssert`, `DebugBreak`),
+  which retail Skate 3 compiled out. The matcher strips them before hashing
+  and leaves them out of call sequences.
+- `sk2_match.py match --holdout 0.3`: measures precision by hiding 30% of the
+  exact pairs and letting the other passes find them again.
+- `sk2_match.py export`: writes [names_sk2.tsv](names_sk2.tsv) (names only:
+  address, name, method, confidence). `re_symbols.py lookup` and symbolize
+  read it (symbolize marks these names `sk2?`); `symbols.toml` takes priority.
+
+**2026-11-15, first pass:**
+- **Coverage:** 8,020 of 47,938 functions named (16.7%).
+- **Precision**, on unchanged functions:
+  - exact and strings: about 100%;
+  - callgraph and layout: about 93-95%;
+  - vtable and layout-align: about 80-84%.
+- **Treat every name as a lead:** two of our five hand-named functions that
+  got a Skate 2 name got the wrong one.
 
 ## How a replacement works (ReXGlue)
 

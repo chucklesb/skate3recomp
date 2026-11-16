@@ -19,12 +19,24 @@ the linked pages; the backlog is [open-work.md](open-work.md).
 3. [ ] **Native-only phase 1** (offscreen 2D compose), then phases 2-5.
    Row D, the offscreen skater pass in challenges (72-96 emulated draws a
    frame), is the biggest remaining cost; it's phase 4.
-4. [ ] **Reverse engineering: the character skeleton**
-   ([re/characters.md](re/characters.md)): link `UpdateBoneTransforms`'
-   part records to draw items, then one pose per character per tick. It
-   replaces most of the "Characters" guesses in
-   [re/workarounds.md](re/workarounds.md), and is the likely fix for
-   [KI-125](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps).
+
+**Reverse engineering** (a primary goal; plan approved 2026-11-15, [re/README.md](re/README.md)):
+- RE-1 [x] **Toolkit:** `mem` search (unknown values included), portable
+  snapshots, names in symbolize, the Toolkit section.
+- RE-2 [~] **Names from the Skate 2 debug build:** first pass done, 8,020
+  functions (16.7%). Next: raise coverage (Ghidra Version Tracking or BSim on
+  the remaining functions), and transfer types (class layouts from the PDB)
+  into `docs/re/types.md` where a probe confirms them.
+- RE-3 [ ] **Skate 3's own code:** script bindings (Lua name to function),
+  the message table, debug strings.
+- RE-4 [ ] **Career pilot:** board sales and challenge state, a harness verb
+  to set them, then the "new team member" prompt (Now #1).
+- RE-5 [ ] **The character skeleton** ([re/characters.md](re/characters.md)):
+  one pose per character per tick; the likely fix for
+  [KI-125](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps).
+- RE-6 [ ] **Who issues the emulated passes** native-only must replace
+  (pitches 160 and 1200).
+- RE-7 [ ] **`src/re/` shadow-mode replacements.**
 
 **Parked** (the user's call; don't start without asking):
 - The photo challenge's jerky closing animation and snapping pose
@@ -35,6 +47,8 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   passed on retry, no symbols); watch for a repeat.
 
 **Done recently:**
+- 2026-11-15: **RE-1 toolkit** and **RE-2 first pass** (8,020 Skate 3
+  functions named from the Skate 2 PDB; [re/README.md](re/README.md)).
 - 2026-11-15: **photo-challenge reference shots** (live on the Odin 2;
   [native-only.md](native-only.md)); `live_shots.py` shoots a live session
   automatically.

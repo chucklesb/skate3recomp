@@ -24,6 +24,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 MAP = REPO / "docs/re/symbols.toml"
+SK2 = REPO / "docs/re/names_sk2.tsv"  # transferred names (tools/re/sk2_match.py)
 CONFIDENCE = {"confirmed", "likely", "guess"}
 SUB = re.compile(r"\bsub_(8[0-9A-Fa-f]{7})\b")
 
@@ -31,6 +32,18 @@ SUB = re.compile(r"\bsub_(8[0-9A-Fa-f]{7})\b")
 def load() -> dict:
     with open(MAP, "rb") as f:
         return tomllib.load(f)
+
+
+def load_sk2() -> dict[str, tuple[str, str, str]]:
+    """sub_XXXXXXXX -> (name, method, confidence) from names_sk2.tsv."""
+    out = {}
+    if SK2.exists():
+        for line in open(SK2):
+            if line.startswith("#"):
+                continue
+            a, name, how, conf = line.rstrip("\n").split("\t")
+            out[f"sub_{a}"] = (name, how, conf)
+    return out
 
 
 def show(key: str, e: dict) -> None:
@@ -57,7 +70,13 @@ def main() -> int:
                 if k.upper() == f"SUB_{q}" or a.query.lower() in e.get("name", "").lower()]
         for k, e in hits:
             show(k, e)
-        return 0 if hits else 1
+        sk2 = [(k, v) for k, v in load_sk2().items()
+               if k.upper() == f"SUB_{q}" or a.query.lower() in v[0].lower()]
+        for k, (name, how, conf) in sk2[:50]:
+            print(f"{k}  {name}  [{conf}, from Skate 2: {how}]")
+        if len(sk2) > 50:
+            print(f"... {len(sk2) - 50} more from Skate 2")
+        return 0 if hits or sk2 else 1
 
     if a.cmd == "coverage":
         refs = collections.defaultdict(set)
@@ -68,8 +87,15 @@ def main() -> int:
         known = {k.upper() for k in syms}
         missing = sorted((k for k in refs if k.upper() not in known),
                          key=lambda k: (-len(refs[k]), k))
+        sk2 = load_sk2()
+        funcs = REPO / "out/re/ghidra/functions.txt"
+        total = sum(1 for _ in open(funcs)) if funcs.exists() else 0
         print(f"{len(refs)} game functions referenced in src/, {len(refs) - len(missing)} in the "
-              f"map, {len(missing)} missing")
+              f"map, {len(missing)} missing ({sum(1 for k in missing if k in sk2)} of those have a "
+              f"Skate 2 name)")
+        if total:
+            print(f"whole image: {len(syms)} confirmed/likely by hand, {len(sk2)} from Skate 2 "
+                  f"({100 * len(sk2) / total:.1f}% of {total} functions)")
         for k in missing if a.all else missing[:40]:
             files = sorted(refs[k])
             print(f"  {k}  {len(files)} file(s): {', '.join(files[:3])}{' ...' if len(files) > 3 else ''}")

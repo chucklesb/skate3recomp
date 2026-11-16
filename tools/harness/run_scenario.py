@@ -1064,6 +1064,14 @@ def game_names(text: str) -> str:
                         _GAME_NAMES[k.upper()] = e["name"]
         except (OSError, ValueError):
             pass
+        # Names transferred from Skate 2 (leads, not confirmed): marked "sk2?".
+        try:
+            for line in open(REPO / "docs/re/names_sk2.tsv"):
+                if not line.startswith("#"):
+                    a, name, _how, _conf = line.rstrip("\n").split("\t")
+                    _GAME_NAMES.setdefault(f"SUB_{a}", f"sk2? {name}")
+        except (OSError, ValueError):
+            pass
     return re.sub(r"\b(?:__imp__)?sub_([0-9A-Fa-f]{8})\b",
                   lambda m: m.group(0) + (f" [{_GAME_NAMES[f'SUB_{m.group(1).upper()}']}]"
                                           if f"SUB_{m.group(1).upper()}" in _GAME_NAMES else ""),
