@@ -748,8 +748,16 @@ def win_launch(config: str, backend: str, game_args: list[str],
 
 def run_windows(scenario: Path, config: str, backend: str, extra: list[str],
                 out_root: Path, timeout_s: float | None = None,
-                renderdoc: Path | None = None) -> Path | None:
-    """Run a scenario on this PC; return the run folder moved under out_root."""
+                renderdoc: Path | None = None, headless: bool = True) -> Path | None:
+    """Run a scenario on this PC; return the run folder moved under out_root.
+
+    headless: the game window stays hidden (--window_hidden=true); the game
+    renders as usual and the harness screenshots, videos and captures work the
+    same. A `window show = true` step shows it when a step needs the user.
+    """
+    if headless:
+        # First, so an explicit --window_hidden after `--` wins.
+        extra = ["--window_hidden=true", *extra]
     stage = win_stage(config)
     (stage / "scenarios").mkdir(parents=True, exist_ok=True)
     shutil.copy2(scenario, stage / "scenarios" / scenario.name)
@@ -1311,6 +1319,9 @@ def main() -> int:
     p_win.add_argument("--renderdoc", nargs="?", const="", metavar="DIR",
                        help="launch through RenderDoc (renderdoccmd capture) so `capture` steps "
                             "work; DIR is a RenderDoc folder (default: $SKATE3_WINDOWS_RENDERDOC)")
+    p_win.add_argument("--window", action="store_true",
+                       help="show the game window (default: headless, the window stays hidden "
+                            "while the game renders off-screen)")
     p_win.add_argument("--timeout", type=float,
                        help="kill the game after this many seconds "
                             "(default: the scenario's timeout_s + 120)")
@@ -1332,6 +1343,8 @@ def main() -> int:
     p_ab.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
                       help="Odin 2 session environment (repeatable)")
     p_ab.add_argument("--out", type=Path, default=REPO / "out/harness-runs")
+    p_ab.add_argument("--window", action="store_true",
+                      help="show the Windows game window (default: headless)")
     p_live = sub.add_parser("live")
     p_live.add_argument("--target", choices=("odin2", "windows"), default="odin2")
     p_live.add_argument("--no-build", action="store_true",
@@ -1425,7 +1438,7 @@ def main() -> int:
                 die("--renderdoc needs a RenderDoc folder (or set SKATE3_WINDOWS_RENDERDOC)")
             renderdoc = Path(rd_dir)
         run = run_windows(a.scenario.resolve(), a.config, a.backend, extra, a.out.resolve(),
-                          timeout_s=a.timeout, renderdoc=renderdoc)
+                          timeout_s=a.timeout, renderdoc=renderdoc, headless=not a.window)
         if run is None:
             return 4
         log(f"run folder: {run}")
@@ -1486,7 +1499,8 @@ def main() -> int:
                 deploy(dev, a.config, force=a.force_deploy)
             runs.append(("odin2/vulkan", run_odin2(dev, scenario, extra, a.env, out)))
         for b in backends:
-            runs.append((f"win/{b}", run_windows(scenario, a.config, b, extra, out)))
+            runs.append((f"win/{b}", run_windows(scenario, a.config, b, extra, out,
+                                                 headless=not a.window)))
         stamp = time.strftime("%Y%m%d-%H%M%S")
         return ab_compare(scenario, runs, out / f"ab-{stamp}_{scenario.stem}")
 

@@ -1790,6 +1790,16 @@ Outcome Execute(Run& r, const Step& st) {
       return o;
     }
 
+    case Verb::kWindow: {
+      // Headless runs start with window_hidden = true (run_scenario.py
+      // --headless); show the window when a step needs the user, hide it after.
+      if (!rex::cvar::SetFlagByName("window_hidden", st.window_show ? "false" : "true")) {
+        return Fail("window: the window_hidden cvar was rejected");
+      }
+      Event(r, "window", std::string("\"show\":") + (st.window_show ? "true" : "false"));
+      return {};
+    }
+
     case Verb::kPlayReel: {
       // Free skate first (the reel loads from there and returns there).
       if (!WaitUntil(r, 30.0, [&] { return r.state.presence == 1 && r.state.skater_valid; })) {
@@ -1820,6 +1830,9 @@ Outcome Execute(Run& r, const Step& st) {
       rex::cvar::SetFlagByName("skate3_native_render_scene_screen_fx", st.lens ? "true" : "false");
       game::ReelOptions opts;
       opts.from_marker = st.from == "marker";
+      // A last play_reel needs no trip back to free skate (exit = "auto").
+      const bool last_step = r.scenario && !r.scenario->steps.empty() && &st == &r.scenario->steps.back();
+      opts.return_to_skate = st.reel_exit == "skate" || (st.reel_exit == "auto" && !last_step);
       opts.speed = static_cast<float>(st.speed);
       opts.step_s = st.step_fps > 0.0 ? static_cast<float>(1.0 / st.step_fps) : 0.0f;
       for (double v : st.stills) {
@@ -2042,7 +2055,7 @@ Outcome Execute(Run& r, const Step& st) {
         return Fail("play_reel clip " + std::to_string(clip_n) + ": " +
                     (s.error.empty() ? "did not return to free skate" : s.error));
       }
-      Event(r, "reel_exit", clip);
+      Event(r, "reel_exit", clip + (opts.return_to_skate ? "" : ",\"skipped\":true"));
       Outcome o;
       o.result_json = clip + played + video_json + ",\"stills\":[" + stills_json + "],\"shots\":[";
       for (size_t i = 0; i < shots.size(); ++i) {

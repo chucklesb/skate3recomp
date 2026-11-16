@@ -53,6 +53,7 @@ enum class Verb {
   kTeleport,    // location="Z_UN_ClockTower" (a registry locator) tolerance=5 timeout_s=60
                 // settle=true (false: return on arrival, e.g. a floorless locator)
   kRenderer,    // renderer="native"|"emulated" frames=30: the F5 switch, then settle
+  kWindow,      // show=true|false: show or hide the game window (headless runs)
   kVideo,       // frames=N tag="x": every rendered frame as video/<tag>/f<n>.png
   kResults,     // walk the career results screens (FE 64/65/66) back to free skate
   kCareer,      // board_sales=N [notify]: set the career's total board sales (docs/re/career.md)
@@ -132,10 +133,16 @@ struct Step {
   // streams the area). Unset = only when the target is far from the skater.
   std::optional<bool> hop;
 
+  bool window_show = true;  // window: show (true) or hide (false)
+
   // play_reel
   int64_t clip = 0;            // 1-based saved replay slot
   std::string reel;            // or: the reel's id (hex prefix; see harness_reels.h)
   std::string from = "start";  // "start" | "marker"
+  // After the reel: "skate" leaves the editor and waits for the free-skate
+  // restream; "end" stops there (the run ends next, nothing needs the world);
+  // "auto" = "end" when play_reel is the scenario's last step, else "skate".
+  std::string reel_exit = "auto";
   bool lens = false;           // keep the reel camera's fisheye and vignette
   bool stills_capture = false; // a RenderDoc capture at each still (RenderDoc attached)
   int64_t capture_start = 0;   // play_reel: one RenderDoc capture of the first N frames played

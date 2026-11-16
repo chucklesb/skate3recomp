@@ -82,6 +82,9 @@ struct ReelOptions {
   std::vector<float> stills_s;  // hold at these reel times (s) for screenshots
   float speed = 1.0f;           // replay clock rate (0.25 = quarter speed)
   float step_s = 0.0f;          // > 0: the clock advances this much per frame, not dt
+  // false: at the reel's end go straight to kDone, still in the editor (the
+  // run ends next). true: leave the editor and wait for free skate.
+  bool return_to_skate = true;
 };
 struct ReelStatus {
   ReelPhase phase = ReelPhase::kIdle;

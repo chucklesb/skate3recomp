@@ -787,6 +787,7 @@ std::atomic<float> g_reel_step{0.0f};   // > 0: fixed clock step per frame (play
 std::atomic<uint64_t> g_reel_frames{0};
 // Options for the current reel (set by StartReel before the request).
 bool g_reel_from_marker = false;
+bool g_reel_return = true;  // leave the editor for free skate at the end
 std::atomic<float> g_reel_start{0.0f};   // where playback started (s)
 std::atomic<float> g_reel_marker{-1.0f};  // the reel's marker (s), -1 if none
 // Stills: the render-thread clock stops exactly at each time and holds there
@@ -1014,6 +1015,14 @@ void ReelTick(PPCContext& ctx, uint8_t* base) {
       if (!g_reel_hold.load() && g_reel_t.load() >= g_reel_duration.load()) {
         g_reel_e.store(0);  // stop driving
         g_reel_wait = 0;
+        if (!g_reel_return) {
+          // The run ends next: skip the editor exit and the free-skate
+          // restream (the world reload), which nothing would use.
+          g_reel_curtain.store(false);
+          REXLOG_INFO("harness: reel {}: ended; staying in the editor (exit = end)", g_reel_slot);
+          SetReelPhase(ReelPhase::kDone);
+          break;
+        }
         SetReelPhase(ReelPhase::kExiting);
       }
       break;
@@ -1070,6 +1079,7 @@ bool StartReel(int slot, const ReelOptions& options, std::string* error) {
     return false;
   }
   g_reel_from_marker = options.from_marker;
+  g_reel_return = options.return_to_skate;
   g_reel_speed.store(options.speed > 0.0f ? options.speed : 1.0f);
   g_reel_step.store(options.step_s > 0.0f ? options.step_s : 0.0f);
   std::vector<float> stills = options.stills_s;

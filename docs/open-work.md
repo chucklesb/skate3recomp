@@ -186,6 +186,21 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
   visible window or focus steal, so scenario runs don't interrupt the
   user's desktop. Look into an offscreen/hidden window or swapchain-less
   output, a virtual display, and what input and audio need.
+- **Faster test runs** (2026-11-16). Much of a run is fixed delays put in
+  so input doesn't arrive too early:
+  - **Frame-count waits** (`wait frames = 120` after spawning, the 90-frame
+    `start_spot` settle, `settle_frames`) are frames, not time: 120 frames
+    is 4 s at a 30 fps cap and 1 s at 120 fps. Most of them stand in for a
+    condition. Wait for the condition instead, such as the game's loading
+    indicator closing or streaming going idle, and move on at the first frame
+    it holds.
+  - **Menu navigation by button presses** is slow and fragile (each press
+    waits for the screen to settle). Call the game's own functions instead,
+    as `play_reel` does for skate.Reel playback (the menu actions behind
+    each button: career, free skate, options). That needs RE of the
+    front-end screens' action handlers.
+  - Measure first: a per-step time table from `events.jsonl` across the
+    usual scenarios, to see where the time goes.
 - **Fly and noclip mode** to move the camera or skater through geometry, for
   looking at shadows and their casters.
 - **Scripted "backwards man" speed glitch** as a timed pad sequence (find the

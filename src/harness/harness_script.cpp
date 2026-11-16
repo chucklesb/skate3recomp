@@ -33,6 +33,7 @@ constexpr VerbEntry kVerbs[] = {
     {"results", Verb::kResults},
     {"crash", Verb::kCrash},       {"teleport", Verb::kTeleport},
     {"play_reel", Verb::kPlayReel},  {"renderer", Verb::kRenderer},
+    {"window", Verb::kWindow},
 };
 
 // TOML scalar -> the string form rex::cvar::SetFlagByName takes.
@@ -176,6 +177,11 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
   s.clip = Integer(t, "clip").value_or(0);
   s.reel = t["reel"].value_or(std::string());
   s.from = t["from"].value_or(std::string("start"));
+  s.reel_exit = t["exit"].value_or(std::string("auto"));
+  if (s.reel_exit != "auto" && s.reel_exit != "skate" && s.reel_exit != "end") {
+    *error = "exit must be \"auto\", \"skate\" or \"end\" (play_reel: what follows the reel)";
+    return false;
+  }
   s.lens = t["lens"].value_or(false);
   s.stills_capture = t["stills_capture"].value_or(false);
   s.capture_start = std::max<int64_t>(0, Integer(t, "capture_start").value_or(0));
@@ -190,6 +196,7 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
   s.board_sales = Number(t, "board_sales");
   s.career_notify = t["notify"].value_or(false);
   s.career_show = t["show"].value_or(false);
+  s.window_show = t["show"].value_or(true);
   s.career_complete = t["complete"].value_or(std::string());
   s.career_level = t["level"].value_or(std::string("owned"));
   s.career_pay = t["pay"].value_or(false);
