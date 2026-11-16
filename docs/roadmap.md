@@ -54,14 +54,15 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   checked over a reel). The pack is `transpose(gather × m_MatLtoW)`, exact.
   Steps 1-2 (the store, shadow mode): every skater piece exact against the
   game's upload on Windows and the Odin 2. Step 3 (serve, one reset per
-  character) behind `on`, verified on both (char_sync clean).
+  character), verified on both (char_sync clean). Step 4: stills, fps and
+  char_sync show no regression on either platform; **`on` is the default**
+  (2026-11-16).
   Next:
-  1. Step 4: the remaining checks (reel stills, fps), then default on.
-  2. Step 5: delete the per-piece guesses for skaters
+  1. Step 5: delete the per-piece guesses for skaters
      ([re/workarounds.md](re/workarounds.md)).
-  3. RE-5b: pedestrians (the LivingWorld pack path).
-  KI-125 turned out to be the cloth, not the skeleton: it is now its own
-  item, next a RenderDoc capture of the emulated frame.
+  2. RE-5b: pedestrians (the LivingWorld pack path).
+  KI-125 turned out to be the cloth, not the skeleton: a buffer-read timing
+  race after a seek, documented, fix deferred.
 - RE-6 [ ] **Who issues the emulated passes** native-only must replace
   (pitches 160 and 1200).
 - RE-7 [ ] **`src/re/` shadow-mode replacements:** native code in place of

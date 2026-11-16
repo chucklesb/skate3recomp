@@ -20,11 +20,11 @@ tick (`Sk8::UpdateBoneTransforms` already receives the full pose,
 [characters.md](characters.md)), every piece built from it, one smoothing
 history per character.
 
-**Built (2026-11-16, off by default):** the skeleton store
+**Built and on by default (2026-11-16):** the skeleton store
 (`skate3_native_render_scene_skeleton = on`) serves every skater piece from
 one pose, exact against the game's upload, and resets each character's
 smoothing together. Rows marked "in progress" are bypassed for skaters
-under `on`. They get deleted once `on` is the default (RE-5 steps 4-5).
+under `on`. `on` is the default since RE-5 step 4; deleting them for skaters is step 5.
 Pedestrians still use them (RE-5b).
 
 | Guess | Where | What it guesses | Status |
@@ -39,7 +39,7 @@ Pedestrians still use them (RE-5b).
 | Rescue serve, continuity (dougieprishpreed) | cvars `rescue_serve`, `smooth_continuity` | Symptom fixes; **off by default** | open (comparison only) |
 | Per-piece smoothing | `InterpolateDynamicItems` | That each piece's pose history lines up in time with the rest of the body | in progress (skaters under `on`: ctx-keyed rings, one reset per character) |
 | Grouping a character | char_sync (diagnostic) | Which pieces form one character: LW entity, then pack owner, then memory proximity | open |
-| Cloth (ropa) state | `g_ropa_state_cache`, the `flag_x` test, the dropped-garment gate | Whether a garment's cloth sim is active and which layout its bank uses. Wrong on the first frame after a replay seek (KI-125: the flag reads active, the game draws something else) | open |
+| Cloth (ropa) state | `g_ropa_state_cache`, the `flag_x` test, the dropped-garment gate | Whether a garment's cloth sim is active and which layout its bank uses. Right on the first frame after a replay seek too (KI-125 is a buffer-read timing race, not this test) | open |
 | Rigid clone pairing | `g_rigid_world_cache`, nearest-world matching | Which clone of a shared mesh a draw belongs to | open |
 
 ## The game's own renderer still running

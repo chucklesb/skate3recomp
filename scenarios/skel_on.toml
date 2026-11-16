@@ -1,10 +1,11 @@
-# RE-5 step 3: skater pieces served from the skeleton store (one pose per
+# RE-5: skater pieces served from the skeleton store (one pose per
 # character per tick; dbg_src 14), with one smoothing reset per character.
 # Free skate, then the forearm reel (KI-117 class) with char_sync on.
 #
 # Check:  tools/harness/skel_shadow_report.py <run> --max-div 0
 #         tools/harness/char_sync_report.py <run> --reel --max-bad 4
-# Compare with skel_shadow.toml (today's path) on the same target.
+# The store is on by default since 2026-11-16 (set here explicitly);
+# skel_off.toml is the A/B baseline (the old per-piece path).
 name = "skel_on"
 timeout_s = 1200
 boot = "demo"

@@ -1,0 +1,34 @@
+# RE-5: the A/B baseline for skel_on.toml: the same free skate and forearm
+# reel with the skeleton store OFF (the old per-piece path; the store is on
+# by default since 2026-11-16).
+#
+# Check:  tools/harness/char_sync_report.py <run> --reel
+#         tools/harness/frametime_report.py <skel_off run> <skel_on run>
+#         (frame times: compare medians of several runs; one pair is noise)
+name = "skel_off"
+timeout_s = 1200
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+skate3_native_render_scene_char_sync = true
+skate3_native_render_scene_skeleton = "off"
+skate3_native_render_scene_skeleton_log_interval = 30
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 300
+
+[[step]]
+do = "play_reel"
+reel = "a9bbe6156adca014"
+from = "marker"
+every_frames = 3
+tag = "rf"

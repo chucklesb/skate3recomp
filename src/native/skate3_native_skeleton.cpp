@@ -20,13 +20,14 @@
 #include "native/skate3_native_guest_read.h"
 #include "skate3_native_scene.h"
 
-REXCVAR_DEFINE_STRING(skate3_native_render_scene_skeleton, "off", "Skate 3",
+REXCVAR_DEFINE_STRING(skate3_native_render_scene_skeleton, "on", "Skate 3",
                       "Character skeleton store (RE-5): off | shadow | on. Captures one pose "
                       "per skater per tick at UpdateBoneTransforms and rebuilds every piece's "
                       "palette from it. shadow compares it with the bank capture and the "
                       "palette serve, changing nothing; on serves skater pieces from it and "
                       "resets their pose smoothing per character (skel: lines; "
-                      "docs/re/characters.md)")
+                      "docs/re/characters.md). Default on since 2026-11-16; off = the old "
+                      "per-piece path, for A/B")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_INT32(skate3_native_render_scene_skeleton_log_interval, 120, "Skate 3",
                      "Frames between skel: stats lines while the skeleton store is on "

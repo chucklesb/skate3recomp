@@ -22,9 +22,9 @@ In order; the roadmap has the context ([roadmap.md](roadmap.md), RE-5/RE-7):
 1. ~~**KI-125**~~: cause found 2026-11-16 (the game rewrites the on-screen
    cloth buffer one frame after a seek; its GPU reads late and sees it).
    Fix deferred by the user; options in [known-issues.md](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps).
-2. **RE-5 step 4:** the skeleton store's remaining checks with `on`: reel
-   stills against the baselines (`shots.py classify`), fps, `harness-ab`.
-   Then make `on` the default.
+2. ~~**RE-5 step 4**~~: done 2026-11-16, the skeleton store is on by
+   default (no regression in stills, char_sync or frame times on either
+   platform; [re/characters.md](re/characters.md)).
 3. **RE-5 step 5:** delete the per-piece guesses the store replaces for
    skaters ([re/workarounds.md](re/workarounds.md), rows "in progress").
 4. **RE-5b:** pedestrians, through the LivingWorld pack path (a "where is

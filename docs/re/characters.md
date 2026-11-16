@@ -107,7 +107,28 @@ them.
 
 ## The redesign (in progress)
 
-**Status (2026-11-16): step 3 done behind `on`** (still off by default).
+**Status (2026-11-16): step 4 done, `on` is the default.** Step 5 (deleting
+the per-piece guesses for skaters) is next.
+
+**Step 4 (2026-11-16), the checks before default on:**
+- Held reel stills, each shot with the store off and on
+  (`scenarios/skel_stills.toml`, `shots.py pairs <run> off on`): all 10
+  pairs pixel-identical on Windows and the Odin 2. Held frames give the old
+  path time to settle, so this rules out regressions only.
+- `skel_off.toml` vs `skel_on.toml` (free skate and the forearm reel),
+  medians of 3-4 runs each, all char_sync clean (0 bad frames):
+
+  | Platform | busy p50 off / on | busy p99 off / on | 1% low off / on |
+  |---|---|---|---|
+  | Odin 2 | 6.28 / 6.10 ms | 15.02 / 15.01 ms | 26.4 / 27.4 fps |
+  | Windows Vulkan | 1.88 / 2.05 ms | 4.62 / 4.57 ms | 29.4 / 29.4 fps |
+
+  No regression; single pairs vary more than these differences (Odin 2
+  busy p99 13.7-17.3 ms within one setting).
+- Store counters with `on`: Windows 6,352 pieces and Odin 2 5,191, all
+  built (0 missing), 0 divergent from the game's upload.
+
+**Step 3 (2026-11-16):**
 `skate3_native_render_scene_skeleton = on` serves every skinned piece of a
 skater-family entity from the store (`dbg_src` 14). Each character also gets
 one jump counter, raised for:
@@ -170,7 +191,7 @@ bug falls between screenshots; the video catches it.
 **Steps 1 and 2 (2026-11-15), shadow mode:**
 `src/native/skate3_native_skeleton.{h,cpp}` keeps one pose per skater per
 tick and rebuilds every piece from it. It's behind
-`skate3_native_render_scene_skeleton = off | shadow`, default off. In shadow
+`skate3_native_render_scene_skeleton = off | shadow` (default off then; `on` since step 4). In shadow
 it compares each rebuilt palette with the draw's bank capture (the game's own
 upload) and with today's serve, and draws nothing from it. Check:
 `scenarios/skel_shadow.toml`, then `tools/harness/skel_shadow_report.py <run>`.
