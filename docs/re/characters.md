@@ -107,8 +107,13 @@ them.
 
 ## The redesign (in progress)
 
-**Status (2026-11-16): step 4 done, `on` is the default.** Step 5 (deleting
-the per-piece guesses for skaters) is next.
+**Status (2026-11-16): steps 1-5 done for skaters; `on` is the default.**
+Step 5 deleted the player's content-matched serve (the UpdateBoneTransforms
+part snapshots, their content match and the 3x4/4x4 layout vote,
+`772ce82`). The other per-piece guesses still run because pedestrians use
+them; for skaters they now only decide whether a piece is drawn, and the
+store sets every pose ([workarounds.md](workarounds.md)). They go with
+RE-5b (pedestrians).
 
 **Step 4 (2026-11-16), the checks before default on:**
 - Held reel stills, each shot with the store off and on

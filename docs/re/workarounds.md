@@ -32,12 +32,12 @@ Pedestrians still use them (RE-5b).
 | Palette capture from the constant bank | `CaptureSkinnedState`, `BankPaletteBase` (`src/skate3_native_scene.cpp`) | Which constant registers hold this piece's bones, from row plausibility | open |
 | Palette validation | `RefinePaletteBase` | Whether a palette belongs to this mesh: samples must project on screen and keep a spread between 10-20% and 3× the bind size. Rejected the folded forearm until 2026-11-15 | open |
 | Content-matched serve | `ServeAuthoritativePalettesImpl` (`src/native/skate3_native_palette.cpp`) | Which pack belongs to which player piece: same bone count, within 1.5 m of last frame's position, plus a hold-or-advance hysteresis | **replaced** for skaters (RE-5 step 5): the UpdateBoneTransforms snapshots, their content match and the 3x4/4x4 layout vote are deleted; the store builds those pieces. The pack serve by ctx containment and its hysteresis remain for pedestrians and other packed instances (RE-5b) |
-| Pending fix-up | `OnDrawDone` (post-draw capture) | That a later draw with the same buffers is this piece | open |
-| Rescue and re-anchor | `BuildFrameScene` rescue block (`dbg_src` 3/13) | That a piece's pose from up to 10 frames ago, moved with the owner, is close enough | open |
-| Incoherent-palette heal | `dbg_src` 6 | Same, at publish time | open |
+| Pending fix-up | `OnDrawDone` (post-draw capture) | That a later draw with the same buffers is this piece | open (for skaters it now only decides whether a piece is drawn; the store sets its pose. Goes with RE-5b) |
+| Rescue and re-anchor | `BuildFrameScene` rescue block (`dbg_src` 3/13) | That a piece's pose from up to 10 frames ago, moved with the owner, is close enough | open (skaters: the store re-serves every rescued piece with this tick's pose, so only the item itself is guessed; pedestrians still get the old pose. Goes with RE-5b) |
+| Incoherent-palette heal | `dbg_src` 6 | Same, at publish time | open (skaters: overwritten by the store, as above) |
 | LW gap fill | `dbg_src` 9 | A pedestrian's last pose for up to 2 frames | open |
 | Rescue serve, continuity (dougieprishpreed) | cvars `rescue_serve`, `smooth_continuity` | Symptom fixes; **off by default** | open (comparison only) |
-| Per-piece smoothing | `InterpolateDynamicItems` | That each piece's pose history lines up in time with the rest of the body | in progress (skaters under `on`: ctx-keyed rings, one reset per character) |
+| Per-piece smoothing | `InterpolateDynamicItems` | That each piece's pose history lines up in time with the rest of the body | **replaced** for skaters (RE-5 step 3, default since step 4): store-served pieces use ctx-keyed rings and one reset per character. The per-piece distance gate stays for props, vehicles and pedestrians |
 | Grouping a character | char_sync (diagnostic) | Which pieces form one character: LW entity, then pack owner, then memory proximity | open |
 | Cloth (ropa) state | `g_ropa_state_cache`, the `flag_x` test, the dropped-garment gate | Whether a garment's cloth sim is active and which layout its bank uses. Right on the first frame after a replay seek too (KI-125 is a buffer-read timing race, not this test) | open |
 | Rigid clone pairing | `g_rigid_world_cache`, nearest-world matching | Which clone of a shared mesh a draw belongs to | open |

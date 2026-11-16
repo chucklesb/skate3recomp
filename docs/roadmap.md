@@ -57,10 +57,10 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   character), verified on both (char_sync clean). Step 4: stills, fps and
   char_sync show no regression on either platform; **`on` is the default**
   (2026-11-16).
-  Next:
-  1. Step 5: delete the per-piece guesses for skaters
-     ([re/workarounds.md](re/workarounds.md)).
-  2. RE-5b: pedestrians (the LivingWorld pack path).
+  Step 5: the player's content-matched serve is deleted; the other guesses
+  only decide which skater pieces are drawn now, and stay for pedestrians.
+  Next: RE-5b, pedestrians (the LivingWorld pack path), then delete the
+  remaining per-piece guesses ([re/workarounds.md](re/workarounds.md)).
   KI-125 turned out to be the cloth, not the skeleton: a buffer-read timing
   race after a seek, documented, fix deferred.
 - RE-6 [ ] **Who issues the emulated passes** native-only must replace

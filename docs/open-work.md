@@ -25,8 +25,8 @@ In order; the roadmap has the context ([roadmap.md](roadmap.md), RE-5/RE-7):
 2. ~~**RE-5 step 4**~~: done 2026-11-16, the skeleton store is on by
    default (no regression in stills, char_sync or frame times on either
    platform; [re/characters.md](re/characters.md)).
-3. **RE-5 step 5:** delete the per-piece guesses the store replaces for
-   skaters ([re/workarounds.md](re/workarounds.md), rows "in progress").
+3. ~~**RE-5 step 5**~~: done 2026-11-16 (the player's content-matched
+   serve deleted; the remaining guesses wait for RE-5b).
 4. **RE-5b:** pedestrians, through the LivingWorld pack path (a "where is
    the pose" probe first).
 5. **RE-7:** native replacements of `UpdateBoneTransforms` and
