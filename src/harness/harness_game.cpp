@@ -96,9 +96,9 @@ constexpr uint32_t kServiceVtable = 0x82315370;
 constexpr uint32_t kTeleportStateBlock = 0x830B7AE8;
 
 // Which district each locator is in (generated from the game's locator
-// files), and the map keys the pause map passes per district (captured from
-// the menu). Districts without a known key use the sequencer path, which
-// cannot load another map.
+// files), and the map key the pause map passes per district. All ten are
+// known; a district missing here would fall back to the sequencer path,
+// which cannot load another map.
 struct LocatorDistrict {
   uint32_t hash;
   const char* district;
@@ -110,10 +110,20 @@ struct DistrictKey {
   const char* district;
   uint64_t key;
 };
+// The key is the 64-bit name hash (lookup8, NameHash64) of the district's
+// `world` vault record (docs/re/attrib_names.tsv); each was checked by a
+// teleport into the district (Windows, 2026-11-15).
 constexpr DistrictKey kDistrictKeys[] = {
-    {"DownTown", 0x4773016A41B2E05Eull},
-    {"University", 0xCB473E68A2EAFABAull},
-    {"Industrial", 0xA8B1F47090679026ull},
+    {"DownTown", 0x4773016A41B2E05Eull},             // dist_downtown
+    {"University", 0xCB473E68A2EAFABAull},           // dist_university
+    {"Industrial", 0xA8B1F47090679026ull},           // dist_industrial
+    {"SkateSchool", 0x2DC7AD2CB158A3D8ull},          // dist_skateschool
+    {"StartPark", 0xC44D63A62881E444ull},            // dist_startpark
+    {"DownTownSkatePark", 0xCD2330669DB5F99Dull},    // dist_downtownpark
+    {"IndustrialSkatePark", 0x6F528A3198E417C3ull},  // dist_industrialpark
+    {"MegaPark", 0x1817F8B164860537ull},             // dist_megapark
+    {"MaloofMoneyCup", 0xE35BB54793619839ull},       // dist_maloofmoneycup (DLC)
+    {"BlackBoxPark", 0x03D1852F5F9C102Bull},         // dist_blackboxpark (DLC)
 };
 
 const char* DistrictOf(uint32_t hash) {

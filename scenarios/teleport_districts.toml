@@ -1,0 +1,92 @@
+# Teleport into every district that has its own map: the skate school, the
+# skate parks and the two DLC parks, then back to Downtown. Each uses the
+# district's map key (the name hash of its `world` vault record, in
+# kDistrictKeys, src/harness/harness_game.cpp), so the game loads the map
+# before the skater arrives. The DLC stops need the DLC installed.
+name = "teleport_districts"
+timeout_s = 1500
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 150   # a teleport issued during the spawn and location title is dropped
+
+[[step]]
+do = "teleport"   # skate school
+location = "Z_SC_Navigation"
+timeout_s = 150
+
+[[step]]
+do = "screenshot"
+tag = "z_sc_navigation"
+
+[[step]]
+do = "teleport"   # the starter skate park
+location = "Z_SP_SkateParkStart2"
+timeout_s = 150
+
+[[step]]
+do = "screenshot"
+tag = "z_sp_skateparkstart2"
+
+[[step]]
+do = "teleport"   # the Downtown skate park
+location = "Z_SP_DT_Start"
+timeout_s = 150
+
+[[step]]
+do = "screenshot"
+tag = "z_sp_dt_start"
+
+[[step]]
+do = "teleport"   # the Industrial skate park
+location = "Z_SP_Ind_SP_Start"
+timeout_s = 150
+
+[[step]]
+do = "screenshot"
+tag = "z_sp_ind_sp_start"
+
+[[step]]
+do = "teleport"   # the mega park
+location = "Z_MegaPark_SkatePark"
+timeout_s = 150
+
+[[step]]
+do = "screenshot"
+tag = "z_megapark_skatepark"
+
+[[step]]
+do = "teleport"   # Maloof Money Cup (DLC)
+location = "freeskate_DLC_maloof_locator"
+timeout_s = 150
+
+[[step]]
+do = "screenshot"
+tag = "freeskate_dlc_maloof_locator"
+
+[[step]]
+do = "teleport"   # Black Box park (DLC)
+location = "freeskate_DLC_blackbox"
+timeout_s = 150
+
+[[step]]
+do = "screenshot"
+tag = "freeskate_dlc_blackbox"
+
+[[step]]
+do = "teleport"   # back to Downtown
+location = "Z_DT_Tresoutta"
+timeout_s = 150
+
+[[step]]
+do = "screenshot"
+tag = "z_dt_tresoutta"

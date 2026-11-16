@@ -167,22 +167,28 @@ counted as a separate one-piece character and not checked.)
 screen stays black. The HUD still draws and the game keeps running, but the
 world never appears. Waiting doesn't help, so it isn't a slow load.
 
-**How to see it:** teleport to an affected locator with the harness
-`teleport` verb. The surveyed locators are in
-[teleport-locations.md](teleport-locations.md); the black ones still need to
-be marked there.
+**How to see it:** teleport to `Z_SP_SkateParkStart2`, the starter skate
+park ("PCU Training"): black on every visit (Windows, Vulkan, 2026-11-15,
+run `20261115-231057_startpark_check`; `scenarios/teleport_districts.toml`
+passes through it). The other surveyed locators are in
+[teleport-locations.md](teleport-locations.md).
 
 **Status:** open · **Severity:** low to medium · **Found:** 2026-11-08, while
 surveying teleport locations.
 
-**Where it happens:** native renderer or streaming.
+**Where it happens:** the native renderer: the emulated renderer (F5) shows
+the park.
 
 <details>
 <summary>Technical details</summary>
 
-- Not yet checked with the emulated renderer (F5).
-- **Next step:** mark the affected locators, compare native and emulated
-  (F5, or the harness `renderer` verb), and take a RenderDoc capture at one.
+- **Native vs emulated (2026-11-15):** at `Z_SP_SkateParkStart2` the
+  native frame is black (HUD only) on arrival and 90 frames later; switching
+  to the emulated renderer shows the park (an indoor concrete floor, the
+  skater lit). So it is the native scene, not streaming.
+- **Next step:** a RenderDoc capture there (`scenarios/teleport_districts.toml`
+  reaches it), and check the other park maps' variants (`dist_startpark_*`
+  `world` records: `_empty`, `_full`, `_tutorial_01`).
 
 </details>
 

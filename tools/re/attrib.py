@@ -56,14 +56,22 @@ def cmd_names(a) -> int:
             if e[0].endswith("_summaryreport.txt"):
                 text = b.data(e).decode("latin1")
                 records.update(REPORT.findall(text))
+    # One row per name; a record name used in several classes lists them all
+    # (e.g. dist_downtown is an aud_worlddata and a world record; the map keys
+    # are the world ones).
     table: dict[int, tuple[str, str, str]] = {}
+    in_classes: dict[str, set[str]] = {}
     clash = 0
     for cls, rec in sorted(records):
         table.setdefault(name_hash(cls.encode()), ("class", cls, cls))
+        in_classes.setdefault(rec, set()).add(cls)
+    for rec, classes in sorted(in_classes.items()):
         h = name_hash(rec.encode())
         if h in table and table[h][2] != rec:
             clash += 1
-        table.setdefault(h, ("record", cls, rec))
+            continue
+        if h not in table:
+            table[h] = ("record", ",".join(sorted(classes)), rec)
     with open(OUT, "w") as f:
         f.write("# hash\tkind\tclass\tname (tools/re/attrib.py; the game's lookup8 name hash of Attrib "
                 "vault classes and records)\n")
@@ -85,7 +93,9 @@ def cmd_lookup(a) -> int:
         if h in table:
             hits.append((h, table[h]))
     else:
-        hits = [(h, v) for h, v in table.items() if a.query.lower() in v[2].lower()]
+        q = a.query.lower()
+        hits = [(h, v) for h, v in table.items() if q in v[2].lower() or (q.endswith(".class") and
+                                                                           q[:-6] in v[1].split(","))]
     for h, (kind, cls, name) in hits[:200]:
         print(f"{h:016X}  {kind:6s} {cls}/{name}" if kind == "record" else f"{h:016X}  class  {cls}")
     if not hits:

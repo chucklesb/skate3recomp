@@ -9,9 +9,30 @@ first attempt (`out/re/teleport_survey_map.txt`, not in the repo).
   The ones confirmed against the pause map by hand are noted.
 - Industrial destinations load the Industrial map first: ~11 s, against ~3 s
   for Downtown and University.
-- Districts without a known map key (the skate school, the separate skate
-  parks, DLC areas) are not supported yet: the teleport arrives before
-  their map is loaded and the skater falls through the world.
+- Every district has its map key now (2026-11-15): the key is the name hash
+  of the district's `world` vault record (`dist_skateschool`,
+  `dist_megapark`, ...; [re/attrib_names.tsv](re/attrib_names.tsv)), so the
+  skate school, the separate skate parks and the DLC parks load before the
+  skater arrives. `scenarios/teleport_districts.toml` visits one place in
+  each:
+
+| Location | District | Map key (`world` record) | Map label |
+|---|---|---|---|
+| `Z_SC_Navigation` | SkateSchool | `dist_skateschool` | Skate School |
+| `Z_SP_SkateParkStart2` | StartPark | `dist_startpark` | PCU Training (native renderer: black, [KI-118](known-issues.md#ki-118-the-screen-goes-black-after-spawning-at-some-locations)) |
+| `Z_SP_DT_Start` | DownTownSkatePark | `dist_downtownpark` |  |
+| `Z_SP_Ind_SP_Start` | IndustrialSkatePark | `dist_industrialpark` |  |
+| `Z_MegaPark_SkatePark` | MegaPark | `dist_megapark` | Stadium |
+| `freeskate_DLC_maloof_locator` | MaloofMoneyCup (DLC) | `dist_maloofmoneycup` | Maloof Money Cup Park |
+| `freeskate_DLC_blackbox` | BlackBoxPark (DLC) | `dist_blackboxpark` | Black Box Skatepark |
+
+- Teleport only after the spawn settles (`wait frames = 150` after
+  `gameplay = true`): one issued during the location title is dropped.
+- The pause map's destinations are the `fe_locations` vault records,
+  `dist_<district>_<place>` (`dist_downtown_tresoutta`,
+  `dist_university_clocktower`, ...; `tools/re/attrib.py lookup fe_locations.class`).
+
+The 72 places surveyed on 2026-11-08 (the three big districts):
 
 | Location | District | Position (x, y, z) | Map label |
 |---|---|---|---|
