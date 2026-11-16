@@ -751,13 +751,15 @@ def run_windows(scenario: Path, config: str, backend: str, extra: list[str],
                 renderdoc: Path | None = None, headless: bool = True) -> Path | None:
     """Run a scenario on this PC; return the run folder moved under out_root.
 
-    headless: the game window stays hidden (--window_hidden=true); the game
-    renders as usual and the harness screenshots, videos and captures work the
-    same. A `window show = true` step shows it when a step needs the user.
+    headless: the game starts windowed (not fullscreen) with the window hidden
+    (--window_hidden=true) and audio muted; the game renders as usual and the
+    harness screenshots, videos and captures work the same. A `window show =
+    true` step shows the window and turns audio on; `show = false` hides and
+    mutes it again.
     """
     if headless:
-        # First, so an explicit --window_hidden after `--` wins.
-        extra = ["--window_hidden=true", *extra]
+        # First, so an explicit flag after `--` wins.
+        extra = ["--fullscreen=false", "--window_hidden=true", *extra]
     stage = win_stage(config)
     (stage / "scenarios").mkdir(parents=True, exist_ok=True)
     shutil.copy2(scenario, stage / "scenarios" / scenario.name)
