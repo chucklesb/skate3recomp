@@ -75,9 +75,10 @@ evidence = "src/skate3_native_scene.cpp (the walk that mirrors it)"
 
 [sub_82783D68]
 name = "Sk8::SkaterPresEntity::BindConstants"
+role = "Base BindConstants, sub_82784C70, then per material of each LOD instance SetParameter 0xD5DF94E7 = entity+496 (1 row), 0x040E4D1E = +512 (9 lighting rows), 0x39E49D7A = +656, and two rows from sub_82C282C8. Skater PS: c22 = +496, c24..c32 = +512..+640 (100% in the char-rows probe)."
 confidence = "likely"
-evidence = "hook in src/"
-hooked = "src/"
+evidence = "disassembly; char-rows probe (docs/re/characters.md, BindConstants family)"
+hooked = "src/skate3_native_render.cpp"
 
 [sub_82785260]
 name = "ColorizedSkaterPresEntity::BindConstants"
@@ -94,10 +95,17 @@ hooked = "src/"
 
 [sub_827C1720]
 name = "cLivingWorldPresEntity::BindConstants"
-role = "Serves the entity's opacity (entity+528.x) as the shader's output alpha."
+role = "Base BindConstants, then per material of each LOD instance SetParameter 0xD5DF94E7 = entity+528 (opacity in .x) and 0x39E49D7A = entity+592 (1 row each). The parameter keeps a pointer: the GPU gets the entity's memory at upload time."
 confidence = "likely"
-evidence = "hook in src/; LW entity store"
-hooked = "src/"
+evidence = "disassembly; char-rows probe (docs/re/characters.md, BindConstants family); LW entity store"
+hooked = "src/skate3_native_render.cpp"
+
+[sub_827C25D8]
+name = "LivingWorld-derived BindConstants (pedestrian lighting)"
+role = "cLivingWorldPresEntity::BindConstants, then sub_827816C0 computes 9 lighting rows from a global object into entity+1232..+1360 (bound as 0x040E4D1E, 9 rows); also 0xB005EA6C = +1168 and 0x576C94F7 = +1184 (pedestrian PS c22 / c23, vehicles c21 / c22, 100% in the probe)."
+confidence = "guess"
+evidence = "disassembly; char-rows probe run 20261116 char_probe; Skate 2 lead MeshIndicator::BindConstants (vtable match) does not fit the pedestrian use"
+hooked = "src/skate3_native_render.cpp (probe snapshot only)"
 
 [sub_827C1188]
 name = "cLivingWorldPresEntity::Update"

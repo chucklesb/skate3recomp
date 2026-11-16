@@ -99,7 +99,9 @@ true FMA (`simde_mm_fmadd_ps`) under the VMX flush-to-zero mode
 uses the same primitives in the same order after `ctx.fpscr.enableFlushMode()`,
 and masks vector addresses to 16 bytes like `lvx`/`stvx`.
 
-Switch: `skate3_native_pose_replace = off | shadow | on` (`pose:` lines).
+Switch: `skate3_native_pose_replace = off | shadow | on` (`replace:` lines,
+`tools/harness/replace_report.py`; the framework is
+`src/native/skate3_native_replace.{h,cpp}`, see below).
 Shadow computes before the recompiled function and compares bytes after.
 
 | Check | Windows Vulkan | Odin 2 |
@@ -113,6 +115,66 @@ Shadow computes before the recompiled function and compares bytes after.
 non-inlined SEH / `sigsetjmp` call per read) and was slower than the
 recompiled code (Windows busy p50 4.51 → 4.82 ms). A replacement only
 touches what the guest code touches on the same call, so it reads directly.
+
+**Framework for the next ones** (`src/native/skate3_native_replace.{h,cpp}`,
+2026-11-16): a replacement is a `Family` (name, mode function, `Compute`
+that fills `Writes`: the rows of big-endian words the recompiled function
+would write). The hook body is one call, `native_replace::Run(family, ctx,
+base, &__imp__sub_X)`: off runs the recompiled code; shadow computes, runs it
+and compares every row; on writes the computed rows (and falls back to the
+recompiled code when `Compute` refuses). `skate3_native_replace_all =
+default | off | shadow` overrides every family for A/B runs. One `replace:`
+line per 120 frames; `tools/harness/replace_report.py <run>` sums them and
+fails on any diff.
+
+### Character lighting rows: the BindConstants family (RE-7 Part C, 2026-11-16)
+
+The native renderer takes each character piece's lighting rows (`char_rows`)
+from the pixel-shader constant bank after the draw, paired with the piece by
+its buffers (the post-draw fix-up, ~95% of pieces). Where those rows come
+from:
+
+- `Sk8::PresentationEntity::BindConstants` (`sub_827A6658`, base): for every
+  material of every LOD instance (records of 80 bytes, count `u16 +50` of the
+  model), a virtual `SetParameter(nameHash, data, count)` on the material's
+  parameter block: `0x7DDF552B` from `entity+416`, 4 rows (the world
+  matrix).
+- `Sk8::SkaterPresEntity::BindConstants` (`sub_82783D68`): `0xD5DF94E7` from
+  `+496` (1 row), `0x040E4D1E` from `+512` (9 rows), `0x39E49D7A` from `+656`
+  (1 row), and `0x5DA89822` / `0x5DA89821` from two pointers that
+  `sub_82C282C8(entity+12, ...)` returns; then `sub_827A6A68`.
+- `cLivingWorldPresEntity::BindConstants` (`sub_827C1720`): the same
+  `0xD5DF94E7` and `0x39E49D7A` parameters from `+528` and `+592`.
+- Its derived class bound by `sub_827C25D8` (Skate 2 lead:
+  `MeshIndicator::BindConstants`): `sub_827816C0` computes 9 rows from a global
+  lighting object, stored to `+1232..+1360` and bound as `0x040E4D1E`; plus
+  `0xB005EA6C` from `+1168` and `0x576C94F7` from `+1184`.
+
+**`SetParameter` keeps a pointer, not a copy:** the constants reach the GPU
+from the entity's memory at upload time. A snapshot taken right after
+BindConstants matches the skater's 9 rows 0% of the time; the live fields
+read at the draw match 100%.
+
+**Measured register map** (`skate3_native_render_scene_char_rows_probe`,
+plaza, Windows; bit-exact matches of the validated bank with the entity's
+live fields):
+
+| Family | Rows from the entity | Match |
+|---|---|---|
+| 2 (skater skin / cloth) | c22 = `+496`; c24..c32 = `+512..+640` (the 9 rows) | 100% (c22 99.7%: the field can change between upload and capture) |
+| 4 (hair) | c15 = `+496`; c32 = `+640` | 100% |
+| 3 (pedestrian) | c22 = `+1168`; c23 = `+1184` | 100% |
+| 6 (vehicles) | c21 = `+1168`; c22 = `+1184` | 100% |
+| 5 | c22 / c23 = `+1168` / `+1184` | partial (several shaders share the family) |
+
+Every other row the families use is the same for all entities in a frame
+(light direction, key colour, exposure, shadow biases) or a material
+constant. So the rows can be built without the buffer pairing: per-entity
+rows read from the entity at the draw, frame-global rows from any validated
+capture this frame, material rows per mesh. That is the next step (behind a
+cvar, shadowed against the bank first); the three `char_rows` caches
+(per mesh, per instance, per entity) become unnecessary for covered
+entities.
 
 ## Structures (known offsets)
 

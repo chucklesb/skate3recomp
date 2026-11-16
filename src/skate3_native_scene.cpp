@@ -10,6 +10,8 @@
 #include "generated/skate3_init.h"
 
 #include <array>
+#include <map>
+#include <tuple>
 #include <atomic>
 #include <algorithm>
 #include <bit>
@@ -45,6 +47,7 @@
 #include "native/skate3_native_palette.h"
 #include "native/skate3_native_skeleton.h"
 #include "native/skate3_native_pose.h"
+#include "native/skate3_native_replace.h"
 // Offline-compiled SPIR-V for the native shaders (compiled from the HLSL
 // sources with DXC): the Vulkan RHI backend consumes these blobs; the D3D12
 // backend runtime-compiles the embedded HLSL as before.
@@ -751,6 +754,13 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_caster_refresh_all, true, "Skate 
                     "guard refused, and the right clone stayed on its stale caster "
                     "bank, the NPC blink). false = legacy oldest-only, non-ropa "
                     "refresh.")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skate3_native_render_scene_char_rows_probe, false, "Skate 3",
+                    "RE-7 diagnostic: on each validated character-lighting capture, "
+                    "compare every PS bank row with the owning entity's BindConstants "
+                    "sources (entity+496, +512 x9, +656) bit for bit, and with other "
+                    "entities' rows this frame (frame-global rows). Logs char-probe: "
+                    "lines every 600 frames.")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_char_rows_inst, true, "Skate 3",
                     "Per-(mesh,instance) fallback for the character-lighting capture: "
@@ -4400,7 +4410,136 @@ void CaptureCacDecals(uint8_t* base, const DrawItem& item, uint32_t plus,
   if (mode != 0.0f) store(decal_slot, kCharDecalFetch);
   if (decal2_amt != 0.0f) store(decal2_slot, kCharDecalFetch + 6);
 }
+// RE-7 probe (skate3_native_render_scene_char_rows_probe): where each PS
+// bank row of a validated character capture comes from. Sk8::SkaterPresEntity::
+// BindConstants (sub_82783D68) sets, on every material of every LOD instance,
+// three parameters from the entity: entity+496 (1 vec4), +512 (9 vec4) and
+// +656 (1 vec4); the shader's register for each is unknown. For each
+// (family, editor shift, register) count which entity vec4 it equals bit for
+// bit, and how often it equals another entity's same register this frame
+// (a frame-global row such as the light direction).
+constexpr int kProbeRows = 40;
+// Entity offsets compared: the skater class's sources (+496, +512 x9, +656),
+// cLivingWorldPresEntity::BindConstants's (sub_827C1720: +528 and +592, the
+// same parameter hashes as the skater's +496 / +656), and the base class's
+// world matrix (sub_827A6658: +416, 4 rows).
+// The LivingWorld-derived class bound by sub_827C25D8 (Skate 2 lead:
+// MeshIndicator::BindConstants; calls sub_827C1720 first) adds +1168, +1184
+// and the 9-row parameter (hash 0x040E4D1E, the skater's +512) from +1232.
+constexpr uint32_t kProbeOffsets[] = {496,  512,  528,  544,  560,  576,  592,  608,
+                                      624,  640,  656,  416,  432,  448,  464,  1168,
+                                      1184, 1232, 1248, 1264, 1280, 1296, 1312, 1328,
+                                      1344, 1360};
+constexpr int kProbeFields = sizeof(kProbeOffsets) / sizeof(kProbeOffsets[0]);
+struct CharProbeCell {
+  uint32_t total = 0;
+  uint32_t field[kProbeFields] = {};  // live entity field at capture time
+  uint32_t snap[kProbeFields] = {};   // the field as BindConstants saw it
+  uint32_t global = 0;   // equal to another entity's row this frame
+  uint32_t compared = 0; // another entity's row was there to compare
+};
+// The probed fields as of each entity's latest BindConstants (NoteCharBind).
+std::mutex g_bind_snap_mu;
+std::unordered_map<uint32_t, std::array<uint32_t, kProbeFields * 4>> g_bind_snap;
+std::map<std::pair<int, int>, std::array<CharProbeCell, kProbeRows>> g_char_probe;
+struct CharProbeSeen {
+  uint32_t words[4];
+  uint32_t entity;
+  uint64_t frame;
+};
+std::map<std::tuple<int, int, int>, CharProbeSeen> g_char_probe_seen;
+uint64_t g_char_probe_logged = 0;
+
+void CharRowsProbe(uint8_t* base, const DrawItem& item, uint32_t ps, uint8_t fam,
+                   uint32_t plus) {
+  skate3::native_entity::CtxInfo ident;
+  if (!skate3::native_entity::LookupCtx(item.ctx, &ident) || !ident.entity) {
+    return;
+  }
+  uint32_t ent[kProbeFields][4];
+  for (int k = 0; k < kProbeFields; ++k) {
+    const uint32_t at = ident.entity + kProbeOffsets[k];
+    for (int c = 0; c < 4; ++c) {
+      if (!GuestTryLoadU32(base, at + 4 * c, &ent[k][c])) return;
+    }
+  }
+  std::array<uint32_t, kProbeFields * 4> snap{};
+  bool have_snap = false;
+  {
+    std::lock_guard lk(g_bind_snap_mu);
+    const auto it = g_bind_snap.find(ident.entity);
+    if (it != g_bind_snap.end()) {
+      snap = it->second;
+      have_snap = true;
+    }
+  }
+  auto& cells = g_char_probe[{fam, int(plus)}];
+  const uint64_t frame = g_guest_frame;
+  for (int r = 0; r < kProbeRows; ++r) {
+    uint32_t w[4];
+    bool ok = true;
+    for (int c = 0; c < 4 && ok; ++c) ok = GuestTryLoadU32(base, ps + (r * 4 + c) * 4, &w[c]);
+    if (!ok) continue;
+    CharProbeCell& cell = cells[r];
+    ++cell.total;
+    for (int k = 0; k < kProbeFields; ++k) {
+      // All-zero vectors match by coincidence (unused rows); not evidence.
+      if ((ent[k][0] | ent[k][1] | ent[k][2] | ent[k][3]) == 0) continue;
+      if (std::memcmp(w, ent[k], sizeof(w)) == 0) ++cell.field[k];
+      const uint32_t* s = &snap[k * 4];
+      if (have_snap && (s[0] | s[1] | s[2] | s[3]) != 0 && std::memcmp(w, s, sizeof(w)) == 0) {
+        ++cell.snap[k];
+      }
+    }
+    auto& seen = g_char_probe_seen[{fam, int(plus), r}];
+    if (seen.frame == frame && seen.entity != ident.entity) {
+      ++cell.compared;
+      if (std::memcmp(w, seen.words, sizeof(w)) == 0) ++cell.global;
+    } else if (seen.frame != frame) {
+      std::memcpy(seen.words, w, sizeof(w));
+      seen.entity = ident.entity;
+      seen.frame = frame;
+    }
+  }
+  if (frame >= g_char_probe_logged + 600) {
+    g_char_probe_logged = frame;
+    for (const auto& [key, rows] : g_char_probe) {
+      std::string line;
+      for (int r = 0; r < kProbeRows; ++r) {
+        const CharProbeCell& c = rows[r];
+        if (!c.total) continue;
+        int best = -1;
+        for (int k = 0; k < kProbeFields; ++k) {
+          const auto score = [&](int i) { return std::max(c.field[i], c.snap[i]); };
+          if (score(k) && (best < 0 || score(k) > score(best))) best = k;
+        }
+        line += fmt::format(" c{}:", r);
+        if (best >= 0) {
+          line += fmt::format("e{}={}/{}/s{}", kProbeOffsets[best], c.field[best], c.total,
+                              c.snap[best]);
+        }
+        if (c.compared) line += fmt::format(" g{}/{}", c.global, c.compared);
+      }
+      REXLOG_INFO("char-probe: frame {} fam {} plus {}:{}", frame, key.first, key.second, line);
+    }
+  }
+}
 }  // namespace
+
+void NoteCharBind(uint8_t* base, uint32_t entity) {
+  if (!REXCVAR_GET(skate3_native_render_scene_char_rows_probe) || entity == 0) {
+    return;
+  }
+  std::array<uint32_t, kProbeFields * 4> snap{};
+  for (int k = 0; k < kProbeFields; ++k) {
+    for (int c = 0; c < 4; ++c) {
+      if (!GuestTryLoadU32(base, entity + kProbeOffsets[k] + 4 * c, &snap[k * 4 + c])) return;
+    }
+  }
+  std::lock_guard lk(g_bind_snap_mu);
+  if (g_bind_snap.size() > 4096) g_bind_snap.clear();
+  g_bind_snap[entity] = snap;
+}
 
 void CaptureCharLighting(uint8_t* base, DrawItem& item) {
   if (CaptureHallOfMeatState(base, item)) return;
@@ -4676,6 +4815,9 @@ void CaptureCharLighting(uint8_t* base, DrawItem& item) {
       g_char_shadow_bias[2] = bz;
       g_char_shadow_bias_frame = g_guest_frame;
     }
+  }
+  if (REXCVAR_GET(skate3_native_render_scene_char_rows_probe)) {
+    CharRowsProbe(base, item, ps, fam, plus);
   }
   std::memcpy(item.char_rows, local, sizeof(item.char_rows));
   g_char_valid.fetch_add(1, std::memory_order_relaxed);
@@ -12258,6 +12400,7 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
     skate3::native_palette::OnFrameBuilt();
     skate3::native_skeleton::OnFrameBuilt();
     skate3::native_pose::OnFrameBuilt();
+    skate3::native_replace::OnFrameBuilt();
     g_frame_pal_tail_ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                  PerfClock::now() - pal_tail_t0)
                                  .count());

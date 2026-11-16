@@ -746,6 +746,10 @@ void OnSetStreamSource(uint32_t stream, uint32_t vb_obj, uint32_t offset, uint32
 // 1 = DrawVertices, 2 = BeginVertices (inline/cloth vertex path).
 void OnDrawDone(uint8_t* base, uint32_t func, uint32_t r4, uint32_t r5, uint32_t r6,
                 uint32_t r7);
+// After a character BindConstants (skater family, cLivingWorldPresEntity):
+// snapshots the entity's bound constant sources for the char-rows probe
+// (skate3_native_render_scene_char_rows_probe; RE-7 Part C).
+void NoteCharBind(uint8_t* base, uint32_t entity);
 
 // Offline-analysis recording, armed alongside the guest-memory snapshot:
 // captures every draw's bound buffers + full VS constant bank, plus the
