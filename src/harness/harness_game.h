@@ -20,6 +20,7 @@
 // later.
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -110,6 +111,22 @@ bool SuppressUi();
 bool ReelCurtain();
 
 // Main-thread game tick hook, after the original: runs the queued request, if any.
+// Runs `fn` on the simulation thread at the next frame boundary (after the
+// game-state tick, where game logic may run) and waits for it.
+bool RunOnGameThread(std::function<void(PPCContext&, uint8_t*)> fn, double timeout_s,
+                     std::string* error);
+
+// Calls a career stats object's unlock notifier (sub_82C1C2A0 with the
+// watcher at stats+0x1C), the check the game's own awards run after adding to
+// the counters (docs/re/career.md). False if the stats object has no watcher.
+bool CareerNotify(uint32_t stats, double timeout_s, std::string* error);
+
+// The career results presenter (captured from its update, sub_827CF570):
+// its state as JSON fields, and CareerShow sets its "show results" flag
+// (this+0x30), which pushes MilestoneUnlock when rewards are pending.
+std::string CareerPresenterJson(uint8_t* base);
+bool CareerShow(double timeout_s, std::string* error);
+
 void OnGuestFrame(PPCContext& ctx, uint8_t* base);
 
 }  // namespace skate3::harness::game

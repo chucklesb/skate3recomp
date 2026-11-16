@@ -54,7 +54,7 @@ enum class Verb {
                 // settle=true (false: return on arrival, e.g. a floorless locator)
   kRenderer,    // renderer="native"|"emulated" frames=30: the F5 switch, then settle
   kVideo,       // frames=N tag="x": every rendered frame as video/<tag>/f<n>.png
-  kCareer,      // board_sales=N: set the career's total board sales (docs/re/career.md)
+  kCareer,      // board_sales=N [notify]: set the career's total board sales (docs/re/career.md)
   kMem,         // op="find"|"refine"|"read"|"write" type="u8|u16|u32|f32|f64" value=N
                 // cmp="changed|unchanged|increased|decreased" addr="0x..." range=["lo","hi"]
                 // (live RE: find a game value in guest memory and change it; harness_mem.h)
@@ -162,6 +162,8 @@ struct Step {
 
   // career
   std::optional<double> board_sales;
+  bool career_show = false;    // show = true: then set the results presenter's flag
+  bool career_notify = false;  // notify = true: run the game's unlock check afterwards
 
   // snapshot
   bool native_snapshot = false;  // native = true: the native renderer's capture (Windows)

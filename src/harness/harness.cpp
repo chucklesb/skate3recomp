@@ -1266,9 +1266,30 @@ Outcome Execute(Run& r, const Step& st) {
                     "\"counters\":[%u,%u,%u,%u]",
                     s, static_cast<unsigned long long>(others + c[0]),
                     static_cast<unsigned long long>(want), first, c[1], c[2], c[3]);
-      Event(r, "career_set", buf);
+      std::string json = buf;
+      if (st.career_notify) {
+        // The check the game's awards run after adding (AwardBoardSales ->
+        // sub_82C1C2A0): crossing a milestone this way shows its screens.
+        std::string nerr;
+        const bool notified = game::CareerNotify(s, 10.0, &nerr);
+        json += notified ? ",\"notified\":true" : ",\"notified\":false,\"notify_error\":\"" + nerr + "\"";
+        if (!notified) {
+          Event(r, "career_set", json);
+          return Fail("career: " + nerr);
+        }
+      }
+      json += "," + game::CareerPresenterJson(base);
+      if (st.career_show) {
+        std::string serr;
+        if (!game::CareerShow(10.0, &serr)) {
+          Event(r, "career_set", json);
+          return Fail("career: " + serr);
+        }
+        json += ",\"shown\":true";
+      }
+      Event(r, "career_set", json);
       Outcome o;
-      o.result_json = buf;
+      o.result_json = json;
       return o;
     }
 

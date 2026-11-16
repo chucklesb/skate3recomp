@@ -135,6 +135,10 @@ transfer can't. They rank above the Skate 2 names.
   in [names_bindings.tsv](names_bindings.tsv). 17 are shared stubs: debug
   bindings compiled out to one function, listed with all their names.
   Library names aren't stored as plain strings.
+- **Front-end screens:** [fe_screens.tsv](fe_screens.tsv), the 86 FE screen
+  ids with their names and Flash movies (`tools/re/fe_screens.py`, from the
+  table at `0x8302F490`), for reading the harness's `fe` stacks and the FE
+  push log (e.g. 22 CrossBar, the pause menu; 64 MilestoneUnlock).
 - **Messages:** [messages.tsv](messages.tsv), 368 `cMsg` types by id (from
   `tools/re/messages.py`), for reading the RE probe's message census.
 - **Bindings as a check on the Skate 2 names:** on 82 functions named both

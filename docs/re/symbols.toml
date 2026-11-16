@@ -258,6 +258,50 @@ role = "Adds to the first board-sales counter, then notifies (sub_82C1C2A0) if s
 confidence = "confirmed"
 evidence = "binding table 0x823116DC; a challenge award on 2026-11-15 landed in the same counter (269,000 -> 281,500)"
 
+[sub_82C1C2A0]
+name = "Career unlock check"
+signature = "(watcher /* *(stats+0x1C) */)"
+role = "Tests each locked unlock on the watcher's list (+0x04) and fires those whose requirements now hold; the awards call it after adding to the counters."
+confidence = "confirmed"
+evidence = "harness career notify=true, Windows 2026-11-15: the list went 61 -> 51 and the milestone screens followed (with show)"
+
+[sub_82C1CA48]
+name = "Career unlock requirements met?"
+confidence = "likely"
+evidence = "decompile (called per pending unlock by sub_82C1C2A0)"
+
+[sub_82C1D988]
+name = "Career unlock state"
+signature = "(watcher, u64 unlock_hash)"
+role = "Looks the hash up in the watcher's two state lists (+0x14, +0x24)."
+confidence = "likely"
+evidence = "decompile"
+
+[sub_827CF570]
+name = "Career results presenter update"
+role = "Virtual, every frame. Pushes FE 64 (MilestoneUnlock, the rewards and milestone screens) when this+0x30 is set and the game isn't busy; reward object at this+0x5C."
+confidence = "confirmed"
+evidence = "harness career show=true sets this+0x30 -> FE push id=64 lr=0x827CF770, Windows 2026-11-15"
+hooked = "src/harness/harness_game.cpp"
+
+[sub_827C58B8]
+name = "Career rewards pending?"
+signature = "(rewards) -> bool"
+role = "Any of +0x24, +0x34, +0x3C..+0x4C nonzero."
+confidence = "likely"
+evidence = "decompile"
+
+[sub_827CD150]
+name = "Career pushes TeammateUnlock / FirstTeamMember"
+role = "Pushes FE 65 and 66."
+confidence = "likely"
+evidence = "li r4,65 / li r4,66 before sub_82D0ABE0; FE push log lr=0x827CD1E4 for 65"
+
+[sub_826504E0]
+name = "Pushes FirstTeamMember (FE 66)"
+confidence = "confirmed"
+evidence = "FE push log id=66 lr=0x82650574, Windows 2026-11-15"
+
 [sub_827D1210]
 name = "Lua AwardCash"
 signature = "(lua_State* L) : stats+0x14 += n; stats+0x18 += n"

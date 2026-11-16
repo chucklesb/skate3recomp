@@ -12,7 +12,7 @@ the linked pages; the backlog is [open-work.md](open-work.md).
 
 **Now** (finishing milestone 1, phase 0):
 1. [x] **Branches:** `native-only` here and in the SDK fork (`native-only`, from
-   `linux-aarch64-cross` e010699 and SDK `vulkan-debug-labels` 4ef36cf).
+   `linux-aarch64-cross` 062fb8d and SDK `vulkan-debug-labels` 4ef36cf).
 
 **Next:**
 2. [ ] **Native-only phase 1** (offscreen 2D compose), then phases 2-5.
@@ -33,8 +33,11 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   debug strings; handlers for the messages.
 - RE-4 [~] **Career pilot:** board sales understood (four counters, summed;
   [re/career.md](re/career.md)), the harness `career` step sets them, and the
-  "new team member" prompt is measured (row A). Left: the milestone check
-  (show the screens without a challenge), challenge completion state.
+  "new team member" prompt is measured (row A). The milestone screens now
+  show without a challenge (`career` `notify` + `show`,
+  `career_milestone.toml`), and every FE screen id has its name
+  ([re/fe_screens.tsv](re/fe_screens.tsv)). Left: the other three counters,
+  the save layout, challenge completion state.
 - RE-5 [ ] **The character skeleton** ([re/characters.md](re/characters.md)):
   one pose per character per tick; the likely fix for
   [KI-125](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps).

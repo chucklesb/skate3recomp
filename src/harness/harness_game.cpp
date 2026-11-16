@@ -36,6 +36,7 @@ REXCVAR_DEFINE_STRING(skate3_harness_re_poke, "", "Skate 3",
 REX_EXTERN(sub_82910CE8);  // registry find(map*, u32 key) -> entry* (node + 20) or 0
 REX_EXTERN(sub_82706F50);  // teleport sequencer(teleporter, matrix*, id, flag, b, b, b) -> bool
 REX_EXTERN(sub_8271A828);  // memcard owner event handler(owner, ref<event>*) -> 1 handled / 2 not
+REX_EXTERN(sub_82C1C2A0);  // career unlock notifier(watcher): fires unlocks whose condition now holds
 REX_EXTERN(sub_82B938D8);  // post message(msg*, recipient*, priority) (queued)
 REX_EXTERN(__imp__RtlEnterCriticalSection);  // 0x82F9CB44
 REX_EXTERN(__imp__RtlLeaveCriticalSection);  // 0x82F9CB54
@@ -162,6 +163,7 @@ struct Request {
   bool use_pos = false;  // TeleportToPos: pos/yaw instead of a locator
   float pos[3] = {};
   float yaw_deg = 0;
+  std::function<void(PPCContext&, uint8_t*)> call;  // RunOnGameThread
   std::optional<TeleportResult> result;
 };
 
@@ -415,6 +417,103 @@ TeleportResult TeleportToPos(const float pos[3], float yaw_deg, double timeout_s
   std::memcpy(req.pos, pos, sizeof(req.pos));
   req.yaw_deg = yaw_deg;
   return RunRequest(req, timeout_s);
+}
+
+bool RunOnGameThread(std::function<void(PPCContext&, uint8_t*)> fn, double timeout_s,
+                     std::string* error) {
+  Request req;
+  req.call = std::move(fn);
+  TeleportResult r = RunRequest(req, timeout_s);
+  if (!r.ok && error) {
+    *error = r.error;
+  }
+  return r.ok;
+}
+
+std::atomic<uint32_t> g_career_presenter{0};
+
+std::string CareerPresenterJson(uint8_t* base) {
+  const uint32_t p = g_career_presenter.load(std::memory_order_relaxed);
+  uint32_t flags = 0, rew = 0;
+  char b[256];
+  if (!p || !Read32(base, p + 0x30, &flags) || !Read32(base, p + 0x5C, &rew)) {
+    return "\"presenter\":null";
+  }
+  // The reward object's pending fields (sub_827C58B8 tests them all).
+  uint32_t f[7] = {};
+  const uint32_t offs[7] = {0x24, 0x34, 0x3C, 0x40, 0x44, 0x48, 0x4C};
+  for (int i = 0; i < 7; ++i) {
+    Read32(base, rew + offs[i], &f[i]);
+  }
+  std::snprintf(b, sizeof(b),
+                "\"presenter\":\"%08X\",\"presenter_flags30\":\"%08X\",\"rewards\":\"%08X\","
+                "\"rewards_pending\":[\"%X\",\"%X\",\"%X\",\"%X\",\"%X\",\"%X\",\"%X\"]",
+                p, flags, rew, f[0], f[1], f[2], f[3], f[4], f[5], f[6]);
+  return b;
+}
+
+bool CareerShow(double timeout_s, std::string* error) {
+  bool had = false;
+  const bool ran = RunOnGameThread(
+      [&](PPCContext&, uint8_t* base) {
+        const uint32_t p = g_career_presenter.load(std::memory_order_relaxed);
+        if (p) {
+          had = true;
+          base[p + 0x30] = 1;
+        }
+      },
+      timeout_s, error);
+  if (ran && !had && error) {
+    *error = "the career results presenter has not run yet (sub_827CF570)";
+  }
+  return ran && had;
+}
+
+bool CareerNotify(uint32_t stats, double timeout_s, std::string* error) {
+  bool had_watcher = false;
+  const bool ran = RunOnGameThread(
+      [&](PPCContext& ctx, uint8_t* base) {
+        uint32_t watcher = 0;
+        if (Read32(base, stats + 0x1C, &watcher) && watcher != 0) {
+          had_watcher = true;
+          // The watcher's lists (circular, sentinel at the offset; node+8 is
+          // the unlock's 64-bit hash): +0x04 pending, +0x14 and +0x24 the two
+          // states sub_82C1D988 reports.
+          auto lists = [&] {
+            std::string out;
+            for (uint32_t off : {0x04u, 0x14u}) {
+              const uint32_t head = watcher + off;
+              uint32_t n = 0;
+              int count = 0;
+              std::string hashes;
+              Read32(base, head, &n);
+              while (n && n != head && count < 64) {
+                uint32_t hi = 0, lo = 0;
+                Read32(base, n + 8, &hi);
+                Read32(base, n + 12, &lo);
+                char h[24];
+                std::snprintf(h, sizeof(h), "%s%08X%08X", count ? " " : "", hi, lo);
+                hashes += h;
+                ++count;
+                if (!Read32(base, n, &n)) break;
+              }
+              char b[32];
+              std::snprintf(b, sizeof(b), " +%02X:%d[", off, count);
+              out += b + hashes + "]";
+            }
+            return out;
+          };
+          const std::string before = lists();
+          CallGuest(ctx, base, sub_82C1C2A0, {watcher});
+          REXLOG_INFO("harness: career unlock check, watcher {:08X}; before{}; after{}", watcher,
+                      before, lists());
+        }
+      },
+      timeout_s, error);
+  if (ran && !had_watcher && error) {
+    *error = "the career stats object has no unlock watcher (stats+0x1C is 0)";
+  }
+  return ran && had_watcher;
 }
 
 namespace {
@@ -985,6 +1084,17 @@ void OnGuestFrame(PPCContext& ctx, uint8_t* base) {  // main (simulation) thread
       return;
     }
   }
+  if (req->call) {
+    req->call(ctx, base);
+    TeleportResult r;
+    r.ok = true;
+    {
+      std::lock_guard lk(g_mu);
+      req->result = std::move(r);
+    }
+    g_cv.notify_all();
+    return;
+  }
   if (req->use_pos) {
     TeleportResult r = DoTeleportPos(ctx, base, req->pos, req->yaw_deg);
     REXLOG_INFO("harness: teleport to [{:.2f}, {:.2f}, {:.2f}] yaw {:.1f} -> {}{}", req->pos[0],
@@ -1022,6 +1132,15 @@ void OnGuestFrame(PPCContext& ctx, uint8_t* base) {  // main (simulation) thread
 extern "C" REX_FUNC(sub_826D34B8) {
   __imp__sub_826D34B8(ctx, base);
   skate3::harness::game::OnGuestFrame(ctx, base);
+}
+
+// The career results presenter's update (virtual, vtable 0x82311800 slot;
+// main thread). It pushes FE 64 (MilestoneUnlock) when its flag this+0x30
+// is set and its reward object (this+0x5C) has pending items
+// (sub_827C58B8). Record `this` for the career step (docs/re/career.md).
+extern "C" REX_FUNC(sub_827CF570) {
+  skate3::harness::game::g_career_presenter.store(ctx.r3.u32, std::memory_order_relaxed);
+  __imp__sub_827CF570(ctx, base);
 }
 
 // Replay editor time update (render thread): sub_82C7EA50(this, f1 = frame

@@ -1,0 +1,127 @@
+# Reach board-sales milestones without a challenge (docs/re/career.md):
+# set the total, run the game's unlock check (notify), then raise the career
+# results presenter's flag (show), as a finished challenge does. The game
+# then shows Rewards (FE 64), the Milestone Unlocked cards for every
+# milestone crossed and what each unlocks (FE 65), and New Teammate (FE 66)
+# where a milestone adds one; A advances. Both are needed: notify alone
+# queues the rewards silently, show alone has nothing to show.
+# The total must be past the career's next milestone (the pause menu's Career
+# tab shows it; 300,000 is the "new team member" one). Nothing is saved
+# unless the game saves afterwards.
+name = "career_milestone"
+timeout_s = 600
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 150   # let the location title pass
+
+[[step]]
+do = "career"
+board_sales = 1000000
+notify = true
+show = true
+
+[[step]]
+do = "wait"
+frames = 120
+
+[[step]]
+do = "state"
+
+[[step]]
+do = "screenshot"
+tag = "screen1"
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 3
+
+[[step]]
+do = "wait"
+frames = 120
+
+[[step]]
+do = "state"
+
+[[step]]
+do = "screenshot"
+tag = "screen2"
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 3
+
+[[step]]
+do = "wait"
+frames = 120
+
+[[step]]
+do = "state"
+
+[[step]]
+do = "screenshot"
+tag = "screen3"
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 3
+
+[[step]]
+do = "wait"
+frames = 120
+
+[[step]]
+do = "state"
+
+[[step]]
+do = "screenshot"
+tag = "screen4"
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 3
+
+[[step]]
+do = "wait"
+frames = 120
+
+[[step]]
+do = "state"
+
+[[step]]
+do = "screenshot"
+tag = "screen5"
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 3
+
+[[step]]
+do = "wait"
+frames = 120
+
+[[step]]
+do = "state"
+
+[[step]]
+do = "screenshot"
+tag = "screen6"
+
+[[step]]
+do = "input"
+buttons = "a"
+frames = 3

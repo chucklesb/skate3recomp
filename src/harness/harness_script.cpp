@@ -186,6 +186,8 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
   s.mem_op = t["op"].value_or(std::string());
   s.native_snapshot = t["native"].value_or(false);
   s.board_sales = Number(t, "board_sales");
+  s.career_notify = t["notify"].value_or(false);
+  s.career_show = t["show"].value_or(false);
   s.mem_type = t["type"].value_or(std::string("u32"));
   s.mem_cmp = t["cmp"].value_or(std::string());
   if (const toml::array* rg = t["range"].as_array()) {
