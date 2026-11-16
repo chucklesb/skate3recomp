@@ -101,11 +101,18 @@ fallback until phase 5. The sizes are relative.
 
 ## Before we start
 
-**Status, 2026-11-14:**
-- **Done:** item 1 (published as the full release v2.1.0-aarch64.3, not a
-  testing pre-release); the Windows parts of 3-5 (see Baseline).
+**Status, 2026-11-15** (the tracker is in [roadmap.md](roadmap.md)):
+- **Done:**
+  - item 1: the known-good build to compare against is now
+    **v2.1.0-aarch64.4** (full release, 2026-11-15);
+  - item 3, mostly: the tour reaches every row except A's career prompt
+    (C and D were measured from a live photo-challenge session instead);
+  - items 4 and 5 on Windows (audit and reference shots).
 - **Still to do:**
-  - the Odin 2 baseline run of the tour;
+  - the Odin 2 tour run, with fps per screen (items 4 and 5 on the device);
+  - reference shots of a running photo challenge and the shot-choosing
+    screen (a short live session);
+  - the career "new team member" prompt (row A);
   - item 2, the branches.
 
 1. **A known-good build for testers:** publish the current state as a testing
@@ -113,12 +120,13 @@ fallback until phase 5. The sizes are relative.
    against.
 2. **Branches:** a `native-only` branch in this repo and a matching branch in
    the SDK fork. Each phase merges into `linux-aarch64-cross` once verified.
-3. **A native tour scenario** that reaches every row of the table. These are
-   missing today:
-   - a photo challenge's shutter and display card (C);
-   - the career "new team member" prompt (A);
-   - the intro FMV (F);
-   - a challenge screen (D).
+3. **A native tour scenario** that reaches every row of the table:
+   - [x] a challenge screen (D): `native_tour`;
+   - [x] the intro movies (F): `native_tour_boot`;
+   - [x] a photo challenge's shutter and photo card (C), and the running
+     challenge (D): measured from a live session (below), since the trick
+     has to be landed by hand;
+   - [ ] the career "new team member" prompt (A).
 
    Some need a save placed at the right point. Test saves may be written
    freely.

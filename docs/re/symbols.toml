@@ -1,0 +1,225 @@
+# Skate 3 function map (Title Update 3 image addresses). See README.md.
+#
+# One table per function, keyed by its recompiled name:
+#   name        the game's name if known, else ours (then confidence = "guess")
+#   signature   arguments as the hooks read them (r3, r4, ...), when known
+#   role        what it does, in a sentence or two
+#   confidence  "confirmed" | "likely" | "guess"
+#   evidence    where it was learned (file/hook, log line, run, commit)
+#   hooked      where src/ hooks or calls it (optional)
+#
+# Lookups and coverage: tools/harness/re_symbols.py
+
+# ---- Characters: skeleton, parts, palettes (characters.md) ----------------
+
+[sub_827A52C8]
+name = "Sk8::UpdateBoneTransforms"
+signature = "(cModelInstance* parts /*r3, stride 0x28*/, uint count /*r4*/, Matrix44* srcPalette, uint** remaps, Matrix44& out)"
+role = "Writes each part's palette from the skater's full pose (srcPalette) through per-part bone remaps. The one moment all of the player's pieces are posed from one tick; the parts array is per-frame scratch."
+confidence = "likely"
+evidence = "hook in src/skate3_native_render.cpp (OnBoneTransforms); part snapshots served as UBT packs"
+hooked = "src/skate3_native_render.cpp"
+
+[sub_827E5B30]
+name = "cModelInstance::PackAndMultiplyMatricesForUpload"
+signature = "(cModelInstance* this /*r3*/, Matrix44& localToWorld)"
+role = "Packs an instance's bone matrices into m_matrices (+0x14): the 4x3 column-major palette the vertex shader consumes."
+confidence = "confirmed"
+evidence = "post-call snapshot matches the draw-time constant bank (palette serve, src/native/skate3_native_palette.cpp)"
+hooked = "src/skate3_native_render.cpp"
+
+[sub_827C1D38]
+name = "LivingWorld batch pack writer"
+signature = "(cLivingWorldPresEntity* entity /*r3*/)"
+role = "Fused UpdateBoneTransforms + pack for LOD pedestrians: writes the concatenation of per-mesh palettes into m_matrices. Called per entity per sim tick from cLivingWorldPresEntityManager::Update."
+confidence = "likely"
+evidence = "src/skate3_native_render.cpp comment; SnapshotLwEntity"
+hooked = "src/skate3_native_render.cpp"
+
+[sub_827825B0]
+name = "Sk8::SkaterPresEntity::StartJobs"
+role = "Starts the skater's animation jobs; UpdateBoneTransforms runs inside. Bracketed as the pack owner so snapshots carry the entity."
+confidence = "likely"
+evidence = "src/skate3_native_render.cpp (ExchangePackOwner)"
+hooked = "src/skate3_native_render.cpp"
+
+[sub_82782818]
+name = "Sk8::SkaterPresEntity::EndJobs"
+role = "Calls PackAndMultiplyMatricesForUpload per instance with the tick's final locomotion (the body pose of record)."
+confidence = "likely"
+evidence = "src/skate3_native_render.cpp"
+hooked = "src/skate3_native_render.cpp"
+
+[sub_82785778]
+name = "skater-family UBT+Pack driver (vtable +16)"
+role = "The remaining palette-write path, outside the StartJobs/EndJobs pair."
+confidence = "guess"
+evidence = "src/skate3_native_render.cpp"
+hooked = "src/skate3_native_render.cpp"
+
+[sub_827A6658]
+name = "Sk8::PresentationEntity::BindConstants"
+role = "Base BindConstants: binds an entity's shader constants for drawing."
+confidence = "likely"
+evidence = "src/skate3_native_scene.cpp (the walk that mirrors it)"
+
+[sub_82783D68]
+name = "Sk8::SkaterPresEntity::BindConstants"
+confidence = "likely"
+evidence = "hook in src/"
+hooked = "src/"
+
+[sub_82785260]
+name = "ColorizedSkaterPresEntity::BindConstants"
+confidence = "likely"
+evidence = "hook in src/"
+hooked = "src/"
+
+[sub_82793F70]
+name = "CACPresEntity::BindConstants"
+role = "Create-a-Skater entity; its world is untransposed."
+confidence = "likely"
+evidence = "hook in src/"
+hooked = "src/"
+
+[sub_827C1720]
+name = "cLivingWorldPresEntity::BindConstants"
+role = "Serves the entity's opacity (entity+528.x) as the shader's output alpha."
+confidence = "likely"
+evidence = "hook in src/; LW entity store"
+hooked = "src/"
+
+[sub_827C1188]
+name = "cLivingWorldPresEntity::Update"
+confidence = "likely"
+evidence = "EXIT hook in src/ (LW entity store write point)"
+hooked = "src/"
+
+# ---- Rendering helpers ------------------------------------------------------
+
+[sub_82802A00]
+name = "SetViewMatrix"
+role = "Sets the main view camera; the freecam takes it over."
+confidence = "likely"
+evidence = "src/skate3_native_scene.cpp (freecam takeover)"
+hooked = "src/"
+
+[sub_82804168]
+name = "Sk8::Render::SimpleDraw::DrawParameters::Draw"
+role = "Immediate-mode quad/tri utility: chase arrows, in-world guide markers and beams, debug draws. Bottoms out in BeginVertices."
+confidence = "likely"
+evidence = "src/skate3_native_render.cpp"
+hooked = "src/skate3_native_render.cpp"
+
+# ---- Front end, replays, script bindings ------------------------------------
+
+[sub_824AD240]
+name = "FE manager singleton getter"
+confidence = "likely"
+evidence = "src/harness/harness_game.cpp"
+
+[sub_824FCAD8]
+name = "game-mode event post"
+signature = "(gctx, ref<event>*)"
+confidence = "likely"
+evidence = "src/harness/harness_game.cpp"
+
+[sub_82506BE0]
+name = "replay editor: timeline key position"
+signature = "(E /*editor time object*/, uint index) -> f1 in 0..1"
+role = "Key 1.. are the user's markers, as fractions of the reel length; the key count is the low 16 bits at E+556."
+confidence = "confirmed"
+evidence = "harness play_reel from = marker; the reel-marker log (7467670)"
+hooked = "src/harness/harness_game.cpp"
+
+[sub_8270C0E0]
+name = "-> StateReplay"
+role = "Front-end transition from My Replays (FE 52) into the replay editor (FE 12)."
+confidence = "likely"
+evidence = "src/harness/harness_game.cpp"
+
+[sub_8271BF50]
+name = "StateReplay setup"
+signature = "(StateReplay*, ref<request event>*)"
+confidence = "likely"
+evidence = "src/harness/harness_game.cpp"
+
+[sub_82C7EA50]
+name = "replay playback (render thread)"
+role = "Advances the editor's time object during playback."
+confidence = "likely"
+evidence = "hook in src/harness/harness_game.cpp"
+hooked = "src/harness/harness_game.cpp"
+
+[sub_82D0B0B0]
+name = "FE dialog init"
+role = "Initializes the dialog structure holding the title and message string IDs."
+confidence = "guess"
+evidence = "src/ comment"
+
+[sub_82D0ABE0]
+name = "FE screen push (variant A)"
+signature = "(manager, int screen_id /*r4*/)"
+confidence = "confirmed"
+evidence = "SKATE3_FE_PUSH_PROBE in src/skate3_demo_path.cpp logs every push"
+hooked = "src/skate3_demo_path.cpp"
+
+[sub_82D0AB30]
+name = "FE screen push (variant B)"
+signature = "(manager, int screen_id /*r4*/)"
+confidence = "confirmed"
+evidence = "SKATE3_FE_PUSH_PROBE"
+hooked = "src/skate3_demo_path.cpp"
+
+[sub_82D0AEF0]
+name = "FE screen push (variant C)"
+signature = "(manager, int screen_id /*r4*/)"
+confidence = "confirmed"
+evidence = "SKATE3_FE_PUSH_PROBE"
+hooked = "src/skate3_demo_path.cpp"
+
+[sub_826FDD70]
+name = "BootFlow LanguageSelectState handler"
+role = "Boot flow language-select state; event 4 is where the intro-movie skip is armed. Redirected through the dispatcher (SetFunction)."
+confidence = "likely"
+evidence = "src/skate3_demo_path.cpp"
+hooked = "src/skate3_demo_path.cpp"
+
+[sub_82857548]
+name = "script binding context getter"
+signature = "(lua_State*) -> context object"
+role = "Fetches a binding's context object from closure upvalue 2. Context: +16 message queue, +24 player registry, +28 local player source, +40 teleport service."
+confidence = "likely"
+evidence = "src/harness/harness_re.cpp"
+
+[sub_82D55AE8]
+name = "SetSessionMarker (implementation)"
+signature = "(binding context /*r3*/, ...)"
+confidence = "likely"
+evidence = "src/harness/harness_re.cpp"
+
+[sub_82965C90]
+name = "game tick (harness request point)"
+role = "Harness game requests run after it returns: game logic is between ticks there."
+confidence = "likely"
+evidence = "src/harness/"
+hooked = "src/harness/"
+
+[sub_82EDE718]
+name = "XContentClose wrapper -> XamContentCreateEx"
+confidence = "likely"
+evidence = "src/ comment"
+
+# ---- Learned from other forks (unverified here) -----------------------------
+
+[sub_8285C928]
+name = "Simulation::Update"
+role = "The sim task, woken by a 60 Hz guest timer."
+confidence = "guess"
+evidence = "andrewnakas/SK8-Engine switch branch commit 6784a9a (not verified in this fork)"
+
+[sub_82DB9100]
+name = "IsWipeoutRequested"
+role = "Polled per physical player; ORs two conditions behind a guard."
+confidence = "guess"
+evidence = "andrewnakas/SK8-Engine audio/phase1-harness commit a491ccb (not verified in this fork)"
