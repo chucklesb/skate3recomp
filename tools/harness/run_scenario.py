@@ -420,6 +420,13 @@ def summary(run: Path) -> int:
         print(f"  build v{r['version']} {r['platform']} {r['build_config']}")
     print(f"  {r['frames']} frames, {r['seconds']:.1f} s, {r['screenshots']} screenshots, "
           f"{r['warnings']} warnings, {r['errors']} errors")
+    ft = r.get("frametime_ingame") or r.get("frametime")
+    if ft:
+        print(f"  frame time{' (in game)' if r.get('frametime_ingame') else ''}: "
+              f"{ft['fps_avg']:.1f} fps, 1% low {ft['fps_low_1pct']:.1f}, "
+              f"p50 {ft['ms_p50']:.1f} / p99 {ft['ms_p99']:.1f} / max {ft['ms_max']:.1f} ms, "
+              f"busy p99 {ft['busy_ms_p99']:.1f} ms, {ft['hitches_2x']} hitches "
+              f"(tools/harness/frametime_report.py)")
     if r.get("validation_enabled"):
         layer = {"d3d12": "D3D12 debug layer"}.get(r.get("validation_layers", ""),
                                                    "Vulkan validation")

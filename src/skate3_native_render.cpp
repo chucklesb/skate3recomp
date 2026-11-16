@@ -266,7 +266,7 @@ void OnClothDraw(uint8_t* base, uint32_t r4, uint32_t r5, uint32_t r6, uint32_t 
 // render thread at the swap boundary. Absolute-schedule pacing (target +=
 // interval) so sleep jitter never accumulates; resyncs when the guest falls
 // more than one interval behind (loads, hitches).
-void PaceGuestFrame() {
+void PaceGuestFrameImpl() {
   double cap = REXCVAR_GET(skate3_guest_fps_cap);
   if (REXCVAR_GET(skate3_guest_fps_cap_auto)) {
     // Refresh-derived cap (see the cvar). Falls through to the explicit cap
@@ -303,6 +303,16 @@ void PaceGuestFrame() {
     }
   }
   s_next += interval;
+}
+
+// The last frame's cap wait, ms (harness frames.csv: "pace").
+float g_last_pace_ms = 0.0f;
+
+void PaceGuestFrame() {
+  const auto t0 = std::chrono::steady_clock::now();
+  PaceGuestFrameImpl();
+  g_last_pace_ms =
+      std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
 void OnFrameEnd(uint8_t* base) {
@@ -470,12 +480,26 @@ extern "C" REX_FUNC(sub_827FAF50) {
 
 
 // Guest D3D Swap: frame boundary.
+// Each part is timed for the harness's frames.csv: the native frame end
+// (its cap wait split out), the harness itself, and the guest swap.
 extern "C" REX_FUNC(sub_82B82E08) {
+  using Clock = std::chrono::steady_clock;
+  const auto t0 = Clock::now();
+  skate3::native_render::g_last_pace_ms = 0.0f;
   if (skate3::native_render::Enabled()) {
     skate3::native_render::OnFrameEnd(base);
   }
+  const auto t1 = Clock::now();
   skate3::harness::OnFrame(base);
+  const auto t2 = Clock::now();
   __imp__sub_82B82E08(ctx, base);
+  const auto t3 = Clock::now();
+  const auto ms = [](Clock::duration d) {
+    return std::chrono::duration<float, std::milli>(d).count();
+  };
+  const float pace = skate3::native_render::g_last_pace_ms;
+  skate3::harness::NoteFrameCost(pace, std::max(0.0f, ms(t1 - t0) - pace), ms(t2 - t1),
+                                 ms(t3 - t2));
 }
 
 // cProcessArenaAsset::RegisterTexture(cAssetList*, cAssetID,

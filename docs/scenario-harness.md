@@ -137,7 +137,8 @@ Each run writes `<out>/<YYYYMMDD-HHMMSS>_<name>/`:
 
 | File | Contents |
 |---|---|
-| `result.json` | Status, code, reason, failures, frame count, warning/error counts, last state, and the build (`version`, `platform`, `build_config`). Missing when the game crashed. |
+| `result.json` | Status, code, reason, failures, frame count, warning/error counts, last state, the build (`version`, `platform`, `build_config`), and the frame-time summaries `frametime` (every frame) and `frametime_ingame` (see "Frame times" below). Missing when the game crashed. |
+| `frames.csv` | One row per frame: the time and how it splits (`guest`, `native`, `pace`, `swap`, `harness`, ms), the frontend top and depth, flags (1 replay, 2 movie, 4 paused) and the running step. Written at the end of the run. |
 | `build.json` | The build, written at start (a crashed run has no `result.json`). |
 | `crash.txt`, `crash.dmp` | Only after a crash (see "Crashes" below); `crash.dmp` on Windows only. |
 | `events.jsonl` | Every step and command, frontend screen changes (`fe`), replay/movie playback starts and stops, save content opens, recording start/stop. |
@@ -297,6 +298,7 @@ the next investigation can reuse them.
 | `live_shots.py` | Screenshots of a live session while the user plays: one at each frontend-stack change, one every `--every` s in `--match` contexts (default `0,1`, a challenge), or with `--video-frames N` a `video` frame dump of N frames on entering one (for screens that last seconds; each poll goes through adb and takes a few seconds) | - |
 | `reel_video.py` | An x264 MP4 from a `play_reel video = true` frame dump (every frame, at `step_fps`; reports clock steps that aren't one step) or, for older runs, from `every_frames` screenshots (each held until the next); `--slow N` appends a 1/N speed pass, `--label` a caption; quality steps down until it's under `--max-mb` (default 10) | ffmpeg (libx264, drawtext) |
 | `re_symbols.py` | The reverse-engineering function map ([docs/re/symbols.toml](re/symbols.toml)): `lookup`, `coverage` (game functions used in `src/` but not in the map), `check` | - |
+| `frametime_report.py` | Frame times from `frames.csv` per segment (all, in game, each reel, `perf <name>` marks, `--by-step`): fps, 1% / 0.1% lows, p50/p90/p99/max, jitter, hitches, busy time, the split per part, and the worst frames with what dominated them and the events next to them. `--svg` draws a chart; two or more runs print an A/B table, `--fail-pct N` fails a regression | - |
 | `perf_report.py` | `perf.json` comparison behind `run_scenario.py perf` | - |
 | `census_report.py` | Emulated draws per screen from `census` events (`native_render_pass_census`): which passes still run under the native renderer, per frontend stack | - |
 | `gen_native_tour.py` | Writes `scenarios/native_tour.toml` (every context where the emulated renderer may still run, census on: a challenge, the team screen, Create-a-Skater with an accepted edit, Import Skater, the replay editor's Take Photo, My Replays, the photo viewer) and `native_tour_boot.toml` (the intro movies). Read the result with `census_report.py <run> --audit-only` ([native-only.md](native-only.md)) | - |
@@ -310,6 +312,56 @@ Recording the Odin 2's screen (scrcpy on Windows) is described in
 `video_frames.py --help`.
 
 ## Performance
+
+### Frame times (every run)
+
+Every run records each frame's time (the interval between two guest swaps)
+and splits it at the swap hook:
+
+| Part | What it is |
+|---|---|
+| `guest` | The game's own work on its thread (the remainder) |
+| `native` | The native renderer's frame end on the game thread (scene capture and build) |
+| `pace` | The frame-cap wait (`skate3_guest_fps_cap`): idle |
+| `swap` | The guest swap: present, GPU back-pressure |
+| `harness` | The harness's own frame hook |
+
+`busy` is the frame without `pace`. Under the 30 fps cap the fps stays at 30
+while there is headroom, so busy time is the number to compare: it shows how
+close a frame came to the budget (33.3 ms), and a regression shows in it long
+before the fps drops. The native renderer's GPU submission thread and the
+GPU itself run beside the game thread and are not in these parts; they show
+up in `swap` only when they hold the game back (see the GPU buckets below).
+
+`result.json` holds two summaries, `frametime` (every frame, loads included)
+and `frametime_ingame` (frontend `[0]`, no movie: free skate and reels), with:
+- `fps_avg`, `fps_low_1pct` and `fps_low_0_1pct` (the fps over the worst 1% and
+  0.1% of frames);
+- `ms_p50`, `ms_p90`, `ms_p99`, `ms_p99_9`, `ms_max`, plus the frame and time
+  of the worst one;
+- `ms_stddev`, and `jitter_ms` (the mean change between consecutive frames);
+- `hitches_2x` (frames over twice the median) and `hitches_100ms`;
+- `busy_ms_p50` and `busy_ms_p99`;
+- the average and p99 of each part.
+
+`run_scenario.py` prints the in-game line under every run:
+
+    frame time (in game): 30.0 fps, 1% low 29.5, p50 33.3 / p99 33.6 / max 34.9 ms, busy p99 4.4 ms, 0 hitches
+
+For more, use `tools/harness/frametime_report.py <run>`. It prints a table per
+segment and the worst in-game frames, each with the part that dominated and
+the events next to it (a step, a screen change, a reel start). `--svg` writes
+`frametimes.svg`, the frame and busy times over the run with the reels
+shaded. With `<base> <new>` it prints an A/B table, and `--fail-pct 10` exits 1
+when a shared segment's `ms_p99`, `busy_ms_p99` or 1% low got worse by more
+than 10%.
+
+Notes:
+- Runs at the same cap and settings compare. On a PC, run uncapped
+  (`-- --skate3_guest_fps_cap=0`) to see the real frame rate; `pace` is then 0.
+- Paused frames (the harness `pause` and `step`) are left out.
+
+### Renderer stages and GPU passes (perf_reel)
 
 `scenarios/perf_reel.toml` is the benchmark. It plays reels 2 and 4 start to
 end (~42 s), the same recorded frames on every run and target, at a 30 fps

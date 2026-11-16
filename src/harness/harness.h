@@ -59,6 +59,9 @@ bool Enabled();
 
 // Guest D3D Swap (frame boundary), guest thread.
 void OnFrame(uint8_t* base);
+// Right after the guest swap: the frame's native-renderer cap wait and frame
+// end (both before OnFrame), and the harness and swap times (after it), ms.
+void NoteFrameCost(float pace_ms, float native_ms, float harness_ms, float swap_ms);
 
 // Sk8::SkaterPresEntity::BindConstants, r3 = entity. Guest thread.
 void OnSkaterEntity(uint32_t entity);

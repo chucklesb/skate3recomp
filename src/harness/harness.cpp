@@ -249,6 +249,22 @@ struct Run {
   int64_t state_every = 10;
   uint64_t census_frame = 0;  // last pass-census event
   Clock::time_point last_frame_time = Clock::now();
+
+  // Per-frame timing (frames.csv, result.json "frametime"; guarded by mu).
+  // Row k covers the interval between OnFrame(k-1) and OnFrame(k): the
+  // swap and the harness time of frame k-1, then frame k's game work, the
+  // native renderer's frame end and its cap wait (NoteFrameCost).
+  struct FrameRow {
+    double t = 0.0;  // s since t0, at OnFrame
+    uint32_t frame = 0;
+    float dt = 0.0f, pace = 0.0f, native = 0.0f, swap = 0.0f, harness = 0.0f;  // ms
+    int16_t fe_top = -1;
+    uint8_t fe_depth = 0;
+    uint8_t flags = 0;  // 1 replay, 2 movie, 4 paused
+    int16_t step = 0;
+  };
+  std::vector<FrameRow> frame_rows;
+  float pend_swap = 0.0f, pend_harness = 0.0f;
   uint32_t last_skater = 0;
   float last_pos[3] = {};
   bool have_last_pos = false;
@@ -302,6 +318,7 @@ struct Run {
   std::atomic<uint64_t> warnings{0};
   std::atomic<uint64_t> errors{0};
   std::atomic<uint64_t> shots{0};
+  std::atomic<int32_t> step_now{0};  // the running step's index (frames.csv)
   std::atomic<uint64_t> validation{0};  // Vulkan validation-layer messages
   std::ofstream validation_out;         // validation.txt, opened on the first
   std::vector<std::string> captures;    // RenderDoc .rdc paths (guarded by mu)
@@ -453,6 +470,99 @@ std::shared_ptr<LogTap> g_tap;
 
 // ------------------------------------------------------------ finish
 
+// Game-thread share of a frame row: what is left after the measured parts.
+float GuestMs(const Run::FrameRow& f) {
+  return std::max(0.0f, f.dt - f.pace - f.native - f.swap - f.harness);
+}
+
+// Frame-time summary over rows (paused frames left out): average fps, the
+// frame-time percentiles, the 1% / 0.1% lows (fps over the worst 1% / 0.1%
+// of frames), hitches, jitter, and the average and p99 of each part. "busy"
+// is the frame without the cap wait: under a frame cap it shows the
+// headroom that the fps can't. tools/harness/frametime_report.py has the
+// per-segment version.
+std::string FrameSummaryJson(const std::vector<const Run::FrameRow*>& rows) {
+  std::vector<float> dt, busy;
+  dt.reserve(rows.size());
+  busy.reserve(rows.size());
+  double sum = 0.0, jit = 0.0, sq = 0.0;
+  double part_sum[5] = {};
+  std::vector<float> parts[5];
+  float prev = -1.0f;
+  const Run::FrameRow* worst = nullptr;
+  for (const Run::FrameRow* f : rows) {
+    if (f->flags & 4) continue;
+    dt.push_back(f->dt);
+    busy.push_back(f->dt - f->pace);
+    sum += f->dt;
+    sq += double(f->dt) * f->dt;
+    if (prev >= 0.0f) jit += std::fabs(f->dt - prev);
+    prev = f->dt;
+    const float v[5] = {GuestMs(*f), f->native, f->pace, f->swap, f->harness};
+    for (int i = 0; i < 5; ++i) {
+      part_sum[i] += v[i];
+      parts[i].push_back(v[i]);
+    }
+    if (!worst || f->dt > worst->dt) worst = f;
+  }
+  const size_t n = dt.size();
+  if (n < 2 || sum <= 0.0) return "null";
+  std::vector<float> sorted = dt;
+  std::sort(sorted.begin(), sorted.end());
+  const auto pct = [](const std::vector<float>& s, double p) {
+    return s[std::min(s.size() - 1, size_t(p * double(s.size() - 1) + 0.5))];
+  };
+  const auto low = [&](double frac) {
+    const size_t k = std::max<size_t>(1, size_t(double(n) * frac));
+    double w = 0.0;
+    for (size_t i = n - k; i < n; ++i) w += sorted[i];
+    return 1000.0 * double(k) / w;
+  };
+  const float p50 = pct(sorted, 0.5);
+  size_t hitches = 0, big = 0;
+  for (float d : dt) {
+    hitches += d > 2.0f * p50;
+    big += d > 100.0f;
+  }
+  std::sort(busy.begin(), busy.end());
+  const double mean = sum / double(n);
+  char buf[1400];
+  std::snprintf(buf, sizeof(buf),
+                "{\"frames\": %zu, \"seconds\": %.3f, \"fps_avg\": %.2f, \"fps_low_1pct\": %.2f, "
+                "\"fps_low_0_1pct\": %.2f, \"ms_p50\": %.3f, \"ms_p90\": %.3f, \"ms_p99\": %.3f, "
+                "\"ms_p99_9\": %.3f, \"ms_max\": %.3f, \"max_frame\": %u, \"max_t\": %.3f, "
+                "\"ms_stddev\": %.3f, \"jitter_ms\": %.3f, \"hitches_2x\": %zu, "
+                "\"hitches_100ms\": %zu, \"busy_ms_p50\": %.3f, \"busy_ms_p99\": %.3f",
+                n, sum / 1000.0, 1000.0 * double(n) / sum, low(0.01), low(0.001), p50,
+                pct(sorted, 0.9), pct(sorted, 0.99), pct(sorted, 0.999), sorted.back(),
+                worst->frame, worst->t, std::sqrt(std::max(0.0, sq / double(n) - mean * mean)),
+                jit / double(n - 1), hitches, big, pct(busy, 0.5), pct(busy, 0.99));
+  std::string s = buf;
+  static const char* kNames[5] = {"guest", "native", "pace", "swap", "harness"};
+  for (int i = 0; i < 5; ++i) {
+    std::sort(parts[i].begin(), parts[i].end());
+    std::snprintf(buf, sizeof(buf), ", \"%s_ms_avg\": %.3f, \"%s_ms_p99\": %.3f", kNames[i],
+                  part_sum[i] / double(n), kNames[i], pct(parts[i], 0.99));
+    s += buf;
+  }
+  return s + "}";
+}
+
+// frames.csv: one row per frame (see Run::FrameRow).
+void WriteFramesCsv(Run& r) {
+  std::lock_guard lk(r.mu);
+  if (r.frame_rows.empty()) return;
+  std::ofstream out(r.dir / "frames.csv", std::ios::binary | std::ios::trunc);
+  out << "frame,t,dt,guest,native,pace,swap,harness,fe_top,fe_depth,flags,step\n";
+  char buf[200];
+  for (const Run::FrameRow& f : r.frame_rows) {
+    std::snprintf(buf, sizeof(buf), "%u,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%u,%u,%d\n", f.frame,
+                  f.t, f.dt, GuestMs(f), f.native, f.pace, f.swap, f.harness, f.fe_top,
+                  unsigned(f.fe_depth), unsigned(f.flags), f.step);
+    out << buf;
+  }
+}
+
 std::string ResultJson(Run& r, int code, std::string_view status, std::string_view reason) {
   std::ostringstream os;
   os << "{\n  \"status\": \"" << JsonEscape(status) << "\",\n  \"code\": " << code
@@ -471,6 +581,15 @@ std::string ResultJson(Run& r, int code, std::string_view status, std::string_vi
     }
     os << "],\n";
     os << "  \"last_state\": " << StateJson(r.state) << ",\n";
+    // Frame times: every frame, and in game (frontend stack [0], no movie:
+    // free skate and reels, without menus and loads).
+    std::vector<const Run::FrameRow*> all, ingame;
+    for (const Run::FrameRow& f : r.frame_rows) {
+      all.push_back(&f);
+      if (f.fe_depth == 1 && f.fe_top == 0 && !(f.flags & 2)) ingame.push_back(&f);
+    }
+    os << "  \"frametime\": " << FrameSummaryJson(all) << ",\n";
+    os << "  \"frametime_ingame\": " << FrameSummaryJson(ingame) << ",\n";
     os << "  \"captures\": [";
     for (size_t i = 0; i < r.captures.size(); ++i) {
       os << (i ? ", " : "") << "\"" << JsonEscape(r.captures[i]) << "\"";
@@ -533,6 +652,7 @@ VideoResult StopVideo(Run& r);  // frame dump, below
       r.rec_out.flush();
     }
   }
+  WriteFramesCsv(r);
   const std::string result = ResultJson(r, code, status, reason);
   {
     std::ofstream out(r.dir / "result.json", std::ios::binary | std::ios::trunc);
@@ -1971,6 +2091,7 @@ void RunnerLoop(Run& r) {
     if (r.stop.load()) {
       return;
     }
+    r.step_now.store(int32_t(st.index), std::memory_order_relaxed);
     Event(r, "step", StepJson(st));
     REXLOG_INFO("harness: step {} {}", st.index, VerbName(st.verb));
     Outcome o = Execute(r, st);
@@ -2346,6 +2467,20 @@ void OnSkaterEntity(uint32_t entity) {
   }
 }
 
+void NoteFrameCost(float pace_ms, float native_ms, float harness_ms, float swap_ms) {
+  Run* r = g_run;
+  if (!r || !g_enabled.load(std::memory_order_relaxed)) {
+    return;
+  }
+  std::lock_guard lk(r->mu);
+  if (!r->frame_rows.empty()) {
+    r->frame_rows.back().pace = pace_ms;
+    r->frame_rows.back().native = native_ms;
+  }
+  r->pend_harness = harness_ms;
+  r->pend_swap = swap_ms;
+}
+
 void OnFrame(uint8_t* base) {
   Run* r = g_run;
   if (!r || !g_enabled.load(std::memory_order_relaxed)) {
@@ -2490,6 +2625,21 @@ void OnFrame(uint8_t* base) {
     s.movie_active = r->frame - g_movie_tick_frame.load(std::memory_order_relaxed) <=
                          kHeartbeatFrames &&
                      g_movie_tick_frame.load(std::memory_order_relaxed) != 0;
+    if (r->frame > 1 && r->frame_rows.size() < (size_t(1) << 21)) {
+      Run::FrameRow row;
+      row.t = std::chrono::duration<double>(now - r->t0).count();
+      row.frame = uint32_t(r->frame);
+      row.dt = float(dt * 1000.0);
+      row.swap = r->pend_swap;
+      row.harness = r->pend_harness;
+      row.fe_top = int16_t(std::clamp<int64_t>(s.fe_top, -1, 32767));
+      row.fe_depth = uint8_t(std::min<uint32_t>(s.fe_depth, 255));
+      row.flags = uint8_t((s.replay_active ? 1 : 0) | (s.movie_active ? 2 : 0) |
+                          (r->paused ? 4 : 0));
+      row.step = int16_t(r->step_now.load(std::memory_order_relaxed));
+      r->frame_rows.push_back(row);
+    }
+    r->pend_swap = r->pend_harness = 0.0f;
     if (s.fe_stack != r->state.fe_stack) {
       fe_event = "\"stack\":" + FeStackJson(s.fe_stack) + ",\"from\":" +
                  FeStackJson(r->state.fe_stack);
