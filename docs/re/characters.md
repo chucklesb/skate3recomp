@@ -129,7 +129,7 @@ KI-125 (every frame of the reel jump, `scenarios/video_ki125.toml`): the
 skater's body is whole on the first frame after the jump with the store on
 and off. The cloth-simulated pieces (ropa: the long hair and the shirt) are
 not: they are outside the store's reach, and their drape on that frame is
-one the game never draws. See KI-125.
+one the game draws only because its GPU reads the buffer late. See KI-125.
 
 **Cloth (ropa) after a replay seek (2026-11-16):**
 - After the seek the skeleton holds one tick for several frames (the game
@@ -140,9 +140,20 @@ one the game never draws. See KI-125.
   per completed cloth tick. Our draws alternate between the two halves
   frame by frame, as the game's do.
 - The capture's mode test (bank flag row x exactly 1.0 = sim inactive)
-  reads 0.0 for the hair on every frame, including the bad one. So what
-  the game does differently on that frame is still unknown: the next step
-  is a RenderDoc capture of the emulated frame (KI-125).
+  reads 0.0 for the hair on every frame, including the bad one, and that
+  is right: the game draws the same buffer in the same mode.
+- **The race (found 2026-11-16):** on the first frame after a seek the
+  game draws from the buffer still on screen (old drape), and during the
+  next guest frame rewrites that same buffer with the new drape before the
+  flips resume. The GPU reads vertex memory about a frame after the draw,
+  so the game's frame shows the new drape. Any native reader that copies
+  cloth VBs at draw capture sees the old one. Evidence: the emulated
+  RenderDoc capture (`scenarios/ki125_capture.toml`,
+  `tools/harness/rdc_fetch_scan.py`) and the `ropa-mem:` probe lines
+  (fingerprints at capture, frame end and next build). A native cloth
+  path must therefore read the garment VB at the *next* build, which is
+  also what a native replacement of the cloth upload (RE-7) has to
+  reproduce.
 
 **Debugging a character frame by frame:**
 `skate3_native_render_scene_skeleton_log_jumps = true` logs, for 4 frames

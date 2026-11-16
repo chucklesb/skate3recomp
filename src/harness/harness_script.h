@@ -138,6 +138,7 @@ struct Step {
   std::string from = "start";  // "start" | "marker"
   bool lens = false;           // keep the reel camera's fisheye and vignette
   bool stills_capture = false; // a RenderDoc capture at each still (RenderDoc attached)
+  int64_t capture_start = 0;   // play_reel: one RenderDoc capture of the first N frames played
   std::vector<double> stills;  // reel times (s) to hold at for screenshots
   int64_t settle_frames = 20;  // frames to wait at a still before its screenshot
   double speed = 1.0;          // replay clock rate (0 < speed <= 4; 0.25 = quarter)

@@ -1,0 +1,34 @@
+# KI-125: a RenderDoc capture of the first 6 frames after the reel seeks
+# (from its marker), with the emulated renderer: the game's own hair and
+# shirt draws on the frame where ours detach. Every frame is on video too
+# (video/k125/), to find the frame index. Windows only:
+#   rs.sh windows scenarios/ki125_capture.toml --backend vulkan --renderdoc
+# Native A/B: change renderer to "native" (the native frame is wrong).
+name = "ki125_capture_emulated"
+timeout_s = 1500
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+skate3_native_render_scene_char_sync = true
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "renderer"
+renderer = "emulated"
+frames = 30
+
+[[step]]
+do = "play_reel"
+reel = "88a86b704bcf2d71"
+from = "marker"
+video = true
+step_fps = 30
+tag = "k125"
+capture_start = 6

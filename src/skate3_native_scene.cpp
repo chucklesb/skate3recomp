@@ -1269,6 +1269,7 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_tex_mips, true, "Skate 3",
 REXCVAR_DECLARE(bool, skate3_native_render);
 // Defined in native/skate3_native_entity.cpp (the identity store module).
 REXCVAR_DECLARE(bool, skate3_native_render_scene_entity_ropa_world_primary);
+REXCVAR_DECLARE(bool, skate3_native_render_scene_skeleton_log_jumps);
 // Defined in native/skate3_native_lw.cpp (the LW entity store module).
 REXCVAR_DECLARE(bool, skate3_native_render_scene_lw_palette);
 // SDK-level emulated-draw suppression (rexglue native_guest_renderer.cpp):
@@ -11266,9 +11267,47 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
       s_dyn_fp_sent.clear();
     }
     std::vector<DynDecodeJob> jobs;
+    // Diagnostic (skeleton_log_jumps, KI-125): does a cloth VB's memory
+    // change after we capture its draw? Fingerprint at draw capture (the
+    // item's), again here at frame end, and again at the next frame's build
+    // (about when the emulated GPU reads it).
+    struct RopaMemProbe {
+      DrawItem item;
+      uint64_t fp_capture, fp_end;
+      uint32_t frame;
+    };
+    static std::vector<RopaMemProbe> s_ropa_probe;
+    static uint32_t s_probe_frame = 0;
+    static uint32_t s_probe_lines = 0;
+    const bool probe_mem = REXCVAR_GET(skate3_native_render_scene_skeleton_log_jumps);
+    ++s_probe_frame;
+    if (probe_mem) {
+      for (RopaMemProbe& p : s_ropa_probe) {
+        DrawItem tmp = p.item;
+        const uint64_t fp_next = ComputeItemFingerprint(base, tmp) ? tmp.fingerprint : 0;
+        if (s_probe_lines < 4000) {
+          ++s_probe_lines;
+          REXLOG_INFO("ropa-mem: frame {} mesh {:08X} hair {} vb {:08X} capture {:016X} end {:016X} "
+                      "next {:016X} {}",
+                      p.frame, p.item.mesh, p.item.hair ? 1 : 0, p.item.vb_addr, p.fp_capture,
+                      p.fp_end, fp_next,
+                      p.fp_capture == p.fp_end && p.fp_end == fp_next ? "same"
+                      : p.fp_capture == p.fp_end                     ? "CHANGED-after-end"
+                                                                     : "CHANGED-by-end");
+        }
+      }
+    }
+    s_ropa_probe.clear();
     for (const DrawItem& item : scene.items) {
       if (!(item.skinned || item.ropa) || item.cloth_quads || item.ib_addr == 0) {
         continue;
+      }
+      if (probe_mem && item.ropa && s_ropa_probe.size() < 16) {
+        RopaMemProbe p{item, item.fingerprint, 0, s_probe_frame};
+        p.item.bones.clear();
+        DrawItem tmp = p.item;
+        p.fp_end = ComputeItemFingerprint(base, tmp) ? tmp.fingerprint : 0;
+        s_ropa_probe.push_back(std::move(p));
       }
       if (item.ropa && REXCVAR_GET(skate3_native_render_scene_ropa_inline)) {
         continue;  // ropa decodes inline on the render thread (zero-lag)

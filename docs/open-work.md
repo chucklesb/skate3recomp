@@ -19,10 +19,9 @@ what was done).
 ## Next up (2026-11-16)
 
 In order; the roadmap has the context ([roadmap.md](roadmap.md), RE-5/RE-7):
-1. **KI-125:** a RenderDoc capture of the first frame after the jump with
-   the emulated renderer on Windows (`video_ki125.toml` with
-   `renderer = "emulated"`): which vertex buffer and mode the game's hair
-   draw uses. Then fix the cloth mode decision.
+1. ~~**KI-125**~~: cause found 2026-11-16 (the game rewrites the on-screen
+   cloth buffer one frame after a seek; its GPU reads late and sees it).
+   Fix deferred by the user; options in [known-issues.md](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps).
 2. **RE-5 step 4:** the skeleton store's remaining checks with `on`: reel
    stills against the baselines (`shots.py classify`), fps, `harness-ab`.
    Then make `on` the default.

@@ -742,15 +742,34 @@ every frame after the jump.
   cloth payload changes between the first and second frame (decode
   fingerprint `C115...` to `5257...`). The cloth flag reads active (0.0) and
   the cloth ticked 35 ms earlier.
-- **Lead:** on the first frame the cloth vertex buffer still holds the
-  drape from before the cloth sim re-ran after the seek, and the game does
-  not draw that drape. It probably draws the garment another way on that
-  frame (skinned, or not at all), which our capture's mode test does not
-  see.
-- **Next:** a RenderDoc capture of that frame with the emulated renderer on
-  Windows (`video_ki125.toml` with `renderer = "emulated"`): which vertex
-  buffer and which mode the game's hair draw uses. Then fix the capture's
-  mode decision.
+- **The cause (2026-11-16):** a race the game's own renderer wins by timing.
+  - Normally the cloth vertex buffer is double-buffered: each tick the sim
+    writes the buffer that is *not* on screen.
+  - After a seek the game draws the first frame from the buffer still on
+    screen, holding the drape from before the jump. During the *next* guest
+    frame it rewrites that same buffer with the new drape, then resumes the
+    alternation.
+  - The game's GPU reads vertex memory about a frame after the draw is
+    submitted (the console's GPU runs behind the CPU too), so it sees the
+    new drape. We read at draw capture and get the old one, posed for where
+    the skater was before the jump: the 15 cm offset.
+- **The evidence:**
+  - **RenderDoc** (`scenarios/ki125_capture.toml`, the emulated renderer,
+    the 6 frames after the seek, scanned with
+    `tools/harness/rdc_fetch_scan.py`): the game's hair (4,698 indices) and
+    shirt (5,718) draws fetch from the same address on that frame as before
+    it, in every pass. No other buffer, no other mode.
+  - **Memory probe** (`skate3_native_render_scene_skeleton_log_jumps`,
+    `ropa-mem:` lines): each cloth buffer is fingerprinted at draw capture,
+    at frame end and at the next frame's build. Over a whole reel (857
+    checks), the buffers changed after frame end only twice: the hair and
+    the shirt, on the first frame after the seek (`CHANGED-after-end`).
+- **Not fixed (deferred by the user, 2026-11-16):** one frame at a replay
+  jump. Options if it comes back:
+  1. read cloth buffers one guest frame later, as the game's GPU does: the
+     jump frame (drawn at once, unsmoothed) would wait one frame;
+  2. skip drawing the jump frame (a masking switch, default off);
+  3. draw the cloth skinned to the body for that frame (approximate).
 
 </details>
 

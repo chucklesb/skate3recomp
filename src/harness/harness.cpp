@@ -979,7 +979,7 @@ std::string SafeName(std::string s);
 // <run>/captures/<tag>; *path = the written .rdc. Used by `capture` and by
 // play_reel's stills_capture.
 bool CaptureFrames(Run& r, const std::string& tag, int64_t frames, std::string* path,
-                   std::string* error) {
+                   std::string* error, bool align = true) {
   if (!rex::ui::renderdoc::Attached()) {
     *error = "RenderDoc is not attached (launch the game from RenderDoc, or preload it)";
     return false;
@@ -991,7 +991,7 @@ bool CaptureFrames(Run& r, const std::string& tag, int64_t frames, std::string* 
   // the guest frame boundary. TriggerCapture would wait for a present on
   // a window RenderDoc tracks, which it does not do on every window
   // system (Wayland under gamescope).
-  if (!WaitFrames(r, 1, 30.0)) {
+  if (align && !WaitFrames(r, 1, 30.0)) {
     *error = "game stopped presenting frames";
     return false;
   }
@@ -1899,6 +1899,22 @@ Outcome Execute(Run& r, const Step& st) {
           !st.tag.empty() ? st.tag
           : !st.reel.empty() ? "reel_" + st.reel
                              : "reel" + std::to_string(clip_n);
+      if (st.capture_start > 0) {
+        // The first N frames played, in one RenderDoc capture, from the
+        // next frame on (no alignment wait: the frames right after the
+        // reel's seek are the point, e.g. KI-125).
+        std::string cap_path, cap_err;
+        if (CaptureFrames(r, SafeName(tag + "_start"), st.capture_start, &cap_path, &cap_err,
+                          /*align=*/false)) {
+          Event(r, "reel_capture", clip + ",\"start_frames\":" +
+                                       std::to_string(st.capture_start) + ",\"frame\":" +
+                                       std::to_string(start_frame) + ",\"file\":\"" +
+                                       JsonEscape(cap_path) + "\"");
+        } else {
+          Event(r, "reel_still_skipped",
+                clip + ",\"capture\":true,\"why\":\"" + JsonEscape(cap_err) + "\"");
+        }
+      }
       const bool periodic = st.every_frames_given && st.every_frames > 0;
       std::vector<std::string> shots;
       std::string stills_json;
