@@ -122,6 +122,28 @@ game code. It stays outside the repo (game code); its folder goes in
 - **Treat every name as a lead:** two of our five hand-named functions that
   got a Skate 2 name got the wrong one.
 
+## Skate 3's own names (roadmap RE-3)
+
+Names that come from Skate 3 itself, so they reach the code the Skate 2
+transfer can't. They rank above the Skate 2 names.
+
+- **Lua bindings:** `tools/re/bindings.py scan | export | lookup`. The image
+  holds 111 script-binding tables of `{0, type, "name", function}` entries
+  (type 2: a function; type 3: exports an enum, e.g. `eAwards`). That names
+  856 functions with the script-facing name of the C function behind them,
+  for example `CompleteChallenge`, `SetSessionMarker`, `SpawnAIAtLocation`,
+  in [names_bindings.tsv](names_bindings.tsv). 17 are shared stubs: debug
+  bindings compiled out to one function, listed with all their names.
+  Library names aren't stored as plain strings.
+- **Messages:** [messages.tsv](messages.tsv), 368 `cMsg` types by id (from
+  `tools/re/messages.py`), for reading the RE probe's message census.
+- **Bindings as a check on the Skate 2 names:** on 82 functions named both
+  ways:
+  - strings and layout fit the binding name (32 of 33);
+  - layout-align fit only 2 of 19, so its names are no longer exported;
+  - exact matches of tiny functions matched unrelated stubs, so they're now
+    `guess`.
+
 ## How a replacement works (ReXGlue)
 
 Every recompiled game function is a C++ function `sub_XXXXXXXX(ctx, base)`

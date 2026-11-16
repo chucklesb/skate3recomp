@@ -560,10 +560,23 @@ def export() -> None:
     for line in open(SK2 / "functions.tsv"):
         a, _s, n = line.rstrip("\n").split("\t", 2)
         names2[int(a, 16)] = n
+    # TU3 function lengths (words), to distrust exact matches of tiny functions.
+    starts = sorted(int(l.split()[0], 16) for l in open(TU3_FUNCS))
+    length = {a: (starts[i + 1] - a) // 4 for i, a in enumerate(starts[:-1])}
     best: dict[int, tuple[str, str, str]] = {}  # TU3 -> (name, method, confidence)
+    dropped = 0
     for line in open(OUT / "sk2_tu3.tsv"):
         a3, _a2, how, name = line.rstrip("\n").split("\t", 3)
-        best[int(a3, 16)] = (name, how, CONFIDENCE.get(how, "guess"))
+        a = int(a3, 16)
+        # layout-align: ~80% right on code unchanged since Skate 2, but 2 of 19
+        # against Skate 3's own Lua binding names (RE-3): not exported.
+        if how == "layout-align":
+            dropped += 1
+            continue
+        conf = CONFIDENCE.get(how, "guess")
+        if how == "exact" and length.get(a, 99) < 6:
+            conf = "guess"  # tiny functions (stubs) match unrelated tiny functions
+        best[a] = (name, how, conf)
     # Ghidra Auto Version Tracking (tools/re/sk2_vt.py), when it has run: its
     # accepted matches fill gaps and win over everything but our exact and
     # string pairs (it agreed with those 99-100%).
@@ -598,14 +611,17 @@ def export() -> None:
                 "# Precision, measured by hiding 30% of the exact pairs (sk2_match.py match\n"
                 "# --holdout 0.3) and by agreement with Version Tracking: exact, strings and\n"
                 "# vt-* (exact correlators) ~99-100%; callgraph ~93%, layout ~95%, vtable\n"
-                "# ~84%, layout-align ~80%; on functions unchanged since Skate 2, lower on\n"
-                "# changed ones. Treat every name as a lead until a probe confirms it.\n"
+                "# ~84%; on functions unchanged since Skate 2, lower on changed ones.\n"
+                "# Exact matches of functions under 6 instructions are 'guess' (stubs match\n"
+                "# unrelated stubs); layout-align pairs are left out (2 of 19 right against\n"
+                "# the game's Lua binding names). Skate 3's own names (names_bindings.tsv)\n"
+                "# take priority. Treat every name here as a lead until a probe confirms it.\n"
                 "# address\tname\tmethod\tconfidence\n")
         for a3 in sorted(best):
             name, how, conf = best[a3]
             f.write(f"{a3:08X}\t{name}\t{how}\t{conf}\n")
     print(f"{len(best)} names -> {NAMES} (Version Tracking: {vt_added} added, "
-          f"{vt_won} replaced a weaker pair)")
+          f"{vt_won} replaced a weaker pair; {dropped} layout-align pairs left out)")
 
 
 def lookup(q: str) -> int:

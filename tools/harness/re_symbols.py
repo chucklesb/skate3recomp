@@ -46,6 +46,21 @@ def load_sk2() -> dict[str, tuple[str, str, str]]:
     return out
 
 
+BINDINGS = REPO / "docs/re/names_bindings.tsv"  # Skate 3's Lua binding names (tools/re/bindings.py)
+
+
+def load_bindings() -> dict[str, str]:
+    """sub_XXXXXXXX -> binding name(s) from names_bindings.tsv."""
+    out = {}
+    if BINDINGS.exists():
+        for line in open(BINDINGS):
+            if line.startswith("#"):
+                continue
+            a, names, _table = line.rstrip("\n").split("\t")
+            out[f"sub_{a}"] = names
+    return out
+
+
 def show(key: str, e: dict) -> None:
     print(f"{key}  {e.get('name', '?')}  [{e.get('confidence', '?')}]")
     for field in ("signature", "role", "evidence", "hooked"):
@@ -70,6 +85,12 @@ def main() -> int:
                 if k.upper() == f"SUB_{q}" or a.query.lower() in e.get("name", "").lower()]
         for k, e in hits:
             show(k, e)
+        lua = [(k, v) for k, v in load_bindings().items()
+               if k.upper() == f"SUB_{q}" or a.query.lower() in v.lower()]
+        for k, names in lua[:50]:
+            shown = names if len(names) < 120 else names[:117] + "..."
+            print(f"{k}  Lua: {shown}  [the game's own binding name]")
+        hits += lua
         sk2 = [(k, v) for k, v in load_sk2().items()
                if k.upper() == f"SUB_{q}" or a.query.lower() in v[0].lower()]
         for k, (name, how, conf) in sk2[:50]:
@@ -94,8 +115,11 @@ def main() -> int:
               f"map, {len(missing)} missing ({sum(1 for k in missing if k in sk2)} of those have a "
               f"Skate 2 name)")
         if total:
-            print(f"whole image: {len(syms)} confirmed/likely by hand, {len(sk2)} from Skate 2 "
-                  f"({100 * len(sk2) / total:.1f}% of {total} functions)")
+            lua = load_bindings()
+            named = {k.upper() for k in syms} | {k.upper() for k in lua} | {k.upper() for k in sk2}
+            print(f"whole image: {len(syms)} by hand, {len(lua)} Lua binding names, {len(sk2)} "
+                  f"from Skate 2; {len(named)} distinct ({100 * len(named) / total:.1f}% of "
+                  f"{total} functions)")
         for k in missing if a.all else missing[:40]:
             files = sorted(refs[k])
             print(f"  {k}  {len(files)} file(s): {', '.join(files[:3])}{' ...' if len(files) > 3 else ''}")

@@ -28,10 +28,14 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   layouts with `sk2_types.py` and [re/types.md](re/types.md) (four
   structures, every offset we use confirmed). Left: more coverage via BSim,
   more layouts as the work reaches them.
-- RE-3 [ ] **Skate 3's own code:** script bindings (Lua name to function),
-  the message table, debug strings.
+- RE-3 [~] **Skate 3's own code:** 856 functions named by the Lua bindings and
+  the message table published ([re/README.md](re/README.md)); they also
+  showed layout-align names to be unreliable (no longer exported). Left:
+  debug strings; handlers for the messages.
 - RE-4 [ ] **Career pilot:** board sales and challenge state, a harness verb
-  to set them, then the "new team member" prompt (Now #1).
+  to set them, then the "new team member" prompt (Now #1). Leads: the Lua
+  binding `CompleteChallenge` (`sub_8283FD00`), messages
+  `cMsgPresTeamBrandTeammate` and `cMsgPresTeamBrandUnlock`.
 - RE-5 [ ] **The character skeleton** ([re/characters.md](re/characters.md)):
   one pose per character per tick; the likely fix for
   [KI-125](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps).

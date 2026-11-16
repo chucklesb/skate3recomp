@@ -1064,6 +1064,15 @@ def game_names(text: str) -> str:
                         _GAME_NAMES[k.upper()] = e["name"]
         except (OSError, ValueError):
             pass
+        # Skate 3's own Lua binding names (before Skate 2's): marked "lua".
+        try:
+            for line in open(REPO / "docs/re/names_bindings.tsv"):
+                if not line.startswith("#"):
+                    a, names, _table = line.rstrip("\n").split("\t")
+                    first = names.split("|")[0] + (" ..." if "|" in names else "")
+                    _GAME_NAMES.setdefault(f"SUB_{a}", f"lua {first}")
+        except (OSError, ValueError):
+            pass
         # Names transferred from Skate 2 (leads, not confirmed): marked "sk2?".
         try:
             for line in open(REPO / "docs/re/names_sk2.tsv"):
