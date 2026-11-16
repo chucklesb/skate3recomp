@@ -534,8 +534,8 @@ extern "C" REX_FUNC(sub_827E5B30) {
 
 // Sk8::UpdateBoneTransforms(cModelInstance* parts, uint count, Matrix44*
 // srcPalette, uint** remaps, Matrix44& out): r3 is an ARRAY of
-// cModelInstance part records (stride 0x28): the player skater's per-piece
-// palette source (its parts never reach the pack function above).
+// cModelInstance part records (stride 0x28). Feeds the skeleton store
+// (RE-5: one pose per skater per tick, every piece rebuilt from it).
 extern "C" REX_FUNC(sub_827A52C8) {
   const uint32_t parts = ctx.r3.u32;
   const uint32_t count = ctx.r4.u32;
@@ -543,7 +543,6 @@ extern "C" REX_FUNC(sub_827A52C8) {
   const uint32_t remaps = ctx.r6.u32;
   __imp__sub_827A52C8(ctx, base);
   if (skate3::native_render::Enabled()) {
-    skate3::native_palette::OnBoneTransforms(base, parts, count);
     skate3::native_skeleton::OnBoneTransforms(base, skate3::native_palette::CurrentPackOwner(),
                                               parts, count, src_palette, remaps);
   }

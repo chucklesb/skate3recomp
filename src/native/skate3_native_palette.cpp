@@ -91,13 +91,10 @@ struct PackSnap {
   uint32_t arr_bytes = 0;
   uint32_t row_ofs = 0;  // offset into g_pack_rows (floats)
   uint32_t rows = 0;     // 48-byte 3x4 rows copied
-  // Sk8::UpdateBoneTransforms part-record snapshot (the player skater's
-  // pieces): rows serve only after the per-session layout vote confirms the
-  // row interpretation (see ServeAuthoritativePalettes).
-  bool ubt = false;
   // Provenance (char_sync): one sequence number per pack call (every part of
-  // one UpdateBoneTransforms call shares it: one tick of one character), and
-  // the part record index within a UBT call (0xFFFF otherwise).
+  // one pack call shares it), and a part index (0xFFFF: none; the
+  // UpdateBoneTransforms parts were the only per-part source, and the
+  // skeleton store owns them now).
   uint32_t seq = 0;
   uint16_t part = 0xFFFF;
 };
@@ -139,13 +136,9 @@ std::atomic<uint64_t> c_pal_serve_bad_rows{0};
 std::atomic<uint64_t> c_pal_ident_exact{0};
 std::atomic<uint64_t> c_pal_ident_fallback{0};
 std::atomic<uint64_t> c_pal_ident_prim_div{0};
-std::atomic<uint64_t> c_ubt_snap_ok{0};
-std::atomic<uint64_t> c_ubt_rej_ptrs{0};
-std::atomic<uint64_t> c_ubt_arr_fallback{0};
 
 // Every packed 3x4 row in [0, rows) must carry a sane rotation (Frobenius
-// norm-squared of the 3x3 within the bank-gate range). Packed-3x4 rows
-// only; UBT 16-float rows are gated by the layout vote instead.
+// norm-squared of the 3x3 within the bank-gate range).
 bool ServedRowsUsable(const float* r, uint32_t rows) {
   for (uint32_t i = 0; i < rows; ++i) {
     const float* m = r + size_t(i) * 12;
@@ -167,16 +160,6 @@ thread_local uint32_t tl_pack_owner = 0;
 std::atomic<uint32_t> g_pack_seq{0};
 thread_local uint32_t tl_pack_seq = 0;
 thread_local uint16_t tl_pack_part = 0xFFFF;
-
-// Sk8::UpdateBoneTransforms m_matrices layout vote: fresh bank captures
-// score the UBT rows; >=75% near/exact over 24 votes locks the
-// interpretation, otherwise UBT serving stays off.
-std::atomic<int> g_ubt_vote48{0};
-std::atomic<int> g_ubt_vote44{0};
-std::atomic<int> g_ubt_vote_other{0};
-// 0 = voting, 1 = packed 3x4, 2 = 4x4 Matrix44 (transpose on serve),
-// -1 = refused (neither interpretation matched fresh bank captures).
-std::atomic<int> g_ubt_layout{0};
 
 // Highest blend index + 1 actually referenced by a mesh's vertices, cached
 // per mesh (VB content is stable; the serve needs it to pick the right
@@ -227,11 +210,8 @@ void ProbeInstance(const float* row) {
   }
 }
 
-// Copy one instance's header + m_matrices rows. ubt = the record came from
-// an UpdateBoneTransforms parts array (stride 0x28, same header layout),
-// snapshotted at the hook because the parts arena AND its m_matrices buffers
-// zero by frame end.
-void SnapshotPack(uint8_t* base, uint32_t inst, bool ubt = false) {
+// Copy one instance's header + m_matrices rows.
+void SnapshotPack(uint8_t* base, uint32_t inst) {
   uint32_t head[0x28 / 4];
   if (!GuestTryCopy(head, base + inst, sizeof(head))) {
     return;
@@ -242,9 +222,6 @@ void SnapshotPack(uint8_t* base, uint32_t inst, bool ubt = false) {
   const uint32_t matrices = __builtin_bswap32(head[kInstMatrices / 4]);
   const uint32_t count = __builtin_bswap32(head[0x18 / 4]);
   if (!PlausiblePtr(model) || !PlausiblePtr(arr) || !PlausiblePtr(matrices)) {
-    if (ubt) {
-      c_ubt_rej_ptrs.fetch_add(1, std::memory_order_relaxed);
-    }
     return;
   }
   PackSnap snap;
@@ -253,30 +230,17 @@ void SnapshotPack(uint8_t* base, uint32_t inst, bool ubt = false) {
   snap.seq = tl_pack_seq;
   snap.part = tl_pack_part;
   snap.arr_begin = arr;
-  snap.ubt = ubt;
   if (arr_end > arr && (arr_end - arr) % kCtxStride == 0 &&
       (arr_end - arr) / kCtxStride <= 256) {
     snap.arr_bytes = arr_end - arr;
-  } else if (ubt) {
-    // Live UBT arena records don't always carry a populated end pointer.
-    // Structurally each part owns exactly ONE MeshContext, so a one-slot
-    // window is the safe assumption; it can only ever match the piece's
-    // own ctx.
-    snap.arr_bytes = kCtxStride;
-    c_ubt_arr_fallback.fetch_add(1, std::memory_order_relaxed);
   } else {
     snap.arr_bytes = kCtxSlotsFallback * kCtxStride;
   }
   // +0x18 tracked as the pack count: it equals the highest blend index the
   // mesh references, so it is trusted within bounds.
   snap.rows = (count >= 1 && count <= 96) ? count : 84;
-  // UBT snapshots copy 16 floats/row: rw::math::vpu::Matrix44 is a 64-byte
-  // 4x4, and UpdateBoneTransforms (unlike PackAndMultiply) may leave
-  // m_matrices in that shape; the serve's layout vote evaluates BOTH the
-  // packed-3x4 (12-float rows over the same contiguous span) and the
-  // 4x4-transposed interpretation from this one copy.
-  const uint32_t fpr = ubt ? 16u : 12u;
-  uint32_t raw[96 * 16];
+  constexpr uint32_t fpr = 12u;
+  uint32_t raw[96 * 12];
   if (!GuestTryCopy(raw, base + matrices, size_t(snap.rows) * fpr * 4)) {
     c_pal_unreadable.fetch_add(1, std::memory_order_relaxed);
     return;
@@ -292,14 +256,9 @@ void SnapshotPack(uint8_t* base, uint32_t inst, bool ubt = false) {
     dst[i] = std::bit_cast<float>(__builtin_bswap32(raw[i]));
   }
   g_packs.push_back(snap);
-  if (ubt) {
-    c_ubt_snap_ok.fetch_add(1, std::memory_order_relaxed);
-  }
-  // Layout self-probe on the first pack-hook snapshot only: UBT rows carry
-  // their own vote-based validation (a failed probe here would kill the
-  // whole module for the session on an unproven layout).
+  // Layout self-probe on the first snapshot only.
   static std::atomic<bool> s_probed{false};
-  if (!ubt && !s_probed.exchange(true)) {
+  if (!s_probed.exchange(true)) {
     ProbeInstance(dst);
   }
 }
@@ -394,39 +353,6 @@ void SnapshotLwEntity(uint8_t* base, uint32_t entity) {
   }
 }
 
-// Timing-tolerant pose compare, used by the UBT layout vote: the game packs
-// per render frame (interpolated poses), so a bank captured at draw time
-// legitimately sits within ~1-2 animation steps of any single-point
-// snapshot; translations move up to ~0.2/step at skating speed, rotation
-// elements only a few hundredths. Wrong rows/layout show rotation deltas
-// O(1) and translation deltas of whole limb offsets.
-struct RowScore {
-  float max_rot = 1e30f;    // max delta over the 3x3 rotation elements
-  float max_trans = 1e30f;  // max delta over the translation lane (f%4==3)
-  bool exact = false;
-  bool near = false;
-};
-
-void ScoreRows(const float* auth, uint32_t nrows, const DrawItem& item,
-               RowScore* out) {
-  float max_rot = 0.0f, max_trans = 0.0f, max_diff = 0.0f;
-  for (uint32_t r = 0; r < nrows; ++r) {
-    for (int f = 0; f < 12; ++f) {
-      const float diff = std::fabs(auth[r * 12 + f] - item.bones[r * 12 + f]);
-      ((f % 4 == 3) ? max_trans : max_rot) =
-          std::max((f % 4 == 3) ? max_trans : max_rot, diff);
-      max_diff = std::max(max_diff, diff);
-    }
-  }
-  out->max_rot = max_rot;
-  out->max_trans = max_trans;
-  out->exact = max_diff <= 2.5e-3f;
-  // Measured pose-step deltas top out ~0.10 rotation / ~0.2 translation
-  // during tricks at 140 fps; wrong rows/layout show rotation deltas
-  // O(0.5-2.0) and limb-offset translations; the bands sit between.
-  out->near = max_rot <= 0.25f && max_trans <= 1.0f;
-}
-
 // Highest blend index + 1 referenced by the mesh's own vertices, cached per
 // mesh under g_mu (VB content is stable per mesh asset). 0 = undeterminable.
 uint32_t NeededRowsCached(uint8_t* base, const DrawItem& item) {
@@ -451,18 +377,6 @@ uint32_t NeededRowsCached(uint8_t* base, const DrawItem& item) {
   }
   g_needed_rows_cache.emplace(item.mesh, needed);
   return needed;
-}
-
-// 64-byte row-vector Matrix44 (translation in row 3) -> our column-vector
-// [R|t] 3x4 rows (transpose the 3x3, splice the translation).
-void Convert44Rows(const float* in, uint32_t rows_n, float* out) {
-  for (uint32_t r = 0; r < rows_n; ++r) {
-    const float* m = in + r * 16;
-    float* o = out + r * 12;
-    o[0] = m[0]; o[1] = m[4]; o[2] = m[8];  o[3] = m[12];
-    o[4] = m[1]; o[5] = m[5]; o[6] = m[9];  o[7] = m[13];
-    o[8] = m[2]; o[9] = m[6]; o[10] = m[10]; o[11] = m[14];
-  }
 }
 
 uint64_t HashRows(const float* p, size_t nfloats) {
@@ -562,7 +476,6 @@ uint32_t ServeAuthoritativePalettesImpl(uint8_t* base,
     struct Cand {
       const float* rows;
       uint32_t nrows;
-      bool ubt;
       const PackSnap* snap;
     };
     Cand ring[8];
@@ -626,57 +539,14 @@ uint32_t ServeAuthoritativePalettesImpl(uint8_t* base,
             item.ctx >= snap.arr_begin &&
             item.ctx < snap.arr_begin + snap.arr_bytes &&
             (item.ctx - snap.arr_begin) % kCtxStride == 0;
-        if (snap.ubt && !contains) {
-          // Live UBT arena records reference per-frame ARENA MeshContext
-          // copies, never the persistent ctx the scene items carry; so ctx
-          // containment cannot map them. Match by CONTENT instead: the
-          // game's own packed bone count names the piece, joint proximity
-          // to the anchor names the character. Translation is read under
-          // BOTH row interpretations while the layout vote is still open
-          // (packed-3x4: floats 3/7/11; 4x4 row-vector: floats 12/13/14 of
-          // the 16-float row).
-          if (needed == 0 || snap.rows != needed) {
-            continue;
-          }
-          const float* r = rows.data() + snap.row_ofs;
-          const float da = std::sqrt((r[3] - anchor[0]) * (r[3] - anchor[0]) +
-                                     (r[7] - anchor[1]) * (r[7] - anchor[1]) +
-                                     (r[11] - anchor[2]) * (r[11] - anchor[2]));
-          const float db = std::sqrt((r[12] - anchor[0]) * (r[12] - anchor[0]) +
-                                     (r[13] - anchor[1]) * (r[13] - anchor[1]) +
-                                     (r[14] - anchor[2]) * (r[14] - anchor[2]));
-          const float d = std::min(da, db);
-          // UBT rows serve only after the layout vote resolves; until then
-          // a UBT candidate must not claim the entity-exact pick (it would
-          // displace a servable pack candidate and leave the item on its
-          // captured palette while the vote is still open).
-          const bool entity_exact =
-              ident_primary && snap.entity == ident.entity &&
-              g_ubt_layout.load(std::memory_order_relaxed) > 0;
-          if (d > 1.5f && !entity_exact) {
-            continue;  // another character's piece
-          }
-          ring[ring_n++ & 7] = {r, snap.rows, true, &snap};
-          if (entity_exact && d < best_dx + 0.05f) {
-            pick_x = &snap;
-            pick_x_rows = r;
-            best_dx = std::min(best_dx, d);
-          }
-          if (legacy_open && d <= 1.5f && d < best_d + 0.05f) {
-            pick = &snap;
-            pick_rows = r;
-            best_d = std::min(best_d, d);
-          }
-          continue;
-        }
         if (!contains) {
           continue;
         }
         if (snap.arr_bytes == kCtxStride) {
-          // Exact per-piece ctx window (UBT part / LW slice): unambiguous;
+          // Exact per-piece ctx window (LW slice): unambiguous;
           // keep overwriting so the frame's last pack wins.
           const float* r = rows.data() + snap.row_ofs;
-          if (!snap.ubt && !ServedRowsUsable(r, snap.rows)) {
+          if (!ServedRowsUsable(r, snap.rows)) {
             c_pal_serve_bad_rows.fetch_add(1, std::memory_order_relaxed);
             continue;
           }
@@ -685,14 +555,12 @@ uint32_t ServeAuthoritativePalettesImpl(uint8_t* base,
             pick_rows = r;
             best_d = 0.0f;
           }
-          if (ident_primary && snap.entity == ident.entity &&
-              (!snap.ubt ||
-               g_ubt_layout.load(std::memory_order_relaxed) > 0)) {
+          if (ident_primary && snap.entity == ident.entity) {
             pick_x = &snap;
             pick_x_rows = r;
             best_dx = 0.0f;
           }
-          ring[ring_n++ & 7] = {r, snap.rows, snap.ubt, &snap};
+          ring[ring_n++ & 7] = {r, snap.rows, &snap};
           continue;
         }
         // Instance-wide window (PackAndMultiply): the packed bone count
@@ -718,7 +586,7 @@ uint32_t ServeAuthoritativePalettesImpl(uint8_t* base,
           // candidate the item keeps its captured palette.
           continue;
         }
-        ring[ring_n++ & 7] = {r, snap.rows, snap.ubt, &snap};
+        ring[ring_n++ & 7] = {r, snap.rows, &snap};
         if (entity_exact && d < best_dx + 0.05f) {
           pick_x = &snap;
           pick_x_rows = r;
@@ -737,10 +605,9 @@ uint32_t ServeAuthoritativePalettesImpl(uint8_t* base,
     bool served_exact = false;
     if (pick_x != nullptr) {
       if (pick != nullptr && pick_rows != pick_x_rows) {
-        bool differs = pick->ubt != pick_x->ubt || pick->rows != pick_x->rows;
+        bool differs = pick->rows != pick_x->rows;
         if (!differs) {
-          const size_t nf = size_t(std::min(published, pick->rows)) *
-                            (pick->ubt ? 16 : 12);
+          const size_t nf = size_t(std::min(published, pick->rows)) * 12;
           differs =
               std::memcmp(pick_rows, pick_x_rows, nf * sizeof(float)) != 0;
         }
@@ -750,11 +617,11 @@ uint32_t ServeAuthoritativePalettesImpl(uint8_t* base,
             REXLOG_INFO(
                 "native-palette: entity-exact pick OVERRODE content match "
                 "mesh={:08X} ctx={:08X} ent={:08X} content(ent={:08X} "
-                "rows={} ubt={} t=({:.2f},{:.2f},{:.2f})) exact(rows={} "
-                "ubt={} t=({:.2f},{:.2f},{:.2f}))",
+                "rows={} t=({:.2f},{:.2f},{:.2f})) exact(rows={} "
+                "t=({:.2f},{:.2f},{:.2f}))",
                 item.mesh, item.ctx, ident.entity, pick->entity, pick->rows,
-                pick->ubt, pick_rows[3], pick_rows[7], pick_rows[11],
-                pick_x->rows, pick_x->ubt, pick_x_rows[3], pick_x_rows[7],
+                pick_rows[3], pick_rows[7], pick_rows[11],
+                pick_x->rows, pick_x_rows[3], pick_x_rows[7],
                 pick_x_rows[11]);
           }
         }
@@ -768,56 +635,6 @@ uint32_t ServeAuthoritativePalettesImpl(uint8_t* base,
       continue;
     }
     uint32_t n = std::min(published, pick->rows);
-    float conv[96 * 12];  // loop-scoped: pick_rows may alias it below
-    if (pick->ubt) {
-      // UpdateBoneTransforms writes rw::math::vpu::Matrix44 (64-byte 4x4)
-      // records; whether m_matrices holds those raw or already-packed 3x4
-      // rows is image-dependent; vote BOTH interpretations against FRESH
-      // bank captures (the game's own upload bytes) before ever serving.
-      // The snapshot copied 16 floats/row, so A = the same span sliced as
-      // contiguous 12-float rows, B = 4x4 rows transposed (row-vector M,
-      // translation in row 3 -> our column-vector [R|t] rows).
-      const int layout = g_ubt_layout.load(std::memory_order_relaxed);
-      const uint32_t vn = std::min(n, needed ? needed : n);
-      if (layout == 0) {
-        if (item.dbg_src <= 2 && !item.caster_bank && vn > 0) {
-          RowScore sa, sb;
-          ScoreRows(pick_rows, vn, item, &sa);
-          Convert44Rows(pick_rows, vn, conv);
-          ScoreRows(conv, vn, item, &sb);
-          ((sa.exact || sa.near)   ? g_ubt_vote48
-           : (sb.exact || sb.near) ? g_ubt_vote44
-                                   : g_ubt_vote_other)
-              .fetch_add(1, std::memory_order_relaxed);
-          const int va = g_ubt_vote48.load(std::memory_order_relaxed);
-          const int vb = g_ubt_vote44.load(std::memory_order_relaxed);
-          const int vo = g_ubt_vote_other.load(std::memory_order_relaxed);
-          if (va + vb + vo >= 24) {
-            const int total = va + vb + vo;
-            const int lock = va * 4 >= total * 3 ? 1 : vb * 4 >= total * 3 ? 2 : -1;
-            g_ubt_layout.store(lock, std::memory_order_relaxed);
-            REXLOG_INFO(
-                "native-palette: UpdateBoneTransforms m_matrices layout {} "
-                "(votes: packed-3x4 {} / 4x4-transposed {} / other {})",
-                lock == 1   ? "confirmed packed 3x4; player pieces now served"
-                : lock == 2 ? "confirmed 4x4 Matrix44; player pieces now "
-                              "served via transpose"
-                            : "REFUSED (neither read matches); UBT serving "
-                              "disabled this session",
-                va, vb, vo);
-          }
-        }
-        continue;
-      }
-      if (layout < 0) {
-        continue;
-      }
-      if (layout == 2) {
-        Convert44Rows(pick_rows, n, conv);
-        pick_rows = conv;
-      }
-      // layout == 1: contiguous packed 3x4; serve pick_rows as-is.
-    }
     // Serve-history hysteresis: packs run from sim jobs, so per-frame pack
     // ORDER is scheduler-dependent; no order-based pick is stable, and
     // anchoring on the item's captured bone-0 follows the very bank
@@ -836,18 +653,12 @@ uint32_t ServeAuthoritativePalettesImpl(uint8_t* base,
     }
     ServeHist& hist = g_serve_hist[item.ctx];
     if (hist.h1 != 0 && h == hist.h2 && h != hist.h1) {
-      float cbuf[96 * 12];
-      const int layout = g_ubt_layout.load(std::memory_order_relaxed);
       for (uint32_t ci = 0; ci < std::min<uint32_t>(ring_n, 8); ++ci) {
         const Cand& c = ring[ci];
         if (std::min(published, c.nrows) != n) {
           continue;
         }
         const float* cr = c.rows;
-        if (c.ubt && layout == 2) {
-          Convert44Rows(c.rows, n, cbuf);
-          cr = cbuf;
-        }
         if (HashRows(cr, size_t(n) * 12) == hist.h1) {
           NoteServe(item, c.snap, cr, n, needed);
           std::memcpy(item.bones.data(), cr, size_t(n) * 12 * sizeof(float));
@@ -906,16 +717,10 @@ void MaybeLog() {
   };
   REXLOG_INFO(
       "native-palette: frame {} srv[hit={} miss={} hyst={} ident_skip={} "
-      "bad_rows={} eprim={}/{}/{} unread={}] ubt[48={} 44={} o={} lay={} "
-      "snap={} arr={} rej={}]",
+      "bad_rows={} eprim={}/{}/{} unread={}]",
       g_frames, x(c_pal_served), x(c_pal_serve_miss), x(c_pal_hyst),
       x(c_pal_serve_ident_skip), x(c_pal_serve_bad_rows), x(c_pal_ident_exact),
-      x(c_pal_ident_fallback), x(c_pal_ident_prim_div), x(c_pal_unreadable),
-      g_ubt_vote48.load(std::memory_order_relaxed),
-      g_ubt_vote44.load(std::memory_order_relaxed),
-      g_ubt_vote_other.load(std::memory_order_relaxed),
-      g_ubt_layout.load(std::memory_order_relaxed), x(c_ubt_snap_ok),
-      x(c_ubt_arr_fallback), x(c_ubt_rej_ptrs));
+      x(c_pal_ident_fallback), x(c_pal_ident_prim_div), x(c_pal_unreadable));
 }
 
 bool CaptureActive() {
@@ -946,24 +751,6 @@ void OnPackPalette(uint8_t* base, uint32_t instance) {
   tl_pack_seq = g_pack_seq.fetch_add(1, std::memory_order_relaxed) + 1;
   tl_pack_part = 0xFFFF;
   SnapshotPack(base, instance);
-}
-
-void OnBoneTransforms(uint8_t* base, uint32_t parts, uint32_t count) {
-  if (parts == 0 || count == 0 || count > 64 || !CaptureActive()) {
-    return;
-  }
-  // Snapshot every part record NOW: the parts array is per-frame arena
-  // scratch (all fields read zero by frame end), so this hook exit is the
-  // only moment the player skater's per-piece palettes are readable. Each
-  // part becomes a per-piece PackSnap (its ctx window is exactly one
-  // MeshContext), which maps the player through the same containment
-  // matching as every other instance.
-  tl_pack_seq = g_pack_seq.fetch_add(1, std::memory_order_relaxed) + 1;
-  for (uint32_t k = 0; k < count; ++k) {
-    tl_pack_part = uint16_t(k);
-    SnapshotPack(base, parts + k * 0x28, /*ubt=*/true);
-  }
-  tl_pack_part = 0xFFFF;
 }
 
 void OnLwPack(uint8_t* base, uint32_t entity) {

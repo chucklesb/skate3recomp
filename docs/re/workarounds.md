@@ -31,7 +31,7 @@ Pedestrians still use them (RE-5b).
 |---|---|---|---|
 | Palette capture from the constant bank | `CaptureSkinnedState`, `BankPaletteBase` (`src/skate3_native_scene.cpp`) | Which constant registers hold this piece's bones, from row plausibility | open |
 | Palette validation | `RefinePaletteBase` | Whether a palette belongs to this mesh: samples must project on screen and keep a spread between 10-20% and 3× the bind size. Rejected the folded forearm until 2026-11-15 | open |
-| Content-matched serve | `ServeAuthoritativePalettesImpl` (`src/native/skate3_native_palette.cpp`) | Which pack belongs to which player piece: same bone count, within 1.5 m of last frame's position, plus a hold-or-advance hysteresis | in progress (skaters: the store under `on`) |
+| Content-matched serve | `ServeAuthoritativePalettesImpl` (`src/native/skate3_native_palette.cpp`) | Which pack belongs to which player piece: same bone count, within 1.5 m of last frame's position, plus a hold-or-advance hysteresis | **replaced** for skaters (RE-5 step 5): the UpdateBoneTransforms snapshots, their content match and the 3x4/4x4 layout vote are deleted; the store builds those pieces. The pack serve by ctx containment and its hysteresis remain for pedestrians and other packed instances (RE-5b) |
 | Pending fix-up | `OnDrawDone` (post-draw capture) | That a later draw with the same buffers is this piece | open |
 | Rescue and re-anchor | `BuildFrameScene` rescue block (`dbg_src` 3/13) | That a piece's pose from up to 10 frames ago, moved with the owner, is close enough | open |
 | Incoherent-palette heal | `dbg_src` 6 | Same, at publish time | open |

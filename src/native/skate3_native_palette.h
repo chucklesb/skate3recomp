@@ -37,10 +37,6 @@ namespace skate3::native_palette {
 // holds exactly the packed upload palette; snapshot it.
 void OnPackPalette(uint8_t* base, uint32_t instance);
 
-// Sk8::UpdateBoneTransforms EXIT: parts = an ARRAY of cModelInstance part
-// records (stride 0x28), count = record count. Snapshots every part
-// (per-frame arena, unreadable by frame end).
-void OnBoneTransforms(uint8_t* base, uint32_t parts, uint32_t count);
 
 // LivingWorld batch pack writer EXIT: entity = the
 // cLivingWorldPresEntity-derived writer. Snapshots each instance's
