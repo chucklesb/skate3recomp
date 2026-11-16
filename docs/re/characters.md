@@ -90,7 +90,25 @@ rescues and smooths each piece on its own (the "Characters" rows of
 apart from the body: KI-117 and its 2026-11-15 forearm follow-up were two of
 them.
 
-## The redesign (not started)
+## The redesign (in progress)
+
+**Status (2026-11-15): steps 1 and 2 done, in shadow mode.**
+`src/native/skate3_native_skeleton.{h,cpp}` keeps one pose per skater per
+tick and rebuilds every piece from it. It's behind
+`skate3_native_render_scene_skeleton = off | shadow`, default off. In shadow
+it compares each rebuilt palette with the draw's bank capture (the game's own
+upload) and with today's serve, and draws nothing from it. Check:
+`scenarios/skel_shadow.toml`, then `tools/harness/skel_shadow_report.py <run>`.
+
+| Run | Pieces | Built | Exact vs bank (newest tick) | Exact vs serve | Not served today |
+|---|---|---|---|---|---|
+| Windows Vulkan `20261115-234516_skel_shadow` | 6,336 | all | 6,336 | 4,262 | 2,074 |
+| Odin 2 `20261115-234759_skel_shadow` | 4,016 | all | 4,016 | 3,664 | 352 |
+
+There were no divergent pieces and no misses. The draw always uses the newest
+complete tick. The pieces today's serve skipped (whole 30-frame windows at times)
+keep their bank capture; the store covers them too.
+
 
 1. **Capture the pose where the game builds it:** at the
    `UpdateBoneTransforms` exit, read `srcPalette` and each part's remap.

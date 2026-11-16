@@ -52,7 +52,8 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   Done: UBT is a pure gather from one pose array (`srcPalette`), and UBT
   part `k` is the entity's LOD instance `k` (the part ↔ draw link,
   checked over a reel). The pack is `transpose(gather × m_MatLtoW)`, exact.
-  Next: the skeleton store in shadow mode.
+  Steps 1-2 (the store, shadow mode): every skater piece exact against the
+  game's upload on Windows and the Odin 2. Next: serve from it (step 3).
 - RE-6 [ ] **Who issues the emulated passes** native-only must replace
   (pitches 160 and 1200).
 - RE-7 [ ] **`src/re/` shadow-mode replacements.**
