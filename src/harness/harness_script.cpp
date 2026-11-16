@@ -26,6 +26,7 @@ constexpr VerbEntry kVerbs[] = {
     {"expect", Verb::kExpect},     {"exit", Verb::kExit},
     {"query", Verb::kQuery},       {"capture", Verb::kCapture},
     {"video", Verb::kVideo},
+    {"mem", Verb::kMem},
     {"crash", Verb::kCrash},       {"teleport", Verb::kTeleport},
     {"play_reel", Verb::kPlayReel},  {"renderer", Verb::kRenderer},
 };
@@ -179,6 +180,17 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
     *error = "speed must be > 0 and <= 4 (play_reel clock rate, 0.25 = quarter speed)";
     return false;
   }
+  s.mem_op = t["op"].value_or(std::string());
+  s.mem_type = t["type"].value_or(std::string("u32"));
+  s.value = Number(t, "value");
+  if (auto a = t["addr"].value<std::string>()) {
+    try {
+      s.addr = static_cast<uint32_t>(std::stoul(*a, nullptr, 16));
+    } catch (const std::exception&) {
+      *error = "addr must be a hex string (e.g. \"0x8303740C\")";
+      return false;
+    }
+  }
   s.video = t["video"].value_or(false);
   s.step_fps = Number(t, "step_fps").value_or(s.video ? 30.0 : 0.0);
   if (!(s.step_fps == 0.0 || (s.step_fps >= 10.0 && s.step_fps <= 240.0))) {
@@ -256,6 +268,25 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
     case Verb::kRenderer:
       if (s.renderer != "native" && s.renderer != "emulated") {
         *error = "renderer needs renderer = \"native\" or \"emulated\"";
+        return false;
+      }
+      break;
+    case Verb::kMem:
+      if (s.mem_op != "find" && s.mem_op != "refine" && s.mem_op != "read" &&
+          s.mem_op != "write") {
+        *error = "mem needs op = \"find\", \"refine\", \"read\" or \"write\"";
+        return false;
+      }
+      if (s.mem_type != "u32" && s.mem_type != "f32") {
+        *error = "mem type must be \"u32\" or \"f32\"";
+        return false;
+      }
+      if ((s.mem_op == "find" || s.mem_op == "refine" || s.mem_op == "write") && !s.value) {
+        *error = "mem " + s.mem_op + " needs value = N";
+        return false;
+      }
+      if ((s.mem_op == "read" || s.mem_op == "write") && !s.addr) {
+        *error = "mem " + s.mem_op + " needs addr = \"0x...\"";
         return false;
       }
       break;

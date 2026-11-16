@@ -87,6 +87,7 @@ constexpr uint32_t kEntityMatLtoW = 352;
 constexpr uint64_t kSkaterKeepFrames = 120;
 
 std::atomic<bool> g_enabled{false};
+std::atomic<uint8_t*> g_base{nullptr};  // guest memory base (first OnFrame)
 
 // ------------------------------------------------------------ guest reads
 
@@ -337,6 +338,10 @@ struct Run {
   uint64_t video_failed = 0;
   uint64_t video_waits = 0;  // frames that waited for a free encoder slot
   std::vector<std::thread> video_threads;
+
+  // mem verb: candidate addresses from the last find / refine (runner thread).
+  std::vector<uint32_t> mem_hits;
+  std::string mem_hits_type;
 };
 
 Run* g_run = nullptr;
@@ -669,6 +674,57 @@ std::string VideoJson(const Run& r, const VideoResult& v) {
          "\",\"video_frames\":" + std::to_string(v.frames) +
          ",\"video_failed\":" + std::to_string(v.failed) +
          ",\"video_waits\":" + std::to_string(v.waits);
+}
+
+// ------------------------------------------------------------ mem verb
+
+// The value as the guest stores it (big-endian), for comparing raw words.
+uint32_t MemWord(const std::string& type, double v) {
+  uint32_t w = 0;
+  if (type == "f32") {
+    const float f = static_cast<float>(v);
+    std::memcpy(&w, &f, 4);
+  } else {
+    w = static_cast<uint32_t>(static_cast<int64_t>(v));
+  }
+  return __builtin_bswap32(w);
+}
+
+std::string MemValueJson(const std::string& type, uint32_t be) {
+  const uint32_t w = __builtin_bswap32(be);
+  if (type == "f32") {
+    float f;
+    std::memcpy(&f, &w, 4);
+    char buf[48];
+    std::snprintf(buf, sizeof(buf), "%.6g", f);
+    return buf;
+  }
+  return std::to_string(w);
+}
+
+// Every 4-byte-aligned guest address holding `word`, over the whole 4 GB
+// space a 64 KB page at a time (unmapped pages fail the guarded copy and are
+// skipped). Stops at `cap` hits.
+std::vector<uint32_t> MemFind(uint8_t* base, uint32_t word, size_t cap) {
+  std::vector<uint32_t> hits;
+  std::vector<uint32_t> page(0x10000 / 4);
+  for (uint64_t a = 0x10000; a < 0x100000000ull && hits.size() < cap; a += 0x10000) {
+    if (a >= 0x7FC00000 && a < 0x80000000) {
+      continue;  // GPU registers (MMIO): reads there are emulated, not memory
+    }
+    if (!native_scene::GuestTryCopy(page.data(), base + a, 0x10000)) {
+      continue;
+    }
+    for (size_t i = 0; i < page.size(); ++i) {
+      if (page[i] == word) {
+        hits.push_back(static_cast<uint32_t>(a + i * 4));
+        if (hits.size() >= cap) {
+          break;
+        }
+      }
+    }
+  }
+  return hits;
 }
 
 bool WaitFrames(Run& r, int64_t frames, double timeout_s);
@@ -1159,6 +1215,62 @@ Outcome Execute(Run& r, const Step& st) {
       }
       crash::FaultNow();
       return Fail("the fault did not crash the process");
+    }
+
+    case Verb::kMem: {
+      uint8_t* base = g_base.load();
+      if (!base) {
+        return Fail("mem: no guest frame yet");
+      }
+      constexpr size_t kCap = 100000;
+      auto list = [&](const std::vector<uint32_t>& v) {
+        std::string out = "\"count\":" + std::to_string(v.size()) + ",\"addrs\":[";
+        for (size_t i = 0; i < v.size() && i < 64; ++i) {
+          char buf[16];
+          std::snprintf(buf, sizeof(buf), "%s\"%08X\"", i ? "," : "", v[i]);
+          out += buf;
+        }
+        return out + "]";
+      };
+      Outcome o;
+      if (st.mem_op == "find") {
+        r.mem_hits = MemFind(base, MemWord(st.mem_type, *st.value), kCap);
+        r.mem_hits_type = st.mem_type;
+        o.result_json = list(r.mem_hits) +
+                        (r.mem_hits.size() >= kCap ? ",\"capped\":true" : "");
+      } else if (st.mem_op == "refine") {
+        if (r.mem_hits.empty() || r.mem_hits_type != st.mem_type) {
+          return Fail("mem refine: no " + st.mem_type + " find to refine");
+        }
+        const uint32_t word = MemWord(st.mem_type, *st.value);
+        std::vector<uint32_t> kept;
+        for (uint32_t a : r.mem_hits) {
+          uint32_t raw;
+          if (native_scene::GuestTryCopy(&raw, base + a, 4) && raw == word) {
+            kept.push_back(a);
+          }
+        }
+        r.mem_hits = std::move(kept);
+        o.result_json = list(r.mem_hits);
+      } else {
+        uint32_t raw = 0;
+        if (st.mem_op == "write") {
+          const uint32_t word = MemWord(st.mem_type, *st.value);
+          uint32_t old = 0;
+          if (!native_scene::GuestTryCopy(&old, base + st.addr, 4)) {
+            return Fail("mem write: address not mapped");
+          }
+          std::memcpy(base + st.addr, &word, 4);
+          Event(r, "mem_write", "\"addr\":\"" + std::to_string(st.addr) + "\",\"old\":" +
+                                    MemValueJson(st.mem_type, old) + ",\"new\":" +
+                                    MemValueJson(st.mem_type, word));
+        }
+        if (!native_scene::GuestTryCopy(&raw, base + st.addr, 4)) {
+          return Fail("mem read: address not mapped");
+        }
+        o.result_json = "\"value\":" + MemValueJson(st.mem_type, raw);
+      }
+      return o;
     }
 
     case Verb::kVideo: {
@@ -2042,6 +2154,7 @@ void OnFrame(uint8_t* base) {
   if (!r || !g_enabled.load(std::memory_order_relaxed)) {
     return;
   }
+  g_base.store(base, std::memory_order_relaxed);
   const auto now = Clock::now();
 
   // Sample state outside the run lock (guest reads can be slow).

@@ -53,6 +53,8 @@ enum class Verb {
                 // settle=true (false: return on arrival, e.g. a floorless locator)
   kRenderer,    // renderer="native"|"emulated" frames=30: the F5 switch, then settle
   kVideo,       // frames=N tag="x": every rendered frame as video/<tag>/f<n>.png
+  kMem,         // op="find"|"refine"|"read"|"write" type="u32"|"f32" value=N addr="0x..."
+                // (live debugging: find a game value in guest memory and change it)
   kPlayReel,    // clip=N (a saved skate.Reel replay, 1-based as listed in My Replays):
                 // plays it start to end at 1x with no UI, then returns to free skate;
                 // from="start"|"marker" stills=[s...] settle_frames=20 every_frames=N tag=x
@@ -148,6 +150,12 @@ struct Step {
 
   // renderer
   std::string renderer;  // "native" | "emulated"
+
+  // mem
+  std::string mem_op;           // find | refine | read | write
+  std::string mem_type = "u32"; // u32 | f32 (big-endian, as the guest stores them)
+  std::optional<double> value;
+  uint32_t addr = 0;
 };
 
 struct Scenario {
