@@ -48,6 +48,7 @@
 #include "native/skate3_native_skeleton.h"
 #include "native/skate3_native_pose.h"
 #include "native/skate3_native_replace.h"
+#include "native/skate3_native_fence.h"
 // Offline-compiled SPIR-V for the native shaders (compiled from the HLSL
 // sources with DXC): the Vulkan RHI backend consumes these blobs; the D3D12
 // backend runtime-compiles the embedded HLSL as before.
@@ -754,6 +755,12 @@ REXCVAR_DEFINE_BOOL(skate3_native_render_scene_caster_refresh_all, true, "Skate 
                     "guard refused, and the right clone stayed on its stale caster "
                     "bank, the NPC blink). false = legacy oldest-only, non-ropa "
                     "refresh.")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_STRING(skate3_native_render_scene_char_rows_entity, "off", "Skate 3",
+                      "RE-7: character lighting rows from the entity. off | shadow (rebuild "
+                      "each validated capture from the previous one with the entity's rows read "
+                      "live, and compare; char-entity: lines) | on (pieces whose capture failed "
+                      "this frame take the rebuild instead of the stale caches)")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_char_rows_probe, false, "Skate 3",
                     "RE-7 diagnostic: on each validated character-lighting capture, "
@@ -4541,26 +4548,21 @@ void NoteCharBind(uint8_t* base, uint32_t entity) {
   g_bind_snap[entity] = snap;
 }
 
-void CaptureCharLighting(uint8_t* base, DrawItem& item) {
-  if (CaptureHallOfMeatState(base, item)) return;
-  if (item.char_family == 0) {
-    return;
-  }
-  const uint32_t ps = g_ps_bank.load(std::memory_order_relaxed);
-  if (ps == 0) {
-    return;
-  }
-  g_char_attempts.fetch_add(1, std::memory_order_relaxed);
+namespace {
+// PS bank rows the character transform reads (the highest is the editor
+// layout's last SH row, c33).
+constexpr uint32_t kCharRawRows = 40;
+
+// The character transform: PS bank rows (raw, c0..c39) -> char_rows. live =
+// this draw's bank (its decal fetch slots and the frame's shadow biases come
+// along); false = a rebuild from cached rows (decals copied by the caller).
+bool CharRowsTransform(uint8_t* base, const DrawItem& item, const float* raw, bool live,
+                       float* local, uint8_t* fam_out, uint32_t* plus_out) {
   const auto row = [&](uint32_t r, uint32_t c) {
-    return LoadGuestF32(base, ps + (r * 4 + c) * 4);
+    return r < kCharRawRows ? raw[r * 4 + c] : 0.0f;
   };
-  // Build locally and commit only on success: the capture can run again on a
-  // later draw with the same buffers (the caster-pass bank is stale; its
-  // shadowPS touches no PS constants), and a failed refresh must not wipe
-  // rows a previous successful capture staged.
-  float local[kCharRowFloats];
   float* d = local;
-  std::memset(local, 0, sizeof(local));
+  std::memset(local, 0, sizeof(float) * kCharRowFloats);
   uint8_t fam = item.char_family;
   // `plus` = register-row shift for the create-a-skater EDITOR compiles of
   // the fam-2 shaders (cacstamp_/cac_*_nisPS + the ropa variants): the whole
@@ -4631,7 +4633,7 @@ void CaptureCharLighting(uint8_t* base, DrawItem& item) {
             "expo={:.3f} key=({:.3f},{:.3f},{:.3f})",
             fam, light[0], light[1], light[2], expo, key[0], key[1], key[2]);
       }
-      return;
+      return false;
     }
   }
   d[0] = light[0]; d[1] = light[1]; d[2] = light[2];
@@ -4643,7 +4645,7 @@ void CaptureCharLighting(uint8_t* base, DrawItem& item) {
     const float s2 = s * s;
     const float amb_mult = row((fam == 1 ? 10u : 19u) + plus, 3);
     if (!(s > -8.0f && s < 8.0f) || !(amb_mult >= 0.0f && amb_mult < 16.0f)) {
-      return;
+      return false;
     }
     d[2 * 4 + 3] = amb_mult;
     for (int r = 0; r < 9; ++r) {
@@ -4674,7 +4676,7 @@ void CaptureCharLighting(uint8_t* base, DrawItem& item) {
         d[12 * 4 + 3] = 1.0f;
       }
       // Tattoo / bruise / dirt layers (see CaptureCacDecals).
-      CaptureCacDecals(base, item, plus, d);
+      if (live) CaptureCacDecals(base, item, plus, d);
     }
     // Material multiplier m_params[0].y (defaultcharacter c5.y / cacstamp
     // c14.y): the PS multiplies the lit color by it before the tone chain
@@ -4730,7 +4732,7 @@ void CaptureCharLighting(uint8_t* base, DrawItem& item) {
     }
   } else if (fam == 3) {
     const float amb = row(19u, 3);
-    if (!(amb >= 0.0f && amb < 16.0f)) return;
+    if (!(amb >= 0.0f && amb < 16.0f)) return false;
     d[2 * 4 + 0] = amb * 0.1f;
     d[2 * 4 + 1] = amb * 0.175f;
     d[2 * 4 + 2] = amb * 0.3f;
@@ -4744,7 +4746,7 @@ void CaptureCharLighting(uint8_t* base, DrawItem& item) {
     // vehicle.fx body / vehicle_glass.fx windows (row map above). The
     // otherwise-unused SH row 0 carries the phong spec color + power.
     const float amb = row(19u, 3);
-    if (!(amb >= 0.0f && amb < 16.0f)) return;
+    if (!(amb >= 0.0f && amb < 16.0f)) return false;
     d[2 * 4 + 0] = amb * 0.1f;
     d[2 * 4 + 1] = amb * 0.175f;
     d[2 * 4 + 2] = amb * 0.3f;
@@ -4804,7 +4806,7 @@ void CaptureCharLighting(uint8_t* base, DrawItem& item) {
   // with the same values in every char bank). Captured once per frame from
   // any validating fam-2 bank; consumed by the exact 9-tap char shadow
   // sampling (FrameScene::char_shadow_bias).
-  if (fam == 2) {
+  if (fam == 2 && live) {
     const uint32_t bias_r = 8u + plus;
     const float bx = row(bias_r, 0);
     const float by = row(bias_r, 1);
@@ -4815,6 +4817,187 @@ void CaptureCharLighting(uint8_t* base, DrawItem& item) {
       g_char_shadow_bias[2] = bz;
       g_char_shadow_bias_frame = g_guest_frame;
     }
+  }
+  *fam_out = fam;
+  *plus_out = plus;
+  return true;
+}
+
+// ---- char_rows from the entity (RE-7 Part C) --------------------------------
+// The per-entity rows of a character bank are the entity's own fields, read
+// by the GPU through a pointer at upload (BindConstants keeps pointers;
+// docs/re/characters.md "BindConstants family"). With
+// skate3_native_render_scene_char_rows_entity, a piece's last validated raw
+// rows are kept per (mesh, ctx); its rows can then be rebuilt any frame from
+// them with the entity rows read live: shadow compares the rebuild with each
+// validated capture, on serves it to pieces whose capture failed (instead of
+// the stale per-instance / per-mesh caches).
+struct CharRaw {
+  float raw[kCharRawRows * 4];
+  float final_rows[kCharRowFloats];
+  uint32_t entity = 0;
+  uint32_t plus = 0;  // the editor layout shift of the cached capture
+};
+std::unordered_map<uint64_t, CharRaw> g_char_raw;
+// The light-direction row (frame-global: one sun) per transformed family,
+// from the latest validated capture; used when it is from this frame.
+struct CharLight {
+  uint64_t frame = ~0ull;
+  float row[4];
+};
+CharLight g_char_light[8];
+uint32_t CharLightRow(uint8_t fam) {
+  switch (fam) {
+    case 1: return 0;
+    case 4: case 5: return 4;
+    default: return 9;
+  }
+}
+std::atomic<uint64_t> c_ent_shadow{0}, c_ent_exact{0}, c_ent_diff{0}, c_ent_nomap{0},
+    c_ent_served{0}, c_ent_logged{0};
+
+int CharEntityMode() {
+  const std::string v = REXCVAR_GET(skate3_native_render_scene_char_rows_entity);
+  return v == "on" ? 2 : v == "shadow" ? 1 : 0;
+}
+
+// Bank row -> entity offset pairs for a family (measured: the char-rows
+// probe, 100% bit-exact live). Empty when the family has no verified map or
+// the entity's class does not carry that layout.
+int CharEntityRows(uint8_t fam, uint32_t plus, skate3::native_entity::EntClass cls,
+                   uint32_t rows[16], uint32_t offs[16]) {
+  using skate3::native_entity::EntClass;
+  const bool skater = cls == EntClass::kSkater || cls == EntClass::kColorized ||
+                      cls == EntClass::kCac || cls == EntClass::kSkaterAux;
+  int n = 0;
+  if (plus != 0) {
+    return 0;  // the create-a-skater editor layout: not verified by the probe
+  }
+  if (fam == 2 && skater) {
+    rows[n] = 22; offs[n++] = 496;
+    for (uint32_t k = 0; k < 9; ++k) {
+      rows[n] = 24 + k; offs[n++] = 512 + 16 * k;
+    }
+  } else if (fam == 4 && skater) {
+    rows[n] = 15; offs[n++] = 496;
+  } else if (fam == 3 && cls == EntClass::kLivingWorld) {
+    rows[n] = 22; offs[n++] = 1168;
+    rows[n] = 23; offs[n++] = 1184;
+  } else if (fam == 6 && cls == EntClass::kLivingWorld) {
+    rows[n] = 21; offs[n++] = 1168;
+    rows[n] = 22; offs[n++] = 1184;
+  }
+  return n;
+}
+
+// Rebuilds `out` from `cached` with the entity rows read live. False when
+// the piece has no verified map or a read fails.
+bool CharRowsFromEntity(uint8_t* base, const DrawItem& item, const CharRaw& cached,
+                        uint32_t entity, skate3::native_entity::EntClass cls, uint8_t fam,
+                        uint32_t plus, float* out) {
+  uint32_t rows[16], offs[16];
+  const int n = CharEntityRows(fam, plus, cls, rows, offs);
+  if (n == 0) return false;
+  float raw[kCharRawRows * 4];
+  std::memcpy(raw, cached.raw, sizeof(raw));
+  for (int i = 0; i < n; ++i) {
+    uint32_t w[4];
+    if (!GuestTryCopy(w, base + entity + offs[i], sizeof(w))) return false;
+    for (int c = 0; c < 4; ++c) {
+      raw[rows[i] * 4 + c] = std::bit_cast<float>(BSwap32(w[c]));
+    }
+  }
+  if (fam < 8 && g_char_light[fam].frame == g_guest_frame) {
+    std::memcpy(&raw[CharLightRow(fam) * 4], g_char_light[fam].row, sizeof(float) * 4);
+  }
+  // The transform re-derives fam 1 and the editor shift from the rows, as
+  // the live capture did.
+  uint8_t fam2 = 0;
+  uint32_t plus2 = 0;
+  if (!CharRowsTransform(base, item, raw, false, out, &fam2, &plus2)) return false;
+  // The decal layers (rows 19..21 and the fetch words) come from the device
+  // at the live capture: keep the cached piece's.
+  std::memcpy(out + kCharDecalRows, cached.final_rows + kCharDecalRows,
+              sizeof(float) * (kCharRowFloats - kCharDecalRows));
+  return true;
+}
+
+// After a validated live capture: shadow-compare the rebuild from the
+// previous cached rows, then cache this frame's.
+void CharEntityNoteCapture(uint8_t* base, const DrawItem& item, const float* raw,
+                           const float* final_rows, uint8_t fam, uint32_t plus) {
+  const int mode = CharEntityMode();
+  if (mode == 0 || item.ctx == 0) return;
+  skate3::native_entity::CtxInfo ident;
+  if (!skate3::native_entity::LookupCtx(item.ctx, &ident) || !ident.entity) return;
+  const uint64_t key = (uint64_t(item.mesh) << 32) | item.ctx;
+  const auto it = g_char_raw.find(key);
+  if (it != g_char_raw.end() && it->second.entity == ident.entity) {
+    float rebuilt[kCharRowFloats];
+    if (CharRowsFromEntity(base, item, it->second, ident.entity, ident.cls, fam, plus, rebuilt)) {
+      c_ent_shadow.fetch_add(1, std::memory_order_relaxed);
+      if (std::memcmp(rebuilt, final_rows, sizeof(float) * kCharUploadFloats) == 0) {
+        c_ent_exact.fetch_add(1, std::memory_order_relaxed);
+      } else {
+        c_ent_diff.fetch_add(1, std::memory_order_relaxed);
+        if (c_ent_logged.fetch_add(1, std::memory_order_relaxed) < 24) {
+          std::string diffs;
+          int shown = 0;
+          for (uint32_t i = 0; i < kCharUploadFloats && shown < 6; ++i) {
+            if (std::memcmp(&rebuilt[i], &final_rows[i], 4) != 0) {
+              diffs += fmt::format(" [{}.{}] {:.5g}/{:.5g}", i / 4, i % 4, rebuilt[i],
+                                   final_rows[i]);
+              ++shown;
+            }
+          }
+          REXLOG_INFO("char-entity: DIFF fam {} plus {} cls {} mesh {:08X}:{}", fam, plus,
+                      int(ident.cls), item.mesh, diffs);
+        }
+      }
+    } else {
+      c_ent_nomap.fetch_add(1, std::memory_order_relaxed);
+    }
+  }
+  if (g_char_raw.size() > 8192) g_char_raw.clear();
+  CharRaw& c = g_char_raw[key];
+  std::memcpy(c.raw, raw, sizeof(c.raw));
+  std::memcpy(c.final_rows, final_rows, sizeof(c.final_rows));
+  c.entity = ident.entity;
+  if (fam < 8 && plus == 0) {
+    g_char_light[fam].frame = g_guest_frame;
+    std::memcpy(g_char_light[fam].row, &raw[CharLightRow(fam) * 4], sizeof(float) * 4);
+  }
+  c.plus = plus;
+}
+}  // namespace
+
+void CaptureCharLighting(uint8_t* base, DrawItem& item) {
+  if (CaptureHallOfMeatState(base, item)) return;
+  if (item.char_family == 0) {
+    return;
+  }
+  const uint32_t ps = g_ps_bank.load(std::memory_order_relaxed);
+  if (ps == 0) {
+    return;
+  }
+  g_char_attempts.fetch_add(1, std::memory_order_relaxed);
+  // The bank's rows, read once. Build locally and commit only on success:
+  // the capture can run again on a later draw with the same buffers (the
+  // caster-pass bank is stale; its shadowPS touches no PS constants), and a
+  // failed refresh must not wipe rows a previous successful capture staged.
+  uint32_t words[kCharRawRows * 4];
+  if (!GuestTryCopy(words, base + ps, sizeof(words))) {
+    return;
+  }
+  float raw[kCharRawRows * 4];
+  for (uint32_t i = 0; i < kCharRawRows * 4; ++i) {
+    raw[i] = std::bit_cast<float>(BSwap32(words[i]));
+  }
+  float local[kCharRowFloats];
+  uint8_t fam = 0;
+  uint32_t plus = 0;
+  if (!CharRowsTransform(base, item, raw, true, local, &fam, &plus)) {
+    return;
   }
   if (REXCVAR_GET(skate3_native_render_scene_char_rows_probe)) {
     CharRowsProbe(base, item, ps, fam, plus);
@@ -4828,6 +5011,7 @@ void CaptureCharLighting(uint8_t* base, DrawItem& item) {
     g_char_rows_cache.clear();
   }
   std::memcpy(g_char_rows_cache[item.mesh].data(), local, sizeof(local));
+  CharEntityNoteCapture(base, item, raw, local, fam, plus);
 }
 
 // The game's per-entity spawn/streaming fade. LivingWorld presentation
@@ -10959,6 +11143,38 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
       g_lw_last_items.clear();
     }
   }
+  // RE-7 Part C: pieces whose capture failed this frame, rebuilt from their
+  // last validated rows with the entity's own rows read live
+  // (skate3_native_render_scene_char_rows_entity = on).
+  if (const int ent_mode = CharEntityMode(); ent_mode != 0) {
+    static uint64_t s_ent_frames = 0;
+    if (++s_ent_frames % 120 == 0) {
+      const auto x = [](std::atomic<uint64_t>& a) { return a.exchange(0, std::memory_order_relaxed); };
+      REXLOG_INFO("char-entity: mode {} frame {} shadow={} exact={} diff={} nomap={} served={} cached={}",
+                  ent_mode == 2 ? "on" : "shadow", s_ent_frames, x(c_ent_shadow), x(c_ent_exact),
+                  x(c_ent_diff), x(c_ent_nomap), x(c_ent_served), g_char_raw.size());
+    }
+  }
+  if (CharEntityMode() == 2) {
+    for (DrawItem& item : scene.items) {
+      if (item.char_family == 0 || item.ctx == 0 || item.char_rows[14 * 4 + 1] > 0.0f) {
+        continue;
+      }
+      const auto it = g_char_raw.find((uint64_t(item.mesh) << 32) | item.ctx);
+      skate3::native_entity::CtxInfo ident;
+      if (it == g_char_raw.end() || !skate3::native_entity::LookupCtx(item.ctx, &ident) ||
+          ident.entity != it->second.entity) {
+        continue;
+      }
+      const uint8_t fam = uint8_t(it->second.final_rows[14 * 4 + 1]);
+      float rebuilt[kCharRowFloats];
+      if (CharRowsFromEntity(base, item, it->second, ident.entity, ident.cls, fam,
+                             it->second.plus, rebuilt)) {
+        std::memcpy(item.char_rows, rebuilt, sizeof(item.char_rows));
+        c_ent_served.fetch_add(1, std::memory_order_relaxed);
+      }
+    }
+  }
   // Per-INSTANCE character-lighting fallback (see g_char_rows_cache_inst):
   // the general rescue for capture-failed frames, keyed (mesh,ctx) and
   // entity-checked. Runs before the legacy single-instance mesh fallback so
@@ -12401,6 +12617,7 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
     skate3::native_skeleton::OnFrameBuilt();
     skate3::native_pose::OnFrameBuilt();
     skate3::native_replace::OnFrameBuilt();
+    skate3::native_fence::OnFrameBuilt();
     g_frame_pal_tail_ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                  PerfClock::now() - pal_tail_t0)
                                  .count());
