@@ -76,7 +76,7 @@ and `level = "owned"` or `"killed"` calls the tracker's own
 `sub_82C1D878`: the challenge leaves the active list and goes to Owned or
 Killed, and unlock actions gated on it react at once (Windows,
 2026-11-15: `photo_univ_03` Killed, active 64 → 63, Killed 28 → 29, locked
-actions 53 → 52). The game saves it by itself: the next session started with it Killed. It pays no reward (set `board_sales` for that).
+actions 53 → 52). The game saves it by itself: the next session started with it Killed. It runs on the Odin 2 too (run `20261115-210836_career_complete_challenge`; that career tracks 89 active, 30 Owned, 15 Killed). It pays no reward (set `board_sales` for that).
 `scenarios/career_complete_challenge.toml`.
 
 **Completing a challenge, as the game does it:** the Lua `CompleteChallenge` (`sub_8283FD00`)
