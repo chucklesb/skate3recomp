@@ -297,6 +297,7 @@ the next investigation can reuse them.
 | `shots.py strip` | Crops, scales and labels shots side by side: zoomed pixel comparisons (`--box`, `--pixel`) and before/after pictures for docs | Pillow |
 | `shots.py stats` | Mean colour of one region per shot and how much it differs from the first shot: measures what a toggle does to one surface (`--box`) | Pillow |
 | `shots.py classify` | Which known state each shot shows: % of pixels in `--box` that differ from each `--ref LABEL=IMG`, and the nearest one. Use it before reporting that a shot shows an old or wrong state; a darker render is not a different state | Pillow |
+| `shots.py pairs` | Pairs `<name>_A` / `<name>_B` shots in a run (`stills_variants` tags, e.g. `off` / `on`) and ranks them by % of changed pixels; `--strip` writes the worst pairs side by side (example `skel_stills.toml`) | Pillow |
 | `video_frames.py` | scrcpy recordings: `remux` (make seekable), `frames` (every frame of a time window), `match` (find the same moment in another pass or recording) | ffmpeg, Pillow |
 | `ropa_shadow_trace.py` | Per-reel-pass garment shadow offset from a `char_track` run's log (KI-124) | - |
 | `char_jitter.py` | Skater-vs-camera jitter from `char_track` lines (KI-120) | - |

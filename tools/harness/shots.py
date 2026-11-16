@@ -4,6 +4,7 @@
     shots.py strip OUT.jpg IMG[=LABEL] ... [--box X0,Y0,X1,Y1] [--width W] [--pixel]
     shots.py stats IMG[=LABEL] ... [--box X0,Y0,X1,Y1]   # region colour + change vs first
     shots.py classify IMG ... --ref LABEL=IMG --ref LABEL=IMG [--box X0,Y0,X1,Y1]
+    shots.py pairs RUN off on [--box ...] [--strip OUT.jpg --top 3]   # variant pairs
 
 classify answers "which known state does each shot show?" (e.g. the old or
 the new photo in a menu box): per shot, the % of box pixels differing by more
@@ -131,6 +132,42 @@ def classify(items: list[str], refs: list[str], box) -> None:
         print(f"{Path(item).name:<40} {cols}  -> {best[1]}")
 
 
+def pairs(folder: Path, a_tag: str, b_tag: str, box, strip_out: Path | None, top: int) -> int:
+    """Pair <name>_<a>.png with <name>_<b>.png in a folder (stills_variants
+    shots) and print the % of pixels differing by more than 24 per pair,
+    worst first; --strip writes the worst `top` pairs side by side."""
+    import re
+    # Harness shots are f<frame>_<tag>_<NN>.png; the frame differs within a
+    # pair, so pair on the rest.
+    def key(p: Path, tag: str):
+        m = re.match(r"^(?:f\d+_)?(.*)_" + re.escape(tag) + r"(_\d+)?\.png$", p.name)
+        return (m.group(1), m.group(2) or "") if m else None
+
+    bs = {key(p, b_tag): p for p in folder.glob(f"*_{b_tag}*.png") if key(p, b_tag)}
+    rows = []
+    for pa in sorted(folder.glob(f"*_{a_tag}*.png")):
+        k = key(pa, a_tag)
+        pb = bs.get(k) if k else None
+        if pb is None:
+            continue
+        ia, ib = Image.open(pa).convert("RGB"), Image.open(pb).convert("RGB")
+        if box:
+            ia, ib = ia.crop(box), ib.crop(box)
+        rows.append((changed_pct(ia, ib), k[0], pa, pb))
+    if not rows:
+        print(f"no {a_tag}/{b_tag} pairs in {folder}")
+        return 1
+    rows.sort(key=lambda r: -r[0])
+    for pct, name, _, _ in rows:
+        print(f"{name:<48} {pct:6.2f}% of pixels differ ({a_tag} vs {b_tag})")
+    if strip_out:
+        items = []
+        for _, name, pa, pb in rows[:top]:
+            items += [f"{pa}={name} {a_tag}", f"{pb}={name} {b_tag}"]
+        strip(strip_out, items, box, 640, False, 8)
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -151,8 +188,19 @@ def main() -> int:
     p.add_argument("--width", type=int, default=960, help="width of each tile (default 960)")
     p.add_argument("--pixel", action="store_true", help="nearest-neighbour scaling")
     p.add_argument("--gap", type=int, default=8)
+    q = sub.add_parser("pairs", help="pair <name>_A / <name>_B shots in a folder (e.g. "
+                                     "stills_variants off/on) and rank by % changed pixels")
+    q.add_argument("folder", type=Path, help="a run's shots/ folder (or the run)")
+    q.add_argument("a", help="first variant tag (e.g. off)")
+    q.add_argument("b", help="second variant tag (e.g. on)")
+    q.add_argument("--box", help="region X0,Y0,X1,Y1 (default: whole image)")
+    q.add_argument("--strip", type=Path, help="write the worst pairs side by side here")
+    q.add_argument("--top", type=int, default=3)
     a = ap.parse_args()
     box = tuple(int(v) for v in a.box.split(",")) if a.box else None
+    if a.cmd == "pairs":
+        folder = a.folder / "shots" if (a.folder / "shots").is_dir() else a.folder
+        return pairs(folder, a.a, a.b, box, a.strip, a.top)
     if box is not None and len(box) != 4:
         ap.error("--box needs X0,Y0,X1,Y1")
     if a.cmd == "stats":

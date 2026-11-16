@@ -1,0 +1,53 @@
+# RE-5 step 4: the skeleton store's stills check. Each still holds one
+# recorded reel frame and shoots it twice, the store off (today's per-piece
+# path) and on (every skater piece from the store), so the pair differs only
+# by the store: reel<N>_t<s>_off / _on.
+#
+# Reels: clip 2 from its marker (the reel_stills.toml times) and the forearm
+# reel a9bbe6156adca014 around its three markers (24.86, 26.48, 28.26 s,
+# where the per-piece path lost the forearm, KI-117 follow-up).
+#
+# Check: tools/harness/shots.py pairs <run> off on --strip out.jpg
+# (per pair, the % of pixels differing; then look at the worst side by side).
+# Needs the test user data (signed-in profile with the reels).
+name = "skel_stills"
+timeout_s = 1500
+boot = "demo"
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_guest_fps_cap = 30.0
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+clip = 2
+from = "marker"
+stills = [6.0, 10.0, 14.0, 18.0]
+stills_variants = [
+  { tag = "off", set = { skate3_native_render_scene_skeleton = "off" } },
+  { tag = "on", set = { skate3_native_render_scene_skeleton = "on" } },
+]
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "play_reel"
+reel = "a9bbe6156adca014"
+from = "marker"
+stills = [25.0, 25.6, 26.6, 27.2, 28.4, 29.0]
+stills_variants = [
+  { tag = "off", set = { skate3_native_render_scene_skeleton = "off" } },
+  { tag = "on", set = { skate3_native_render_scene_skeleton = "on" } },
+]
