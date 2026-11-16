@@ -168,7 +168,7 @@ screen stays black. The HUD still draws and the game keeps running, but the
 world never appears. Waiting doesn't help, so it isn't a slow load.
 
 **How to see it:** teleport to `Z_SP_SkateParkStart2`, the starter skate
-park ("PCU Training"): black on every visit (Windows, Vulkan, 2026-11-15,
+park ("PCU Training"): black on every visit (Windows, Vulkan, and the Odin 2, 2026-11-15,
 run `20261115-231057_startpark_check`; `scenarios/teleport_districts.toml`
 passes through it). The other surveyed locators are in
 [teleport-locations.md](teleport-locations.md).

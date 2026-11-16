@@ -14,7 +14,7 @@ first attempt (`out/re/teleport_survey_map.txt`, not in the repo).
   `dist_megapark`, ...; [re/attrib_names.tsv](re/attrib_names.tsv)), so the
   skate school, the separate skate parks and the DLC parks load before the
   skater arrives. `scenarios/teleport_districts.toml` visits one place in
-  each:
+  each (passes on Windows and the Odin 2, DLC included):
 
 | Location | District | Map key (`world` record) | Map label |
 |---|---|---|---|
