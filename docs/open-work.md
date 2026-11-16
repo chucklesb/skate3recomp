@@ -205,7 +205,9 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
   looking at shadows and their casters.
 - **Scripted "backwards man" speed glitch** as a timed pad sequence (find the
   jump's apex from the skater's vertical speed rather than fixed delays).
-- **Profiling:** a Tracy build option with zones in our code, then GPU
+- **Profiling:** ~~a sampling profiler for the game threads~~: done
+  2026-11-16 (`profile` verb, `profile_report.py`,
+  [re/hot-functions.md](re/hot-functions.md)). Still open: a Tracy build option with zones in our code, then GPU
   tracing on the device (Perfetto or Mesa); a performance threshold in
   scenarios.
 - **Frame-time follow-ups** (after `frames.csv` and

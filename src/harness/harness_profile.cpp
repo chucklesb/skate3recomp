@@ -382,11 +382,20 @@ bool Start(int hz, std::string* error) {
     installed = true;
   }
 #endif
+  // A thread that registered and has since exited (short-lived job threads
+  // during loading) has no CPU clock any more: skip it, keep the rest.
+  int started = 0;
   for (int i = 0; i < g_count.load(); ++i) {
-    if (!StartThread(i, error)) {
-      for (int j = 0; j < i; ++j) StopThread(j);
-      return false;
+    std::string why;
+    if (StartThread(i, &why)) {
+      ++started;
+    } else {
+      REXLOG_INFO("harness: profile skips thread {} '{}': {}", i, g_slots[i].name, why);
     }
+  }
+  if (started == 0 && g_count.load() > 0) {
+    *error = "no thread could be sampled";
+    return false;
   }
   g_stop.store(false);
   g_active.store(true);

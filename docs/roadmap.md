@@ -76,9 +76,13 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   and the LivingWorld batch pack writer, bit-exact on both platforms, no
   frame-time cost (`src/native/skate3_native_pose.cpp`,
   [re/characters.md](re/characters.md#native-replacements-re-7-candidates)).
-  Next: pick the next fully specified functions (a recipe is in
-  characters.md: disassemble, match the recompiler's primitives and order,
-  shadow byte for byte, then replace).
+  Profiler (2026-11-16): `profile` verb + `profile_report.py`; first
+  ranking in [re/hot-functions.md](re/hot-functions.md): at the 30 fps cap
+  the Odin 2 uses ~9.7 ms of CPU per frame over all game threads, flat (no
+  function over ~0.5 ms), so replacements are for understanding and
+  correctness more than frame time. Next: the character path
+  (BindConstants, the lighting rows), then cheap candidates from the
+  ranking (DoFrustumCulling, the vrsqrtefp helper).
 
 **Parked** (the user's call; don't start without asking):
 - The photo challenge's jerky closing animation and snapping pose
