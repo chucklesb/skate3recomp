@@ -11,18 +11,15 @@ Update it with every commit that finishes or starts an item. Details live in
 the linked pages; the backlog is [open-work.md](open-work.md).
 
 **Now** (finishing milestone 1, phase 0):
-1. [ ] **Photo-challenge reference shots:** a short live session (the user
-   plays, screenshots by command) for the running challenge and the
-   shot-choosing screen. *Needs the user.*
-2. [ ] **The career "new team member" prompt (row A):** a save placed just
+1. [ ] **The career "new team member" prompt (row A):** a save placed just
    before it, or the user plays to it in a live session.
-3. [ ] **Branches:** `native-only` here and in the SDK fork.
+2. [ ] **Branches:** `native-only` here and in the SDK fork.
 
 **Next:**
-4. [ ] **Native-only phase 1** (offscreen 2D compose), then phases 2-5.
+3. [ ] **Native-only phase 1** (offscreen 2D compose), then phases 2-5.
    Row D, the offscreen skater pass in challenges (72-96 emulated draws a
    frame), is the biggest remaining cost; it's phase 4.
-5. [ ] **Reverse engineering: the character skeleton**
+4. [ ] **Reverse engineering: the character skeleton**
    ([re/characters.md](re/characters.md)): link `UpdateBoneTransforms`'
    part records to draw items, then one pose per character per tick. It
    replaces most of the "Characters" guesses in
@@ -38,6 +35,9 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   passed on retry, no symbols); watch for a repeat.
 
 **Done recently:**
+- 2026-11-15: **photo-challenge reference shots** (live on the Odin 2;
+  [native-only.md](native-only.md)); `live_shots.py` shoots a live session
+  automatically.
 - 2026-11-15: **the Odin 2 tour**: audit and fps per screen recorded in
   [native-only.md](native-only.md) (30 fps everywhere; Import Skater's photo
   pass runs 23 draws a frame on the device, 4 on Windows).

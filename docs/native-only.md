@@ -107,11 +107,10 @@ fallback until phase 5. The sizes are relative.
     **v2.1.0-aarch64.4** (full release, 2026-11-15);
   - item 3, mostly: the tour reaches every row except A's career prompt
     (C and D were measured from a live photo-challenge session instead);
-  - items 4 and 5 on Windows (audit and reference shots), and the Odin 2
-    tour run with fps per screen (below).
+  - items 4 and 5 on Windows (audit and reference shots), the Odin 2 tour
+    run with fps per screen, and the photo-challenge reference shots (all
+    below).
 - **Still to do:**
-  - reference shots of a running photo challenge and the shot-choosing
-    screen (a short live session);
   - the career "new team member" prompt (row A);
   - item 2, the branches.
 
@@ -213,6 +212,20 @@ user played two photo challenges live with the census on; no input replay):
   (12 a frame).
 - **The photo screens** also run the skater-photo pitches (1200, 1600) of
   row A, through the photo windows.
+- **Reference shots** (Odin 2, 2026-11-15, live run
+  `20261115-181937_live`, the user playing the first photo challenge twice;
+  the census matched the table above: 82.6 / 106.1 / 109.3 draws a frame):
+  - the burst `[0,1:47]`: `video/vid_0-1_47/f000000.png`-`f000040.png` (a
+    frame dump of every frame from late in the burst through the photo card,
+    448 frames), and `shots/f0008439_run_0-1_00.png` (first attempt);
+  - the shot-choosing screen `[0,1:47,2]`: `shots/f0008735_ctx_0-1:47-2_00.png`
+    and dump frames 41-110;
+  - the photo card `[0,1:47,2,69]`: `shots/f0009023_ctx_0-1:47-2-69_00.png`
+    and dump frames 111 on (the second attempt's card, with the "The
+    Legend" magazine layout).
+  The thin dashed vertical line down the middle of the shot-choosing screen
+  is in the game, not from the native renderer (the user has seen it
+  before). `tools/harness/live_shots.py` took these while the user played.
 - **Seen there, not chased:** the user reported that the animation at the
   end of a photo challenge looks jerky, as if it steps back a frame at each
   photo, and that the skater's pose snaps into place while choosing a shot
