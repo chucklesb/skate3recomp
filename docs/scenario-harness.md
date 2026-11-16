@@ -289,6 +289,7 @@ the next investigation can reuse them.
 | `ropa_shadow_trace.py` | Per-reel-pass garment shadow offset from a `char_track` run's log (KI-124) | - |
 | `char_jitter.py` | Skater-vs-camera jitter from `char_track` lines (KI-120) | - |
 | `char_sync_report.py` | Body pieces out of sync, from `char_sync` lines (`skate3_native_render_scene_char_sync` on): per character and frame, pieces drawn from another moment than the body (a stale reused pose, the previous frame's pack, raw ahead of the camera, a wrong serve) or that vanished, and why. `--reel` limits it to the reel playback; `--max-bad N` fails a run over N frames; several runs print an A/B table (KI-117, `repro_reel_forearm.toml`) | - |
+| `fps_by_screen.py` | Frame rate per screen context (frontend stack plus replay flag, as `census_report.py` names them) from `state.jsonl`: samples, median, 5th percentile and minimum, skipping the first second after each change | - |
 | `reel_video.py` | An x264 MP4 from a `play_reel video = true` frame dump (every frame, at `step_fps`; reports clock steps that aren't one step) or, for older runs, from `every_frames` screenshots (each held until the next); `--slow N` appends a 1/N speed pass, `--label` a caption; quality steps down until it's under `--max-mb` (default 10) | ffmpeg (libx264, drawtext) |
 | `re_symbols.py` | The reverse-engineering function map ([docs/re/symbols.toml](re/symbols.toml)): `lookup`, `coverage` (game functions used in `src/` but not in the map), `check` | - |
 | `perf_report.py` | `perf.json` comparison behind `run_scenario.py perf` | - |
