@@ -1,10 +1,15 @@
-# Mark a career challenge Owned or Killed without playing it (career step,
-# complete = "name"; docs/re/career.md). This is the tracker's own call
-# (sub_82C1D878): the challenge leaves the active list and unlocks gated on
-# it can fire. It doesn't pay the challenge's reward: set board_sales for
-# that, and add notify + show for any milestone screens. Challenge names:
-# docs/re/challenges.tsv (a 64-bit hash "0x..." works too). Completion only
-# upgrades (Owned -> Killed), so re-running is harmless.
+# Complete a career challenge without playing it (career step, complete =
+# "name"; docs/re/career.md). With pay = true it goes through the game's own
+# completion (sub_827CDB10, as a challenge's end does): the challenge's
+# Owned reward (and its Killed reward with level = "killed") is paid, its
+# level recorded, unlocks gated on it fire, and the results screens follow.
+# The results step walks them (Continue on New Teammate), waits for the
+# results end (FE 24 is a closing cutscene) and the save that follows (the
+# indicator bottom right; it watches SKATER.P), so the change is kept.
+# Without pay, only the level is recorded (sub_82C1D878), nothing is shown
+# and nothing is saved.
+# Challenge names: docs/re/challenges.tsv ("0x<hash>" works too). A level is
+# only ever upgraded; an already completed challenge pays nothing again.
 name = "career_complete_challenge"
 timeout_s = 600
 boot = "demo"
@@ -23,5 +28,17 @@ frames = 150   # let the location title pass
 
 [[step]]
 do = "career"
-complete = "photo_univ_03"
+complete = "street_dwtn_01"
 level = "killed"
+pay = true
+
+[[step]]
+do = "results"   # through the results and the save that follows
+timeout_s = 300
+
+[[step]]
+do = "state"
+
+[[step]]
+do = "screenshot"
+tag = "saved"

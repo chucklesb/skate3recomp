@@ -1233,6 +1233,116 @@ Outcome Execute(Run& r, const Step& st) {
       return o;
     }
 
+    case Verb::kResults: {
+      // The career results screens (docs/re/career.md): FE 64 Rewards, 65
+      // the unlock cards and 46 Receipt take A; FE 66 New Teammate takes
+      // "Continue", its third option (down, down, A; A alone would open
+      // Create-a-Skater).
+      // Other screens (FE 24, the cutscene some results end with) are waited
+      // out. Done when the FE stack is back to [0] and the career save has
+      // been written and left alone for 3 s.
+      const double timeout = st.timeout_s > 0 ? st.timeout_s : 120.0;
+      const auto deadline = Clock::now() + std::chrono::duration_cast<Clock::duration>(
+                                               std::chrono::duration<double>(timeout));
+      auto press = [&](uint16_t buttons) -> bool {
+        uint64_t until;
+        {
+          std::lock_guard lk(r.mu);
+          r.script_pad = PadState{};
+          r.script_pad.buttons = buttons;
+          r.script_override = true;
+          r.script_until_frame = r.frame + 3;
+          r.script_active = true;
+          until = r.script_until_frame;
+        }
+        return WaitUntil(r, 30.0, [&] { return r.frame >= until; }) && WaitFrames(r, 40, 30.0);
+      };
+      // The game saves the career after the results (and any cutscene they
+      // end with); quitting before the save finishes loses the change. So the
+      // step ends only once SKATER.P has been rewritten and left alone.
+      fs::path save_path;
+      fs::file_time_type save_start{};
+      if (!reels::CareerSave(&save_path, &save_start)) {
+        return Fail("results: no career save (ALIAS_SKATER/SKATER.P) under the save roots");
+      }
+      fs::file_time_type save_last = save_start;
+      auto save_changed_at = Clock::time_point{};
+      std::string visited;
+      int menu_downs = 0;
+      uint64_t free_since = 0, start_frame;
+      {
+        std::lock_guard lk(r.mu);
+        start_frame = r.frame;
+      }
+      while (Clock::now() < deadline) {
+        int64_t top;
+        uint32_t depth;
+        uint64_t frame;
+        {
+          std::lock_guard lk(r.mu);
+          top = r.state.fe_top;
+          depth = r.state.fe_depth;
+          frame = r.frame;
+        }
+        {
+          std::error_code ec;
+          const auto t = fs::last_write_time(save_path, ec);
+          if (!ec && t != save_last) {
+            save_last = t;
+            save_changed_at = Clock::now();
+          }
+        }
+        const bool saved = save_last != save_start &&
+                           Clock::now() - save_changed_at >= std::chrono::seconds(3);
+        if (depth <= 1) {
+          if (!free_since) free_since = frame;
+          // Before any results screen showed, give the game 300 frames to push one.
+          if (visited.empty() && save_last == save_start && frame - start_frame >= 300) {
+            Outcome o;  // no results came (nothing completed): nothing to save
+            o.result_json = "\"screens\":[],\"saved\":null";
+            return o;
+          }
+          if (saved && frame - free_since >= 60 &&
+              (!visited.empty() || frame - start_frame >= 300)) {
+            Outcome o;
+            o.result_json = "\"screens\":[" + visited + "],\"saved\":\"" +
+                            save_path.generic_string() + "\"";
+            return o;
+          }
+          if (!WaitFrames(r, 5, 30.0)) return Fail("game stopped presenting frames");
+          continue;
+        }
+        free_since = 0;
+        if (top != 64 && top != 65 && top != 66 && top != 46) {
+          // Anything else is the game's own (FE 24: a cutscene some results
+          // end with): wait it out, no input.
+          if (visited.empty() || visited.back() != '*') {
+            REXLOG_INFO("harness: results waiting on FE {}", top);
+            visited += (visited.empty() ? "" : ",") + std::to_string(top) + "*";
+          }
+          if (!WaitFrames(r, 5, 30.0)) return Fail("game stopped presenting frames");
+          continue;
+        }
+        // One press per look: a menu can close between presses, and a stray
+        // d-pad press in free skate opens the replay editor (FE 24).
+        uint16_t button = kA;
+        if (top == 66) {
+          if (menu_downs < 2) {
+            button = kDpadDown;
+            ++menu_downs;
+          } else {
+            menu_downs = 0;
+          }
+        }
+        REXLOG_INFO("harness: results on FE {} -> {}", top, button == kA ? "A" : "down");
+        visited += (visited.empty() ? "" : ",") + std::to_string(top);
+        if (!press(button)) return Fail("game stopped presenting frames");
+        if (!WaitFrames(r, 30, 30.0)) return Fail("game stopped presenting frames");
+      }
+      return Fail("results: no finished career save after " + std::to_string(int(timeout)) +
+                  " s (screens " + visited + (save_last != save_start ? "; the save was still being written)" : "; the game never saved)"));
+    }
+
     case Verb::kCareer: {
       // The career's board sales are four u32 counters in a stats object
       // S = *(*(*0x830CFD94 + 0xE0) + 0x48), at S+4..S+0x10; the total the
@@ -1273,7 +1383,27 @@ Outcome Execute(Run& r, const Step& st) {
       // complete = "name": mark a challenge Owned or Killed (the tracker's
       // own call, sub_82C1D878; no reward is paid). Before the counts below,
       // and before notify, so unlocks gated on challenges can fire.
+      // Challenge counts: the actions tracker A = *(S+0x1C) points at the
+      // challenge tracker C (A+0x24), whose lists hold the active (C+0x04),
+      // Owned (C+0x14) and Killed (C+0x24) challenges, counts 8 bytes after
+      // each head (the Lua bindings GetNumChallengesAtCompletionLevel etc.).
+      auto challenge_counts = [&](const char* key) -> std::string {
+        uint32_t actions = 0, chal = 0, n[4] = {};
+        if (!ReadU32(base, s + 0x1C, &actions) || !actions ||
+            !ReadU32(base, actions + 0x24, &chal) || !chal ||
+            !ReadU32(base, actions + 0x0C, &n[0]) || !ReadU32(base, chal + 0x0C, &n[1]) ||
+            !ReadU32(base, chal + 0x1C, &n[2]) || !ReadU32(base, chal + 0x2C, &n[3])) {
+          return "";
+        }
+        char cb[200];
+        std::snprintf(cb, sizeof(cb),
+                      ",\"%slocked_actions\":%u,\"%schallenges\":{\"active\":%u,\"owned\":%u,"
+                      "\"killed\":%u}",
+                      key, n[0], key, n[1], n[2], n[3]);
+        return cb;
+      };
       if (!st.career_complete.empty()) {
+        json += challenge_counts("before_");
         uint64_t hash = 0;
         const std::string& name = st.career_complete;
         if (name.size() > 2 && name[0] == '0' && (name[1] == 'x' || name[1] == 'X')) {
@@ -1282,7 +1412,29 @@ Outcome Execute(Run& r, const Step& st) {
           hash = game::NameHash64(name);
         }
         std::string cerr;
-        if (!game::CareerComplete(hash, st.career_level == "killed", 10.0, &cerr)) {
+        const bool killed = st.career_level == "killed";
+        if (st.career_pay) {
+          // The challenge's record object: vtable 0x82326AF4, name hash at +8
+          // (docs/re/career.md). The heap is below 0x50000000.
+          const std::vector<uint32_t> objs =
+              mem::FindKeyedObjects(base, 0x82326AF4u, hash, 0x40000000u, 0x50000000u);
+          if (objs.empty()) {
+            return Fail("career: no loaded challenge record for " + name);
+          }
+          if (!game::CareerCompletePaid(objs.front(), killed, 10.0, &cerr)) {
+            return Fail("career: " + cerr);
+          }
+          uint32_t after[6] = {};
+          for (int i = 0; i < 6; ++i) {
+            ReadU32(base, s + 4 + 4 * i, &after[i]);
+          }
+          char ob[200];
+          std::snprintf(ob, sizeof(ob),
+                        ",\"record\":\"%08X\",\"records\":%zu,\"counters_after\":[%u,%u,%u,%u],"
+                        "\"cash_after\":%u",
+                        objs.front(), objs.size(), after[0], after[1], after[2], after[3], after[4]);
+          json += ob;
+        } else if (!game::CareerComplete(hash, killed, 10.0, &cerr)) {
           return Fail("career: " + cerr);
         }
         char hb[160];
@@ -1291,21 +1443,7 @@ Outcome Execute(Run& r, const Step& st) {
                       st.career_level.c_str());
         json += hb;
       }
-      // Challenge progress: the actions tracker A = *(S+0x1C) points at the
-      // challenge tracker C (A+0x24), whose lists hold the active (C+0x04),
-      // Owned (C+0x14) and Killed (C+0x24) challenges, counts 8 bytes after
-      // each head (the Lua bindings GetNumChallengesAtCompletionLevel etc.).
-      uint32_t actions = 0, chal = 0, n[4] = {};
-      if (ReadU32(base, s + 0x1C, &actions) && actions && ReadU32(base, actions + 0x24, &chal) &&
-          chal && ReadU32(base, actions + 0x0C, &n[0]) && ReadU32(base, chal + 0x0C, &n[1]) &&
-          ReadU32(base, chal + 0x1C, &n[2]) && ReadU32(base, chal + 0x2C, &n[3])) {
-        char cb[200];
-        std::snprintf(cb, sizeof(cb),
-                      ",\"locked_actions\":%u,\"challenges\":{\"active\":%u,\"owned\":%u,"
-                      "\"killed\":%u}",
-                      n[0], n[1], n[2], n[3]);
-        json += cb;
-      }
+      json += challenge_counts("");
       if (st.career_notify) {
         // The check the game's awards run after adding (AwardBoardSales ->
         // sub_82C1C2A0): crossing a milestone this way shows its screens.

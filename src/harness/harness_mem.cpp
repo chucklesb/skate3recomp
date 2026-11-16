@@ -331,6 +331,20 @@ bool Run(uint8_t* base, const Request& req, std::string* json, std::string* erro
   return true;
 }
 
+std::vector<uint32_t> FindKeyedObjects(uint8_t* base, uint32_t vtable, uint64_t key, uint64_t lo,
+                                       uint64_t hi) {
+  std::vector<uint32_t> out;
+  ForEachPage(base, lo, hi, [&](uint64_t a) {
+    const uint8_t* page = base + a;
+    for (uint64_t off = 0; off + 16 <= kPage; off += 4) {
+      if (LoadBe(page + off, 4) == vtable && LoadBe(page + off + 8, 8) == key) {
+        out.push_back(static_cast<uint32_t>(a + off));
+      }
+    }
+  });
+  return out;
+}
+
 bool WriteSnapshot(uint8_t* base, const std::string& path, uint64_t* bytes, uint32_t* regions,
                    std::string* error) {
   std::ofstream out(path, std::ios::binary | std::ios::trunc);

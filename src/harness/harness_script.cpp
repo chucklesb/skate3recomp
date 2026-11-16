@@ -30,6 +30,7 @@ constexpr VerbEntry kVerbs[] = {
     {"video", Verb::kVideo},
     {"mem", Verb::kMem},
     {"career", Verb::kCareer},
+    {"results", Verb::kResults},
     {"crash", Verb::kCrash},       {"teleport", Verb::kTeleport},
     {"play_reel", Verb::kPlayReel},  {"renderer", Verb::kRenderer},
 };
@@ -190,6 +191,7 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
   s.career_show = t["show"].value_or(false);
   s.career_complete = t["complete"].value_or(std::string());
   s.career_level = t["level"].value_or(std::string("owned"));
+  s.career_pay = t["pay"].value_or(false);
   s.mem_type = t["type"].value_or(std::string("u32"));
   s.mem_cmp = t["cmp"].value_or(std::string());
   if (const toml::array* rg = t["range"].as_array()) {

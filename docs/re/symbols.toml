@@ -272,7 +272,7 @@ evidence = "decompile (called per pending unlock by sub_82C1C2A0)"
 
 [sub_82C1D988]
 name = "Challenge completion level"
-signature = "(challenge tracker, u64 name_hash) -> 0 | 1 Owned | 2 Killed"
+signature = "(challenge tracker, u64 name_hash) -> 0 Owned | 1 Killed | 2 not completed"
 role = "Looks the hash up in the tracker's Owned (+0x14) and Killed (+0x24) lists."
 confidence = "likely"
 evidence = "decompile"
@@ -330,16 +330,17 @@ evidence = "stores 0 to stats+4..+0x10"
 
 [sub_827D0DE0]
 name = "Lua GetChallengeCompletionLevel"
-role = "sub_82C1D988(challenge tracker, hash(name)): 1 Owned, 2 Killed, 0 neither."
+role = "sub_82C1D988(challenge tracker, hash(name)): 0 Owned, 1 Killed, 2 not completed."
 confidence = "likely"
 evidence = "binding table 0x823115FC; decompile"
 
 [sub_827CDB10]
 name = "Career complete challenge"
-signature = "(career + 4, challenge, level /* 1 Owned, 2 Killed */)"
-role = "Runs the payout (sub_827CDDD8), then records the completion level (sub_82C1D878) on the challenge tracker (career+0x44)."
-confidence = "likely"
-evidence = "decompile; vtable slot 0x823117EC; reached from Lua CompleteChallenge (sub_8283FD00)"
+signature = "(career + 4, challenge record /* vtable 0x82326AF4 */, level /* 1 Owned, 2 Killed */)"
+role = "Runs the payout (sub_827CDDD8), records the completion level (sub_82C1D878) on the challenge tracker (career+0x44), and raises the results presenter's flag."
+confidence = "confirmed"
+evidence = "harness career complete=film_indu_02 level=killed pay=true, Windows 2026-11-15: +10,000 owned, +2,500 killed, Rewards shown, kept after the save"
+hooked = "called by src/harness/harness_game.cpp (CareerCompletePaid)"
 
 [sub_82C1D878]
 name = "Challenge set completion level"

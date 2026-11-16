@@ -56,8 +56,8 @@ challenge's 64-bit name hash at `+8`:
 | `0x14` | `0x1C` | **Owned** | 27 |
 | `0x24` | `0x2C` | **Killed** | 28 |
 
-`sub_82C1D988(C, hash)` returns a challenge's completion level: 1 Owned, 2
-Killed, 0 neither (the script enum `EChallengeCompletionLevel` is
+`sub_82C1D988(C, hash)` returns a challenge's completion level: 0 Owned, 1
+Killed, 2 not completed (the script enum `EChallengeCompletionLevel` is
 {Owned, Killed}; `eHighScoreTier` adds PersonalBest).
 `GetNumCompletedChallenges` is Owned + Killed.
 
@@ -72,11 +72,31 @@ career snapshot and the game data; `hash` hashes any name, `show` lists a
 snapshot's challenges by name). The locked actions use other names.
 
 **From the harness:** `career` with `complete = "name"` (or `"0x<hash>"`)
-and `level = "owned"` or `"killed"` calls the tracker's own
-`sub_82C1D878`: the challenge leaves the active list and goes to Owned or
-Killed, and unlock actions gated on it react at once (Windows,
-2026-11-15: `photo_univ_03` Killed, active 64 → 63, Killed 28 → 29, locked
-actions 53 → 52). The game saves it by itself: the next session started with it Killed. It runs on the Odin 2 too (run `20261115-210836_career_complete_challenge`; that career tracks 89 active, 30 Owned, 15 Killed). It pays no reward (set `board_sales` for that).
+and `level = "owned"` or `"killed"`:
+
+- **With `pay = true`** it does what a challenge's end does: it finds the
+  challenge's record object (vtable `0x82326AF4`, name hash at `+8`; one per
+  challenge, in two arrays on the heap) and calls the career's
+  `sub_827CDB10(K+4, record, level)`. That pays the Owned reward (and the
+  Killed reward for `killed`) only if not already earned, records the
+  level, runs the unlock check, and raises the results presenter's flag
+  itself, so the results follow (Rewards with the amounts, unlock cards,
+  sometimes New Teammate and a cutscene). Windows, 2026-11-15:
+  `film_indu_02` Killed paid 10,000 Owned + 2,500 Killed; `street_dwtn_01`
+  paid 20,000 and unlocked Street Ender.
+- **Without `pay`** it calls only the tracker's `sub_82C1D878`: the
+  challenge leaves the active list and goes to Owned or Killed, and unlock
+  actions gated on it react (`photo_univ_03`: active 64 → 63, Killed
+  28 → 29, locked actions 53 → 52). Nothing is shown or saved.
+
+**Saving:** the game saves the career by itself after the results are
+walked to the end, including the cutscene some end with (FE 24), with the
+save indicator bottom right. Quitting before the save finishes loses the
+change. The harness `results` step walks the results ("Continue" on New
+Teammate: its default, Customize Teammate, opens Create-a-Skater) and
+returns only once `SKATER.P` has been rewritten and left alone for 3 s.
+Checked by a second run: the paid counters and the Killed level were kept,
+and nothing was paid twice. It runs on the Odin 2 too (run `20261115-210836_career_complete_challenge`; that career tracks 89 active, 30 Owned, 15 Killed). It pays no reward (set `board_sales` for that).
 `scenarios/career_complete_challenge.toml`.
 
 **Completing a challenge, as the game does it:** the Lua `CompleteChallenge` (`sub_8283FD00`)
@@ -167,6 +187,4 @@ without a challenge (`scenarios/career_milestone.toml`, above). Live:
   id 15 is MessengerScreen, so later entries may not be screen ids.
 - `+0x10`'s meaning (an online total, probably).
 - How the save's record is found and checked (header hash, checksum).
-- Paying a challenge's own reward from the harness (needs its challenge
-  object for the payout, `sub_827CDDD8`).
 - The locked actions' names.

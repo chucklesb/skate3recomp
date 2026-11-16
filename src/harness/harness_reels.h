@@ -32,6 +32,10 @@ struct Reel {
 // several exist.
 void SetSaveRoots(std::vector<std::filesystem::path> roots, uint64_t xuid);
 
+// The career save (ALIAS_SKATER/SKATER.P, docs/re/career.md) under the save
+// roots, the most recently written one; false when there is none.
+bool CareerSave(std::filesystem::path* path, std::filesystem::file_time_type* written);
+
 // Lists the reels; false with *error when no REPLY_SKATER/INDEX was found
 // or it doesn't parse. *dir receives the folder used.
 bool List(std::vector<Reel>* out, std::filesystem::path* dir, std::string* error);

@@ -76,6 +76,35 @@ void SetSaveRoots(std::vector<fs::path> roots, uint64_t xuid) {
   g_xuid = xuid;
 }
 
+bool CareerSave(fs::path* path, fs::file_time_type* written) {
+  std::vector<fs::path> roots;
+  {
+    std::lock_guard lk(g_mu);
+    roots = g_roots;
+  }
+  bool found = false;
+  std::error_code ec;
+  for (const fs::path& root : roots) {
+    for (auto it = fs::recursive_directory_iterator(
+             root, fs::directory_options::skip_permission_denied, ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+      if (it->is_directory(ec) && it->path().filename() == "ALIAS_SKATER") {
+        const fs::path p = it->path() / "SKATER.P";
+        const auto t = fs::last_write_time(p, ec);
+        if (!ec && (!found || t > *written)) {
+          *path = p;
+          *written = t;
+          found = true;
+        }
+        ec.clear();
+        it.disable_recursion_pending();
+      }
+    }
+    ec.clear();
+  }
+  return found;
+}
+
 bool List(std::vector<Reel>* out, fs::path* dir, std::string* error) {
   out->clear();
   std::vector<fs::path> roots;

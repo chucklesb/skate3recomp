@@ -36,6 +36,7 @@ REXCVAR_DEFINE_STRING(skate3_harness_re_poke, "", "Skate 3",
 REX_EXTERN(sub_82910CE8);  // registry find(map*, u32 key) -> entry* (node + 20) or 0
 REX_EXTERN(sub_82706F50);  // teleport sequencer(teleporter, matrix*, id, flag, b, b, b) -> bool
 REX_EXTERN(sub_8271A828);  // memcard owner event handler(owner, ref<event>*) -> 1 handled / 2 not
+REX_EXTERN(sub_827CDB10);  // career complete challenge(career + 4, challenge, level 1 Owned / 2 Killed)
 REX_EXTERN(sub_82C1D878);  // challenge set completion(tracker, u64 hash, level 0 Owned / 1 Killed, online)
 REX_EXTERN(sub_82C1C2A0);  // career unlock notifier(watcher): fires unlocks whose condition now holds
 REX_EXTERN(sub_82B938D8);  // post message(msg*, recipient*, priority) (queued)
@@ -438,6 +439,24 @@ bool CareerComplete(uint64_t hash, bool killed, double timeout_s, std::string* e
       timeout_s, error);
   if (ran && !had && error) {
     *error = "no career challenge tracker (not in a career?)";
+  }
+  return ran && had;
+}
+
+bool CareerCompletePaid(uint32_t challenge, bool killed, double timeout_s, std::string* error) {
+  bool had = false;
+  const bool ran = RunOnGameThread(
+      [&](PPCContext& ctx, uint8_t* base) {
+        uint32_t p = 0, k = 0;
+        if (!Read32(base, 0x830CFD94, &p) || !Read32(base, p + 0xE0, &k) || !k) {
+          return;
+        }
+        had = true;
+        CallGuest(ctx, base, sub_827CDB10, {k + 4, challenge, killed ? 2u : 1u});
+      },
+      timeout_s, error);
+  if (ran && !had && error) {
+    *error = "no career object (not in a career?)";
   }
   return ran && had;
 }

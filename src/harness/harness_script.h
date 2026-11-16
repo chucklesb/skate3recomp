@@ -54,6 +54,7 @@ enum class Verb {
                 // settle=true (false: return on arrival, e.g. a floorless locator)
   kRenderer,    // renderer="native"|"emulated" frames=30: the F5 switch, then settle
   kVideo,       // frames=N tag="x": every rendered frame as video/<tag>/f<n>.png
+  kResults,     // walk the career results screens (FE 64/65/66) back to free skate
   kCareer,      // board_sales=N [notify]: set the career's total board sales (docs/re/career.md)
   kMem,         // op="find"|"refine"|"read"|"write" type="u8|u16|u32|f32|f64" value=N
                 // cmp="changed|unchanged|increased|decreased" addr="0x..." range=["lo","hi"]
@@ -165,7 +166,8 @@ struct Step {
   bool career_show = false;    // show = true: then set the results presenter's flag
   bool career_notify = false;
   std::string career_complete;  // complete = "challenge name" or "0x<64-bit hash>"
-  std::string career_level = "owned";  // level = "owned" | "killed"  // notify = true: run the game's unlock check afterwards
+  std::string career_level = "owned";
+  bool career_pay = false;  // pay = true: complete through the game's own path, reward paid  // level = "owned" | "killed"  // notify = true: run the game's unlock check afterwards
 
   // snapshot
   bool native_snapshot = false;  // native = true: the native renderer's capture (Windows)

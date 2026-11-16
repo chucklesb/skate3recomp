@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace skate3::harness::mem {
 
@@ -40,6 +41,11 @@ bool Run(uint8_t* base, const Request& req, std::string* json, std::string* erro
 // "SK3GSNP1", then {u64 LE guest offset, u64 LE size, bytes} regions, then
 // {~0, 0}). Every 64 KB page that reads is kept; adjacent ones are merged.
 // Portable (Windows, Linux, macOS). The game should be paused around it.
+// Objects in [lo, hi) whose first word (big-endian) is `vtable` and whose
+// u64 at +8 is `key`: the game's named records (e.g. challenges, vtable
+// 0x82326AF4, keyed by their 64-bit name hash). Scans readable pages only.
+std::vector<uint32_t> FindKeyedObjects(uint8_t* base, uint32_t vtable, uint64_t key, uint64_t lo,
+                                       uint64_t hi);
 bool WriteSnapshot(uint8_t* base, const std::string& path, uint64_t* bytes, uint32_t* regions,
                    std::string* error);
 

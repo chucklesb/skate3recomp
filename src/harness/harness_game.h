@@ -128,6 +128,11 @@ uint64_t NameHash64(std::string_view name);
 // (sub_82C1D878), as completing it does, without paying its reward.
 bool CareerComplete(uint64_t hash, bool killed, double timeout_s, std::string* error);
 
+// Completes a challenge the way its end does (sub_827CDB10 on the career):
+// pays its Owned (and Killed) reward, records the level, runs the unlock
+// check. `challenge` is its record object (vtable 0x82326AF4, hash at +8).
+bool CareerCompletePaid(uint32_t challenge, bool killed, double timeout_s, std::string* error);
+
 // The career results presenter (captured from its update, sub_827CF570):
 // its state as JSON fields, and CareerShow sets its "show results" flag
 // (this+0x30), which pushes MilestoneUnlock when rewards are pending.
