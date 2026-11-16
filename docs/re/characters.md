@@ -128,7 +128,7 @@ RE-5b (pedestrians).
 
 **RE-5b (2026-11-16), pedestrians:** the store takes LivingWorld ticks
 from the batch writer's hook (`OnLwPack`), behind its own switch
-`skate3_native_render_scene_skeleton_lw = off | shadow | on` (default off).
+`skate3_native_render_scene_skeleton_lw = off | shadow | on` (default on since 2026-11-16).
 Check: `scenarios/skel_lw_shadow.toml` (Tresoutta Plaza), then
 `skel_shadow_report.py <run> --lw` (the `skel-lw:` lines).
 
@@ -138,11 +138,18 @@ Check: `scenarios/skel_lw_shadow.toml` (Tresoutta Plaza), then
 | Odin 2 `20261116-072854_skel_lw_shadow` | 12,525 | all | 10,610 of 10,610 | 0 |
 
 With `on`, every pedestrian piece is served from the store, the LW gap fill
-included. On Windows that costs nothing measurable (plaza, 3 runs each:
-busy p50 4.81 / 4.60 ms, p99 7.03 / 7.17 ms off / on). char_sync flags
-the same 55-98 frames a run at the plaza with it off and on, mostly
-gap-filled pedestrians at alpha 0 (fading in or out, not visible): a
-char_sync false positive to fix before it can gate pedestrians.
+included, at no measurable cost (plaza, medians of 3 runs, off / on):
+
+| Platform | busy p50 | busy p99 | 1% low |
+|---|---|---|---|
+| Windows Vulkan | 4.81 / 4.60 ms | 7.03 / 7.17 ms | 29.2 / 29.3 fps |
+| Odin 2 | 6.96 / 6.97 ms | 11.34 / 11.41 ms | 28.0 / 28.2 fps |
+
+So `on` is the default. char_sync used to flag 55-98 frames a run at the
+plaza either way, mostly gap-filled pedestrians at opacity 0 (fading, not
+visible); it skips those now (`d537ef7`): 41 frames off, 30 on. The rest
+are visible gap-filled pieces for 1-3 frames and pieces switching mode,
+the next things to look at.
 
 **Step 4 (2026-11-16), the checks before default on:**
 - Held reel stills, each shot with the store off and on

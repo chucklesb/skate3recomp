@@ -34,12 +34,12 @@ REXCVAR_DEFINE_INT32(skate3_native_render_scene_skeleton_log_interval, 120, "Ska
                      "(0 = off)")
     .range(0, 100000)
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
-REXCVAR_DEFINE_STRING(skate3_native_render_scene_skeleton_lw, "off", "Skate 3",
+REXCVAR_DEFINE_STRING(skate3_native_render_scene_skeleton_lw, "on", "Skate 3",
                       "Skeleton store for LivingWorld entities (pedestrians, RE-5b): off | "
                       "shadow | on. Their fused pack writer (sub_827C1D38) gathers from one "
                       "pose array (*(entity+0x4B0)) with the skaters' formula; shadow builds "
-                      "and compares their pieces (skel-lw: lines), on serves them. Needs "
-                      "skate3_native_render_scene_skeleton on or shadow")
+                      "and compares their pieces (skel-lw: lines), on serves them (default since "
+                      "2026-11-16). Needs skate3_native_render_scene_skeleton on or shadow")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_skeleton_log_jumps, false, "Skate 3",
                     "DEBUG: for 4 frames after a character's jump (skel: jump), log every "

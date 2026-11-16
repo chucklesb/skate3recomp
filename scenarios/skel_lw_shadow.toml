@@ -15,7 +15,7 @@ start_spot = "Z_DT_Tresoutta"
 skate3_guest_fps_cap = 30.0
 skate3_guest_fps_cap_auto = false
 skate3_native_render_scene_skeleton = "on"
-skate3_native_render_scene_skeleton_lw = "shadow"
+skate3_native_render_scene_skeleton_lw = "shadow"  # on by default; shadow compares only
 skate3_native_render_scene_skeleton_log_interval = 30
 
 [[step]]

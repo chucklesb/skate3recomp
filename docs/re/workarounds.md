@@ -25,7 +25,7 @@ history per character.
 one pose, exact against the game's upload, and resets each character's
 smoothing together. Rows marked "in progress" are bypassed for skaters
 under `on`. `on` is the default since RE-5 step 4; deleting them for skaters is step 5.
-Pedestrians still use them (RE-5b).
+Pedestrians are served from the store too since RE-5b (`skeleton_lw`, on by default); the remaining guesses still decide which pieces are drawn.
 
 | Guess | Where | What it guesses | Status |
 |---|---|---|---|

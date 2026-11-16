@@ -29,11 +29,11 @@ In order; the roadmap has the context ([roadmap.md](roadmap.md), RE-5/RE-7):
    serve deleted; the remaining guesses wait for RE-5b).
 4. **RE-5b:** pedestrians. Found and built 2026-11-16: the LivingWorld
    batch writer is the skater gather and pack fused, and the store rebuilds
-   every pedestrian piece exactly (shadow, both platforms). Left: the Odin
-   2 serve A/B, then `skeleton_lw = on` by default; then char_sync must
-   skip alpha-0 (fading) pedestrians, which it flags as stale today; then
-   delete the remaining per-piece guesses
-   ([re/workarounds.md](re/workarounds.md)).
+   every pedestrian piece exactly and serves them (`skeleton_lw = on` by
+   default, no frame-time cost). Left: the remaining char_sync flags at
+   Tresoutta Plaza (visible gap-filled pieces for 1-3 frames, mode
+   switches; `scenarios/skel_lw_shadow.toml`), then delete the remaining
+   per-piece guesses ([re/workarounds.md](re/workarounds.md)).
 5. **RE-7:** native replacements of `UpdateBoneTransforms` and
    `PackAndMultiplyMatricesForUpload`, shadow first
    ([re/characters.md](re/characters.md#native-replacements-re-7-candidates)).

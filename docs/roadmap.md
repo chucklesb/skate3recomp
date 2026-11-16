@@ -61,9 +61,11 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   only decide which skater pieces are drawn now, and stay for pedestrians.
   RE-5b (pedestrians): the LivingWorld batch writer is the same gather and
   pack fused; the store rebuilds every pedestrian piece exactly (shadow,
-  both platforms) and can serve them (`skeleton_lw = on`, default off).
-  Next: the Odin 2 serve A/B, then default on, then delete the remaining
-  per-piece guesses ([re/workarounds.md](re/workarounds.md)).
+  both platforms) and serves them (`skeleton_lw = on`, the default since
+  2026-11-16; no frame-time cost on either platform).
+  Next: the remaining char_sync flags at busy spots (visible gap fills,
+  mode switches), then delete the remaining per-piece guesses
+  ([re/workarounds.md](re/workarounds.md)).
   KI-125 turned out to be the cloth, not the skeleton: a buffer-read timing
   race after a seek, documented, fix deferred.
 - RE-6 [ ] **Who issues the emulated passes** native-only must replace
