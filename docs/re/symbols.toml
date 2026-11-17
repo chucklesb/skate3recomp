@@ -614,6 +614,67 @@ confidence = "confirmed"
 evidence = "disassembly; title_input_probe.toml"
 hooked = "src/skate3_demo_path.cpp (quick title: A as Start, the revealing press doesn't arm)"
 
+[sub_8260D290]
+name = "FrontEndState_Options::OnMenuSelect"
+signature = "(this, ?, row)"
+role = "Vtable +64. Acts on the selected row by its option id from kScreenLayouts (0x83026FE8, int32[13][16], screen at this+68): plays the FE select sound, switches the shown screen (+68) and re-shows it through the vtable +20 call on *(this+56), or applies the option."
+confidence = "likely"
+evidence = "disassembly; skate3_options_menu.cpp drives our pages through it"
+hooked = "src/skate3_options_menu.cpp (our pages)"
+
+[sub_8260D648]
+name = "FrontEndState_Options::IsItemEnabled"
+signature = "(this, ?, row) -> bool"
+role = "Vtable +72. The row's option id from kScreenLayouts[this+68][row]: id 2 disabled while the int at 0x830B7AE8 is 4 or 5; id 35 disabled when sub_8245A2D0() is true; id 10 enabled only when sub_82486760() > 1; every other row enabled."
+confidence = "confirmed"
+evidence = "disassembly; native body (fe_options_enabled), options_menu_smoke same on and off 2026-11-17"
+hooked = "src/skate3_options_menu.cpp (our pages); src/native/skate3_native_fe.cpp (native body for the game's rows)"
+
+[sub_8260D710]
+name = "FrontEndState_Options::OnHighlight"
+signature = "(this, ?, row)"
+role = "Vtable +68. this+72 = row (the highlighted row)."
+hooked = "src/native/skate3_native_fe.cpp (native, fe_options_highlight)"
+confidence = "confirmed"
+evidence = "disassembly; the Options hook reads +72 as the row"
+
+[sub_82D093D0]
+name = "FrontEndState::OpenScreen"
+signature = "(this, screen_id, arg)"
+role = "Vtable +56 (base). Records the screen id (+44), the argument (+40) and the screen manager's callbacks (+24 owner, +28..+36 0x82D09368/0x82D09380/0x82D093A8); phase (+16) = 1, opening."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_openscreen, options_menu_smoke and fe_states_smoke same on and off (2026-11-17)"
+hooked = "src/native/skate3_native_fe.cpp (native)"
+
+[sub_82D09470]
+name = "FrontEndState::CloseScreen"
+signature = "(this, arg)"
+role = "Vtable +60 (base). byte +48 = arg; phase (+16) = 4, closing (the outro)."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_closescreen_base (2026-11-17)"
+hooked = "src/native/skate3_native_fe.cpp (native)"
+
+[sub_82D09480]
+name = "FrontEndState::OnScreenShown"
+signature = "(this, shown, skip_notify)"
+role = "Vtable +28, the screen manager's callback. shown == 1: byte +49 = 1, phase = 3 (active), unless skip_notify calls vtable +104; tells the manager (*(this+56) vtable +16); shown == 1: +52 = 0 (input unblocked), vtable +32, manager vtable +24."
+confidence = "likely"
+evidence = "disassembly (2026-11-17)"
+
+[sub_82486760]
+name = "CountSfxPacks"
+signature = "() -> int"
+role = "Hashes \"default\" (lookup8, sub_82B73AC0) and counts the entries of that attrib collection (sub_828DA2C8). The Options SFX pack selector (option 10) is enabled only when it returns more than 1."
+confidence = "likely"
+evidence = "disassembly; the string at 0x8224CFE8; its use in IsItemEnabled"
+
+[sub_8245A2D0]
+name = "IsSkateFeedUnavailable"
+signature = "() -> bool"
+role = "*(0x830CEC40)->vtable+8() gives an object whose vtable+24() state is compared with 11. The Options skate.Feed settings row (option 35) is disabled when it returns true. The object and state 11 are not named yet (8 callers, online/feed screens)."
+confidence = "likely"
+evidence = "disassembly; its use in IsItemEnabled"
+
 [sub_82E663D0]
 name = "APT movie time step"
 signature = "(elapsed_ms) -> bool"

@@ -22,7 +22,7 @@ namespace {
 
 using skate3::native_scene::GuestTryCopy;
 
-constexpr int kMaxFamilies = 32;
+constexpr int kMaxFamilies = 64;
 Family* g_families[kMaxFamilies] = {};
 std::atomic<int> g_count{0};
 std::mutex g_register_mu;

@@ -16,6 +16,30 @@ to do.
   layout. List only the fields we use or have confirmed, and say how TU3 was
   checked.
 
+### `FrontEndState` (the FE state base class)
+
+Source of truth: `src/native/skate3_fe_types.h` (`static_assert`ed). Read
+from the base methods (OpenScreen `sub_82D093D0`, CloseScreen `sub_82D09470`,
+the shown callback `sub_82D09480`) and the input dispatch `sub_825EC0E8`;
+verified by the native bodies (`options_menu_smoke`, `fe_states_smoke`).
+
+| Offset | Field | Status |
+|---|---|---|
+| +0 | vtable (OnEnter +0x0C, OnUpdate +0x10, OnLeave +0x18, shown +28, OpenScreen +56, CloseScreen +60) | confirmed |
+| +8 | the screen manager's handle for our screen | likely |
+| +16 | phase: 0 idle, 1 opening, 2 intro, 3 active (takes input), 4 closing | confirmed |
+| +24..+36 | callback owner (this) and three screen-manager callbacks (`0x82D09368`, `0x82D09380`, `0x82D093A8`) | confirmed (written by OpenScreen) |
+| +40 | OpenScreen's argument | confirmed |
+| +44 | screen id ([fe_screens.tsv](fe_screens.tsv)) | confirmed |
+| +48 | CloseScreen's argument (u8) | confirmed |
+| +49 | shown (u8), set by the shown callback | confirmed |
+| +52 | input blocked while non-zero (OnEnter sets it, the shown callback clears it) | confirmed |
+| +56 | the screen manager | likely |
+
+Derived states start at +60: `TimedScreenState` (logo; +60 elapsed ms,
++64 done), `TitleState`, `LanguageSelectState`, `OptionsState` (+68 page,
++72 highlighted row), and the smaller ones in `skate3_native_fe.cpp`.
+
 ### `Sk8::Render::cModelInstance`
 
 One model instance: the model, its per-mesh contexts and the packed bone

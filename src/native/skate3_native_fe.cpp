@@ -1,128 +1,195 @@
-// Small frontend-state methods, native (RE-7 / RE-9; docs/re/ui.md).
+// Frontend state methods, native (RE-9; docs/re/ui.md).
 //
-// Every FE state object (FrontEndStateBase; the table at *(S+8), S =
-// *(0x830CFE14) + 0x200) has OnEnter at vtable +0x0C and OnLeave at +0x18.
-// Many are a few instructions: set a field or two, then tail call
-// this->OpenScreen(id, 0) (vtable +56) or this->CloseScreen(0) (+60). The
-// boot screens' ones live in skate3_native_boot.cpp; these are the others,
-// found by listing every FE state's vtable slots (2026-11-17). Each body
-// follows its disassembly: the same stores, the same guest call with the
-// same arguments, the caller's LR passed through (tail calls).
+// Written over the FE types in skate3_fe_types.h: FrontEndState (the base
+// every FE state derives from) and the states we've mapped. Each method is
+// what the state does, in our words; registers appear only at the call
+// boundary (arguments in, r3 out, guest calls we haven't replaced).
+// The boot screens' methods are in skate3_native_boot.cpp.
 //
-// skate3_native_fe_replace (default on): one Body family per function,
-// named after the FE state, so the replace counters show which ones a run
-// reaches.
-
-#include <cstring>
+// skate3_native_fe_replace (default on): one Body family per method, so the
+// replace counters show which ones a run reaches.
 
 #include <rex/cvar.h>
 #include <rex/ppc/context.h>
 
 #include "generated/skate3_init.h"
+#include "native/skate3_fe_types.h"
+#include "native/skate3_native_fe.h"
+#include "native/skate3_native_guest_frame.h"
 #include "native/skate3_native_replace.h"
 
 REXCVAR_DEFINE_BOOL(skate3_native_fe_replace, true, "Skate 3",
-                    "RE-9: small frontend-state OnEnter/OnLeave methods as native code "
-                    "(replace: fe_s<state>_enter / _leave); off runs the recompiled code")
+                    "RE-9: FrontEndState methods as native code (OpenScreen, CloseScreen, "
+                    "the enter/leave methods of several states, the Options screen's "
+                    "IsItemEnabled and highlight); off runs the recompiled code")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
 namespace {
 
-constexpr uint32_t kVtOpenScreen = 56;   // (this, screen, 0)
-constexpr uint32_t kVtCloseScreen = 60;  // (this, 0)
+using namespace skate3::fe;
+using skate3::native_guest::GuestFrame;
 
-// Tail call through `obj`'s vtable slot, keeping the caller's LR.
-void TailVirtual(PPCContext& ctx, uint8_t* base, uint32_t obj, uint32_t slot) {
-  const uint32_t vt = REX_LOAD_U32(obj);
-  const uint32_t fn = REX_LOAD_U32(vt + slot);
-  ctx.ctr.u64 = fn;
-  REX_CALL_INDIRECT_FUNC(fn);
+uint32_t CallerLr(const PPCContext& ctx) { return static_cast<uint32_t>(ctx.lr); }
+
+// ---- FrontEndState (the base class) ----------------------------------------
+
+// The screen manager's callbacks into a state, installed by OpenScreen
+// (screen loaded / shown / closed; small functions next to the base class).
+constexpr uint32_t kScreenCallbacks[3] = {0x82D09368, 0x82D09380, 0x82D093A8};
+
+// sub_82D093D0, vtable +56: OpenScreen(screen_id, arg). Records the request
+// and its callbacks; the screen manager does the rest and the state moves
+// to Opening.
+void BodyOpenScreenBase(PPCContext& ctx, uint8_t* base) {
+  auto& self = At<FrontEndState>(base, ctx.r3.u32);
+  self.open_arg = ctx.r5.u32;
+  self.callback_owner = ctx.r3.u32;
+  self.screen_id = ctx.r4.u32;
+  for (int i = 0; i < 3; ++i) {
+    self.callbacks[i] = kScreenCallbacks[i];
+  }
+  self.phase = static_cast<uint32_t>(Phase::kOpening);
 }
 
-void OpenScreen(PPCContext& ctx, uint8_t* base, uint32_t self, uint32_t screen) {
-  ctx.r5.u64 = 0;
-  ctx.r4.u64 = screen;
-  TailVirtual(ctx, base, self, kVtOpenScreen);
+// sub_82D09470, vtable +60: CloseScreen(arg). Starts the outro.
+void BodyCloseScreenBase(PPCContext& ctx, uint8_t* base) {
+  auto& self = At<FrontEndState>(base, ctx.r3.u32);
+  self.close_arg = static_cast<uint8_t>(ctx.r4.u32);
+  self.phase = static_cast<uint32_t>(Phase::kClosing);
 }
 
-void CloseScreen(PPCContext& ctx, uint8_t* base, uint32_t self) {
-  ctx.r4.u64 = 0;
-  TailVirtual(ctx, base, self, kVtCloseScreen);
-}
+// ---- Single states ----------------------------------------------------------
 
-// sub_8260E868, state 51 OnEnter: +60 = 0; OpenScreen(91).
+// State 51 (screen 91): +60 cleared on entry (not yet named).
+struct State51 : FrontEndState {
+  be<uint32_t> unknown_3c;  // +60
+};
 void BodyS51Enter(PPCContext& ctx, uint8_t* base) {
-  const uint32_t self = ctx.r3.u32;
-  ctx.r11.u64 = 0;
-  REX_STORE_U32(self + 60, 0);
-  OpenScreen(ctx, base, self, 91);
+  At<State51>(base, ctx.r3.u32).unknown_3c = 0;
+  OpenScreen(ctx, base, ctx.r3.u32, 91, CallerLr(ctx));
 }
 
-// sub_82634A28, state 40 OnEnter: +64 = 10000 (a ms timer), +60 = the float
-// at 0x821161A0; OpenScreen(82).
+// State 40, Billboard5 (screen 82): a billboard that counts down. Its
+// update (sub_82634A58) runs the float countdown and the ms timer.
+struct BillboardState : FrontEndState {
+  be<float> countdown_s;  // +60
+  be<int32_t> timer_ms;   // +64
+};
+constexpr uint32_t kBillboardCountdownStart = 0x821161A0;  // a float constant in .rdata
 void BodyS40Enter(PPCContext& ctx, uint8_t* base) {
-  const uint32_t self = ctx.r3.u32;
-  constexpr uint32_t kFloatConst = 0x821161A0;
-  ctx.r9.u64 = 10000;
-  REX_STORE_U32(self + 64, 10000);
-  const uint32_t bits = REX_LOAD_U32(kFloatConst);
-  float f;
-  std::memcpy(&f, &bits, 4);
-  ctx.f0.f64 = f;  // lfs f0
-  REX_STORE_U32(self + 60, bits);
-  OpenScreen(ctx, base, self, 82);
+  auto& self = At<BillboardState>(base, ctx.r3.u32);
+  self.timer_ms = 10000;
+  self.countdown_s = At<be<float>>(base, kBillboardCountdownStart).get();
+  OpenScreen(ctx, base, ctx.r3.u32, 82, CallerLr(ctx));
 }
 
-// sub_825F20B0, state 48 OnEnter: OpenScreen(**(this+12)).
+// State 48: the screen to open comes from a descriptor at +12 (its first
+// word is the screen id).
 void BodyS48Enter(PPCContext& ctx, uint8_t* base) {
-  const uint32_t self = ctx.r3.u32;
-  const uint32_t p = REX_LOAD_U32(self + 12);
-  ctx.r10.u64 = p;
-  OpenScreen(ctx, base, self, REX_LOAD_U32(p));
+  const uint32_t descriptor = At<FrontEndState>(base, ctx.r3.u32).unknown_0c;
+  OpenScreen(ctx, base, ctx.r3.u32, At<be<uint32_t>>(base, descriptor), CallerLr(ctx));
 }
 
-// sub_82639690, state 46 OnEnter: marks itself active without a screen:
-// byte +49 = 1, +16 = 3 (the state the input dispatch requires), byte +1614
-// = 1.
+// State 46: has no screen of its own; it marks itself shown and active at
+// once and asks its update (sub_82639710) for a refresh.
+struct State46 : FrontEndState {
+  uint8_t unknown_3c[1614 - 60];
+  uint8_t refresh_pending;  // +1614
+};
+static_assert(offsetof(State46, refresh_pending) == 1614);
 void BodyS46Enter(PPCContext& ctx, uint8_t* base) {
-  const uint32_t self = ctx.r3.u32;
-  ctx.r11.u64 = 1;
-  ctx.r10.u64 = 3;
-  REX_STORE_U8(self + 49, 1);
-  REX_STORE_U32(self + 16, 3);
-  REX_STORE_U8(self + 1614, 1);
+  auto& self = At<State46>(base, ctx.r3.u32);
+  self.shown = 1;
+  self.phase = static_cast<uint32_t>(Phase::kActive);
+  self.refresh_pending = 1;
 }
 
-// sub_8260A4B8, states 34 and 62 OnLeave: +52 = 0; CloseScreen(0).
+// States 34 and 62 OnLeave: unblock input, close the screen.
 void BodyS34Leave(PPCContext& ctx, uint8_t* base) {
-  const uint32_t self = ctx.r3.u32;
-  ctx.r11.u64 = 0;
-  REX_STORE_U32(self + 52, 0);
-  CloseScreen(ctx, base, self);
+  At<FrontEndState>(base, ctx.r3.u32).input_blocked = 0;
+  CloseScreen(ctx, base, ctx.r3.u32, CallerLr(ctx));
 }
 
-// sub_825EC980, state 23 OnLeave: +60 = this + 5048, +68 = 0;
-// CloseScreen(0).
+// State 23, ChallengeMap (screen 23) OnLeave: rewind its list (a cursor into
+// its own inline buffer at +5048, and the count), close the screen.
+struct ChallengeMapState : FrontEndState {
+  be<uint32_t> cursor;  // +60
+  be<uint32_t> unknown_40;
+  be<uint32_t> count;   // +68
+};
+constexpr uint32_t kChallengeMapBuffer = 5048;
 void BodyS23Leave(PPCContext& ctx, uint8_t* base) {
-  const uint32_t self = ctx.r3.u32;
-  ctx.r11.u64 = self + 5048;
-  ctx.r10.u64 = 0;
-  REX_STORE_U32(self + 60, self + 5048);
-  REX_STORE_U32(self + 68, 0);
-  CloseScreen(ctx, base, self);
+  auto& self = At<ChallengeMapState>(base, ctx.r3.u32);
+  self.cursor = ctx.r3.u32 + kChallengeMapBuffer;
+  self.count = 0;
+  CloseScreen(ctx, base, ctx.r3.u32, CallerLr(ctx));
 }
 
-// sub_82638620, state 43 OnLeave: the global byte 0x83083566 = 0;
-// CloseScreen(0). (State 43's update, sub_826386A0, checks that byte.)
+// State 43, Marketing ("coming soon", screen 85) OnLeave: clear the global
+// flag its update (sub_826386A0) watches, close the screen.
+constexpr uint32_t kMarketingFlag = 0x83083566;
 void BodyS43Leave(PPCContext& ctx, uint8_t* base) {
-  ctx.r11.u64 = 0;
-  REX_STORE_U8(0x83083566, 0);
-  CloseScreen(ctx, base, ctx.r3.u32);
+  At<uint8_t>(base, kMarketingFlag) = 0;
+  CloseScreen(ctx, base, ctx.r3.u32, CallerLr(ctx));
+}
+
+// ---- Options (state 45) ------------------------------------------------------
+
+// kScreenLayouts: the option on each row of each Options page.
+constexpr uint32_t kScreenLayouts = 0x83026FE8;  // be<int32_t>[13][16]
+constexpr uint32_t kRowsPerPage = 16;
+
+// Option ids (kOptionTable, 0x83026EC8: each one's title string id).
+enum OptionId : int32_t {
+  kOptionDifficultySettings = 2,   // ID_GAMESETTINGS_DIFFICULTY_SETTINGS
+  kOptionSfxPack = 10,             // ID_GAMESETTINGS_SFXPACK
+  kOptionSkateFeedSettings = 35,   // ID_GAMESETTINGS_SKATEFEED_SETTINGS
+};
+
+// The world state block (scenario-harness.md: +40 current map, +48
+// requested); its first word is a mode. Difficulty can't change in modes 4
+// and 5 (not yet named).
+constexpr uint32_t kWorldStateBlock = 0x830B7AE8;
+
+// sub_8260D648, vtable +72: IsItemEnabled(row). Every row is enabled except:
+// Difficulty Settings in world modes 4 and 5; the SFX pack selector unless
+// there is more than one pack (sub_82486760 counts the "default" attrib
+// collection); skate.Feed settings while sub_8245A2D0 says it's unavailable
+// (an online object's state == 11). The two calls get a stack frame of the
+// original's size and its return addresses.
+void BodyOptionsItemEnabled(PPCContext& ctx, uint8_t* base) {
+  const auto& self = At<OptionsState>(base, ctx.r3.u32);
+  const uint32_t row = ctx.r5.u32;
+  const int32_t option =
+      At<be<int32_t>>(base, kScreenLayouts + 4 * (self.page * kRowsPerPage + row));
+  bool enabled = true;
+  if (option == kOptionDifficultySettings) {
+    const int32_t mode = At<be<int32_t>>(base, kWorldStateBlock);
+    enabled = mode != 4 && mode != 5;
+  } else if (option == kOptionSkateFeedSettings) {
+    GuestFrame frame(ctx, base, 96, false);
+    ctx.lr = 0x8260D6C4;
+    sub_8245A2D0(ctx, base);
+    enabled = (ctx.r3.u32 & 0xFF) == 0;
+  } else if (option == kOptionSfxPack) {
+    GuestFrame frame(ctx, base, 96, false);
+    ctx.lr = 0x8260D6F0;
+    sub_82486760(ctx, base);
+    enabled = ctx.r3.s32 > 1;
+  }
+  ctx.r3.u64 = enabled ? 1 : 0;
+}
+
+// sub_8260D710, vtable +68: OnHighlight(row): remembers the highlighted row.
+void BodyOptionsHighlight(PPCContext& ctx, uint8_t* base) {
+  At<OptionsState>(base, ctx.r3.u32).highlighted_row = ctx.r5.u32;
 }
 
 int Mode() { return REXCVAR_GET(skate3_native_fe_replace) ? 2 : 0; }
 
 using skate3::native_replace::Family;
+Family g_open_base{"fe_openscreen", &Mode, nullptr, &BodyOpenScreenBase};
+Family g_close_base{"fe_closescreen_base", &Mode, nullptr, &BodyCloseScreenBase};
 Family g_s51{"fe_s51_enter", &Mode, nullptr, &BodyS51Enter};
 Family g_s40{"fe_s40_enter", &Mode, nullptr, &BodyS40Enter};
 Family g_s48{"fe_s48_enter", &Mode, nullptr, &BodyS48Enter};
@@ -130,13 +197,27 @@ Family g_s46{"fe_s46_enter", &Mode, nullptr, &BodyS46Enter};
 Family g_s34{"fe_s34_leave", &Mode, nullptr, &BodyS34Leave};
 Family g_s23{"fe_s23_leave", &Mode, nullptr, &BodyS23Leave};
 Family g_s43{"fe_s43_leave", &Mode, nullptr, &BodyS43Leave};
+Family g_opt_enabled{"fe_options_enabled", &Mode, nullptr, &BodyOptionsItemEnabled};
+Family g_opt_highlight{"fe_options_highlight", &Mode, nullptr, &BodyOptionsHighlight};
 
 }  // namespace
 
-extern "C" REX_FUNC(sub_8260E868) { skate3::native_replace::Run(g_s51, ctx, base, &__imp__sub_8260E868); }
-extern "C" REX_FUNC(sub_82634A28) { skate3::native_replace::Run(g_s40, ctx, base, &__imp__sub_82634A28); }
-extern "C" REX_FUNC(sub_825F20B0) { skate3::native_replace::Run(g_s48, ctx, base, &__imp__sub_825F20B0); }
-extern "C" REX_FUNC(sub_82639690) { skate3::native_replace::Run(g_s46, ctx, base, &__imp__sub_82639690); }
-extern "C" REX_FUNC(sub_8260A4B8) { skate3::native_replace::Run(g_s34, ctx, base, &__imp__sub_8260A4B8); }
-extern "C" REX_FUNC(sub_825EC980) { skate3::native_replace::Run(g_s23, ctx, base, &__imp__sub_825EC980); }
-extern "C" REX_FUNC(sub_82638620) { skate3::native_replace::Run(g_s43, ctx, base, &__imp__sub_82638620); }
+namespace skate3::native_fe {
+// skate3_options_menu.cpp hooks sub_8260D648 for its own pages and calls
+// this for the game's rows.
+void OptionsItemEnabled(PPCContext& ctx, uint8_t* base) {
+  skate3::native_replace::Run(g_opt_enabled, ctx, base, &__imp__sub_8260D648);
+}
+}  // namespace skate3::native_fe
+
+using skate3::native_replace::Run;
+extern "C" REX_FUNC(sub_82D093D0) { Run(g_open_base, ctx, base, &__imp__sub_82D093D0); }
+extern "C" REX_FUNC(sub_82D09470) { Run(g_close_base, ctx, base, &__imp__sub_82D09470); }
+extern "C" REX_FUNC(sub_8260E868) { Run(g_s51, ctx, base, &__imp__sub_8260E868); }
+extern "C" REX_FUNC(sub_82634A28) { Run(g_s40, ctx, base, &__imp__sub_82634A28); }
+extern "C" REX_FUNC(sub_825F20B0) { Run(g_s48, ctx, base, &__imp__sub_825F20B0); }
+extern "C" REX_FUNC(sub_82639690) { Run(g_s46, ctx, base, &__imp__sub_82639690); }
+extern "C" REX_FUNC(sub_8260A4B8) { Run(g_s34, ctx, base, &__imp__sub_8260A4B8); }
+extern "C" REX_FUNC(sub_825EC980) { Run(g_s23, ctx, base, &__imp__sub_825EC980); }
+extern "C" REX_FUNC(sub_82638620) { Run(g_s43, ctx, base, &__imp__sub_82638620); }
+extern "C" REX_FUNC(sub_8260D710) { Run(g_opt_highlight, ctx, base, &__imp__sub_8260D710); }

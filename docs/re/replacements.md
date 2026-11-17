@@ -11,6 +11,26 @@ entry with its inputs, outputs and side effects), either replace it the
 same day (trivial: getters, wrappers, simple loops) or add a `specified`
 row here saying what's missing.
 
+**The standard** (2026-11-17): a replacement is our own implementation of a
+function we understand, never a copy of rexglue's output.
+- It's written over a **named data model**: a C++ struct of the guest
+  object (`rex::be<T>` fields at verified offsets with `static_assert`s;
+  unknown fields are `unknown_<hex offset>`), named constants for globals,
+  named callees. FE states: `src/native/skate3_fe_types.h`.
+- It implements the **behaviour**, in ordinary C++. Registers appear only at
+  the call boundary (arguments in, r3/f1 out, and the arguments of guest
+  calls we haven't replaced yet). No mirroring of scratch registers, no
+  instruction-by-instruction copies; a float function may keep the guest's
+  operation order where bit-exactness is measured to need it, over named
+  data.
+- Each one has a [symbols.toml](symbols.toml) entry, and its class a
+  [types.md](types.md) layout.
+- Work class by class: find the vtable (`tools/re/leaves.py vtable ADDR`
+  shows each slot and what the small ones do), name the methods, write the
+  struct, then replace. Nothing is replaced in bulk by code shape (a
+  generated "trivial functions" layer was tried and removed the same day:
+  it was rexglue's statements under another name).
+
 **Statuses:**
 - `native-on`: native code runs in its place by default;
 - `native-shadow`: native code runs and is compared, the recompiled code
@@ -64,6 +84,9 @@ row here saying what's missing.
 | `sub_8260E868`, `sub_82634A28`, `sub_825F20B0`, `sub_82639690` | OnEnter of FE states 51, 40, 48, 46 | control | native-on | `skate3_native_fe.cpp` (`skate3_native_fe_replace`): 51 `+60 = 0`, OpenScreen(91); 40 `+64 = 10000`, `+60` = the float at `0x821161A0`, OpenScreen(82); 48 OpenScreen(`**(this+12)`); 46 marks itself active (`+16 = 3`, byte `+49`, byte `+1614`). `fe_states_smoke.toml` (the `fe` step pushes them): same FE stack and shots on and off | - |
 | `sub_8260A4B8`, `sub_825EC980`, `sub_82638620` | OnLeave of FE states 34/62, 23, 43 | control | native-on | 34/62 `+52 = 0`; 23 `+60 = this + 5048`, `+68 = 0`; 43 clears the byte `0x83083566`; each then CloseScreen(0). Same check | - |
 | `sub_82608F18`, `sub_82608F58` | title OnEnter / OnLeave (FE 22) | control | native-on | `title_enter`: resets +76/+52/+64/+80, opens screen 2 unless mode +68; `title_leave`: the leave sound (`sub_825DFB88`, hash `0xE3071166217C9661`), then `CloseScreen(0)`; `boot_skip`, `title_quick_start` | - |
+| `sub_82D093D0`, `sub_82D09470` | `FrontEndState::OpenScreen(screen, arg)` / `CloseScreen(arg)` (vtable +56 / +60, the base class) | control | native-on | `skate3_native_fe.cpp` `fe_openscreen` / `fe_closescreen_base` over `FrontEndState` (`skate3_fe_types.h`): record the screen id, argument and the screen manager's callbacks, phase Opening; close: the argument, phase Closing. `options_menu_smoke`, `fe_states_smoke` | - |
+| `sub_8260D710` | `FrontEndState_Options::OnHighlight(row)` (vtable +68) | control | native-on | `fe_options_highlight`: `highlighted_row = row`. `options_menu_smoke` | - |
+| `sub_8260D648` | `FrontEndState_Options` item enabled (vtable +72) | control | native-on | `skate3_native_fe.cpp` `fe_options_enabled`, called by the Options hook for the game's own rows: the row's option id from `kScreenLayouts`; id 2 off while `0x830B7AE8` is 4 or 5, id 35 off when `sub_8245A2D0()`, id 10 on only when `sub_82486760() > 1`, the rest on. `options_menu_smoke.toml` (the Difficulty page): same shots on and off, bad 0. [ui.md](ui.md) | - |
 | `sub_826FDC50`..`sub_826FE1D8` | `StateBootFlow` handlers (7) | control | specified | [boot.md](boot.md): events, transitions, the load phase | Native chain: needs the movie handler's side effects understood |
 | `sub_8296D1F0`, `sub_8296D0D0`, `sub_826991B8` | pad ring pop / push / unpush (Sk8AppMan) | control | native-on | `skate3_native_padring.cpp` `ring_pop`/`ring_push`/`ring_unpush` (`skate3_native_padring_replace`); host atomics on the guest indices; Windows + Odin 2: plaza frame times level, reel char_sync 0, boot_skip input; [boot.md](boot.md#before-the-boot-flow-the-game-tick-and-its-pad-sample-rings) | - |
 | `sub_82699230` | pad ring consume | control | specified | drains ring idx, copies the 4 pad records per sample (`sub_82966F30`) | Replace with `sub_82966F30` (the per-pad debounce, specify it) |
@@ -78,3 +101,4 @@ Hooks that exist for the harness, the native renderer or the demo path
 `grep -rh 'extern "C" REX_FUNC' src`) observe or redirect game state and are
 not replacement candidates until their function is specified; the ones in
 `symbols.toml` have a `hooked` field.
+

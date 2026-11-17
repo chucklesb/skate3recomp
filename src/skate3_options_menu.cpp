@@ -3,6 +3,7 @@
 #include "generated/skate3_init.h"
 #include "harness/harness.h"
 #include "harness/harness_pad.h"
+#include "native/skate3_native_fe.h"
 #include "native/skate3_native_guest_read.h"
 
 #include <algorithm>
@@ -1212,7 +1213,7 @@ extern "C" REX_FUNC(sub_8260D648) {
       return;
     }
   }
-  __imp__sub_8260D648(ctx, base);
+  skate3::native_fe::OptionsItemEnabled(ctx, base);
 }
 
 // ---- GameSettings_* APT natives that read the tables directly ------------------

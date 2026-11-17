@@ -1,0 +1,85 @@
+# Opens the game's Options menu (FE state 45, FrontEndState_Options) from free
+# skate and walks its rows, so the Options methods that run as native code
+# are exercised on a real menu: IsItemEnabled (sub_8260D648,
+# fe_options_enabled), the highlight setter (sub_8260D710, a stub) and the
+# stubs the menu calls. Run it with the replacements on and off
+# (--skate3_native_fe_replace=false --skate3_native_stubs_replace=false) and
+# compare the shots and the `replace:` counters (fe_options_enabled calls > 0
+# when on).
+#
+#   tools/harness/run_scenario.py windows scenarios/options_menu_smoke.toml
+
+name = "options_menu_smoke"
+timeout_s = 300
+boot = "demo"
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 240
+
+[[step]]
+do = "fe"
+op = "push"
+state = 45
+
+[[step]]
+do = "wait"
+fe_ready = true
+timeout_s = 20
+
+[[step]]
+do = "screenshot"
+tag = "options_top"
+
+# The root page is the recomp's own (skate3_options_menu.cpp answers for it);
+# the game's pages use the native IsItemEnabled. Open "Difficulty Settings"
+# (row 0), then walk its rows.
+[[step]]
+do = "input"
+buttons = "a"
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 30
+
+[[step]]
+do = "screenshot"
+tag = "difficulty"
+
+[[step]]
+do = "input"
+ly = -1.0
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 10
+
+[[step]]
+do = "input"
+ly = -1.0
+frames = 4
+
+[[step]]
+do = "wait"
+frames = 15
+
+[[step]]
+do = "screenshot"
+tag = "difficulty_row2"
+
+[[step]]
+do = "fe"
+op = "pop"
+
+# Back in free skate long enough for a `replace:` stats line (printed from
+# gameplay frames only; it carries the menu's calls).
+[[step]]
+do = "wait"
+frames = 150
+
+[[step]]
+do = "screenshot"
+tag = "after_pop"

@@ -68,7 +68,8 @@ screen, `options.apt`):
   borrowed for our root rows; our pages are screen ids past the game's 13.
   `FrontEndState_Options` vtable `0x823034B0` (+64 OnMenuSelect
   `sub_8260D290`, +68 highlight `sub_8260D710`, +72 item-enabled
-  `sub_8260D648`, +40 input: Back 3, Left 14, Right 15); the state keeps the
+  `sub_8260D648`, native for the game's rows as `fe_options_enabled`; +40
+  input: Back 3, Left 14, Right 15); the state keeps the
   screen at +68 and the row at +72.
 - **Our own text:** a hook on the localizer's lookup-by-hash answers our
   host-owned string IDs.

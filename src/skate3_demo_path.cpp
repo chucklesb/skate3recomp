@@ -240,7 +240,14 @@ void DumpFrontEndStateTable(uint8_t* base, uint32_t mgr) {
     if (!skate3::native_scene::GuestTryLoadU32(base, table + 4 * id, &obj)) {
       break;
     }
-    if (obj == 0 || !skate3::native_scene::GuestTryLoadU32(base, obj, &vt)) {
+    if (obj == 0) {
+      continue;
+    }
+    // State objects live on the heap (0x4xxxxxxx). Other entries (id 80, and
+    // past the last state, ids 95+) point into the image or at unmapped
+    // addresses: skip them unread (a faulting read logs an error).
+    if (obj < 0x40000000 || obj >= 0x50000000 ||
+        !skate3::native_scene::GuestTryLoadU32(base, obj, &vt)) {
       continue;
     }
     std::string slots;

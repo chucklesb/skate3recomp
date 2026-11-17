@@ -6,6 +6,8 @@
 #include <rex/ppc/context.h>
 
 #include "generated/skate3_init.h"
+#include "native/skate3_fe_types.h"
+#include "native/skate3_native_guest_frame.h"
 #include "native/skate3_native_replace.h"
 #include "skate3_demo_path.h"
 
@@ -21,21 +23,20 @@ REXCVAR_DEFINE_BOOL(skate3_native_boot_replace, true, "Skate 3",
 // The REX_ memory macros need the global namespace (u32 and friends).
 namespace {
 
-constexpr uint32_t kLogoElapsedMs = 60;  // u32: dt accumulated since the state opened
-constexpr uint32_t kLogoDone = 64;       // u8: the boot flow's handler moves on when set
+using namespace skate3::fe;
+using skate3::native_guest::GuestFrame;
+
 constexpr uint32_t kLogoDurationMs = 4000;
 
-// FrontEndState (id 5) OnUpdate(this, dt_ms), vtable +0x10: elapsed += dt;
-// at 4000 ms set the done byte. A leaf function: no frame, no calls.
+// States 5-8 (the EA logo, ...) OnUpdate(this, dt_ms), vtable +0x10: the
+// screen stays up for 4 s, then flags itself done for the boot flow. Our
+// skip (any button, or the harness) ends it early.
 void BodyLogoUpdate(PPCContext& ctx, uint8_t* base) {
-  const uint32_t self = ctx.r3.u32;
-  const uint32_t elapsed = REX_LOAD_U32(self + kLogoElapsedMs) + ctx.r4.u32;
-  REX_STORE_U32(self + kLogoElapsedMs, elapsed);
-  ctx.r11.u64 = elapsed;
-  if (elapsed >= kLogoDurationMs || skate3::demo_path::IntroSkipPressed() ||
+  auto& self = At<TimedScreenState>(base, ctx.r3.u32);
+  self.elapsed_ms = self.elapsed_ms + ctx.r4.u32;
+  if (self.elapsed_ms >= kLogoDurationMs || skate3::demo_path::IntroSkipPressed() ||
       skate3::demo_path::ShouldForceIntroLogoComplete()) {
-    ctx.r11.u64 = 1;
-    REX_STORE_U8(self + kLogoDone, 1);
+    self.done = 1;
   }
 }
 
@@ -43,123 +44,71 @@ int Mode() { return REXCVAR_GET(skate3_native_boot_replace) ? 2 : 0; }
 
 skate3::native_replace::Family g_logo{"boot_logo", &Mode, nullptr, &BodyLogoUpdate};
 
-// ---- The FE states' other small methods (2026-11-17). Each follows its
-// disassembly: the same guest calls with the same arguments, return
-// addresses and stack frame. Virtual calls go through the state's vtable.
-constexpr uint32_t kVtOpenScreen = 56;   // (this, screen, 0)
-constexpr uint32_t kVtCloseScreen = 60;  // (this, 0)
+// ---- The FE states' enter/leave methods (2026-11-17; docs/re/ui.md).
 
-// The original's stack frame: back chain, the saved LR at -8 and (when the
-// original saves it) r31 at -16 of the caller's r1; popped on exit.
-struct GuestFrame {
-  PPCContext& ctx;
-  uint64_t saved;
-  GuestFrame(PPCContext& c, uint8_t* base, uint32_t size, bool save_r31) : ctx(c), saved(c.r1.u64) {
-    const uint32_t entry = c.r1.u32;
-    REX_STORE_U32(entry - 8, static_cast<uint32_t>(c.lr));
-    if (save_r31) {
-      REX_STORE_U64(entry - 16, c.r31.u64);
-    }
-    const uint32_t sp = entry - size;
-    REX_STORE_U32(sp, entry);
-    ctx.r1.u64 = sp;
-  }
-  ~GuestFrame() { ctx.r1.u64 = saved; }
-};
-
-// A virtual call through `obj`'s vtable slot with LR = `ret` (a tail call
-// passes the caller's LR through).
-void CallVirtual(PPCContext& ctx, uint8_t* base, uint32_t obj, uint32_t slot, uint32_t ret) {
-  const uint32_t vt = REX_LOAD_U32(obj);
-  const uint32_t fn = REX_LOAD_U32(vt + slot);
-  ctx.r11.u64 = vt;
-  ctx.r10.u64 = fn;
-  ctx.ctr.u64 = fn;
-  ctx.lr = ret;
-  REX_CALL_INDIRECT_FUNC(fn);
-}
-
-// The OnEnter of 13 FE states (vtable +0x0C) is one line: tail call
-// this->OpenScreen(N, 0) (lwz vtable; li r5,0; li r4,N; lwz +56; bctr).
-// One family; each wrapper passes its N (found by matching that exact code
-// in every FE state's vtable, 2026-11-17).
+// OnEnter (vtable +0x0C) of 13 states: show the state's screen. One family;
+// each hook passes its screen id (the table below).
 thread_local uint32_t t_open_screen = 0;
 void BodyOpenScreen(PPCContext& ctx, uint8_t* base) {
-  ctx.r5.u64 = 0;
-  ctx.r4.u64 = t_open_screen;
-  CallVirtual(ctx, base, ctx.r3.u32, kVtOpenScreen, static_cast<uint32_t>(ctx.lr));
+  OpenScreen(ctx, base, ctx.r3.u32, t_open_screen, static_cast<uint32_t>(ctx.lr));
 }
 
-// sub_826504C8: the OnLeave (vtable +0x18) of several FE states: tail call
-// this->CloseScreen(0).
+// sub_826504C8, OnLeave (vtable +0x18) of states 10, 11, 13: close the screen.
 void BodyCloseScreenOnly(PPCContext& ctx, uint8_t* base) {
-  ctx.r4.u64 = 0;
-  CallVirtual(ctx, base, ctx.r3.u32, kVtCloseScreen, static_cast<uint32_t>(ctx.lr));
+  CloseScreen(ctx, base, ctx.r3.u32, static_cast<uint32_t>(ctx.lr));
 }
 
-// sub_82608E18: their shared OnLeave (vtable +0x18): the done byte +64 = 1,
-// tail call this->CloseScreen(0).
+// sub_82608E18, OnLeave of the timed screens (states 5-8): flag done (a
+// skipped screen counts as finished), close the screen.
 void BodyCloseScreen(PPCContext& ctx, uint8_t* base) {
-  ctx.r11.u64 = 1;
-  ctx.r4.u64 = 0;
-  REX_STORE_U8(ctx.r3.u32 + kLogoDone, 1);
-  CallVirtual(ctx, base, ctx.r3.u32, kVtCloseScreen, static_cast<uint32_t>(ctx.lr));
+  At<TimedScreenState>(base, ctx.r3.u32).done = 1;
+  CloseScreen(ctx, base, ctx.r3.u32, static_cast<uint32_t>(ctx.lr));
 }
 
-// sub_82608F18: the title's OnEnter (FE state 22): +76 = 0 (the idle timer),
-// +52 = 1, +64 = 0, byte +80 = 0 (prompt not armed); unless mode +68 is set,
-// tail call this->OpenScreen(2, 0).
+// sub_82608F18, the title's OnEnter: reset the idle timer and the Start
+// prompt, block input until the screen is shown, then show the title screen
+// (2) unless we came from the attract loop.
+constexpr uint32_t kTitleScreen = 2;
 void BodyTitleEnter(PPCContext& ctx, uint8_t* base) {
-  const uint32_t self = ctx.r3.u32;
-  const uint32_t mode = REX_LOAD_U32(self + 68);
-  REX_STORE_U32(self + 76, 0);
-  REX_STORE_U32(self + 52, 1);
-  REX_STORE_U32(self + 64, 0);
-  REX_STORE_U8(self + 80, 0);
-  ctx.r9.u64 = 1;
-  ctx.r10.u64 = mode;
-  ctx.r11.u64 = 0;
-  if (mode != 0) {
+  auto& self = At<TitleState>(base, ctx.r3.u32);
+  self.idle_ms = 0;
+  self.input_blocked = 1;
+  self.unknown_40 = 0;
+  self.start_armed = 0;
+  if (self.attract_mode != 0) {
     return;
   }
-  ctx.r5.u64 = 0;
-  ctx.r4.u64 = 2;
-  CallVirtual(ctx, base, self, kVtOpenScreen, static_cast<uint32_t>(ctx.lr));
+  OpenScreen(ctx, base, ctx.r3.u32, kTitleScreen, static_cast<uint32_t>(ctx.lr));
 }
 
-// sub_82608F58: the title's OnLeave: play the leave sound (sub_825DFB88 with
-// its 64-bit FE sound hash), then this->CloseScreen(0); returns its r3.
+// sub_82608F58, the title's OnLeave: the leave sound, then close the screen.
+// PlayFeSound (sub_825DFB88) takes the sound's 64-bit name hash.
 constexpr uint64_t kTitleLeaveSound = 0xE3071166217C9661ull;
 void BodyTitleLeave(PPCContext& ctx, uint8_t* base) {
   const uint32_t self = ctx.r3.u32;
-  GuestFrame frame(ctx, base, 96, /*save_r31=*/true);
+  GuestFrame frame(ctx, base, 96, /*save_r31=*/false);
   ctx.r3.u64 = kTitleLeaveSound;
   ctx.lr = 0x82608F84;
   sub_825DFB88(ctx, base);
-  ctx.r4.u64 = 0;
-  ctx.r3.u64 = self;
-  CallVirtual(ctx, base, self, kVtCloseScreen, 0x82608F9C);
+  CloseScreen(ctx, base, self, 0x82608F9C);
 }
 
-// sub_82639400: FrontEndState_LanguageSelect::OnUpdate(this, dt_ms): +60 +=
-// dt; at 10000 ms reset it and pop the screen, keeping the current language
-// (sub_82D0AC88 on the FE manager, sub_824AD240).
+// sub_82639400, the language select's OnUpdate(this, dt_ms): after 10 s
+// without a choice, keep the current language and pop the state
+// (FeManager() sub_824AD240, then its PopState sub_82D0AC88).
 constexpr uint32_t kLanguageTimeoutMs = 10000;
 void BodyLanguageUpdate(PPCContext& ctx, uint8_t* base) {
-  const uint32_t self = ctx.r3.u32;
-  GuestFrame frame(ctx, base, 96, /*save_r31=*/false);
-  const uint32_t elapsed = REX_LOAD_U32(self + 60) + ctx.r4.u32;
-  REX_STORE_U32(self + 60, elapsed);
-  ctx.r11.u64 = elapsed;
-  if (elapsed < kLanguageTimeoutMs) {
+  auto& self = At<LanguageSelectState>(base, ctx.r3.u32);
+  self.idle_ms = self.idle_ms + ctx.r4.u32;
+  if (self.idle_ms < kLanguageTimeoutMs) {
     return;
   }
-  ctx.r11.u64 = 0;
-  REX_STORE_U32(self + 60, 0);
+  self.idle_ms = 0;
+  GuestFrame frame(ctx, base, 96, /*save_r31=*/false);
   ctx.lr = 0x8263942C;
-  sub_824AD240(ctx, base);
+  sub_824AD240(ctx, base);  // r3 = the FE manager
   ctx.lr = 0x82639430;
-  sub_82D0AC88(ctx, base);
+  sub_82D0AC88(ctx, base);  // pop the top state
 }
 
 skate3::native_replace::Family g_open{"fe_open", &Mode, nullptr, &BodyOpenScreen};
