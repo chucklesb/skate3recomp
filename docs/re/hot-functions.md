@@ -151,3 +151,32 @@ plaza run, jobs `late` 7 of 5,921 timeouts, reel char_sync 0.
 - Candidates by cost × specifiability: `DoFrustumCulling`, the
   `vrsqrtefp` helper (SDK), the job-wake signaling (SDK), RefPack
   compress.
+
+## Call counts
+
+How often each recompiled function is called, from the diagnostic build
+(CMake `SKATE3_COUNT_GUEST_CALLS`, Windows config `callcount`; harness step
+`callcount`; `tools/re/leaves.py rank <run>`). Counts, not time: they show
+what the game calls most, which the sampling profiler can't see for tiny
+functions.
+
+**Plaza, 2026-11-17** (`callcount_plaza.toml`, Windows, 30 fps cap,
+~35 s): 477M calls over 8,030 functions.
+- 41% are the register save/restore helpers (`__savegprlr_N` /
+  `__restgprlr_N`): one pair per call of a function that saves registers.
+- No class dominates: the most-called vtable (`0x82FD3600`, 35 methods)
+  has 1.2% of all calls.
+- The most-called functions are direct calls, not virtual methods:
+
+| Calls | % | Function |
+|---|---|---|
+| 26.7M | 5.6 | `sub_82E88BA0` (unnamed; also in the profile under `sub_82E89B80`) |
+| 19.6M | 4.1 | `sub_8258C1E0` (Skate 2: an `AABBoxTemplate` transform) |
+| 9.6M | 2.0 | `sub_824714D0` (Skate 2: `Util::FastString<30>::operator==`) |
+| 7.2M | 1.5 | `sub_82F52B30` (memcpy) |
+| 5.0M | 1.1 | `sub_82B1F7E8` (unnamed) |
+
+So picking classes by how hot their small methods are finds nothing
+worth it; classes are chosen for what they teach (RE-9), and these direct
+functions are RE-7's speed candidates.
+

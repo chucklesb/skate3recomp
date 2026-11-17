@@ -1,7 +1,8 @@
 # The frontend and HUD (RE-9)
 
 The game's menus and HUD: what drives them, what we already hook, and the plan
-to replace them with native code. Not a priority yet (2026-11-17). The goal is
+to replace them with native code. Active since 2026-11-17, class by class
+(status in [roadmap.md](../roadmap.md), RE-9). The goal is
 that new game-style UI (settings pages, new menus, on-screen hints such as the
 free-fly controls) becomes ordinary native code instead of one-off hooks.
 
@@ -48,14 +49,44 @@ select ~0.2 s (why an early A was dropped), pause menu ~0.1 s,
 Create-a-Skater ~0.45 s. The harness exposes this as `fe_ready` (`fe_input`
 events, `wait fe_ready`, and `input` waits for it while a menu is up).
 
-## FE state methods (2026-11-17)
+## The FE state base class (2026-11-17)
 
-Every FE state's OnEnter is vtable `+0x0C` and OnLeave `+0x18`; OpenScreen
-is `+56` (this, screen, 0) and CloseScreen `+60` (this, 0). Many enter /
-leave methods are a few instructions; 23 of them run as native code
-(`skate3_native_boot.cpp`, `skate3_native_fe.cpp`, catalogued in
-[replacements.md](replacements.md)). The harness `fe` step pushes or pops
-any state through the game's own calls, which is how they were exercised.
+Every state derives from `Sk8::FE::FrontEndStateBase` (vtable `0x82301CE0`,
+34 slots; layout and slot names in [types.md](types.md#frontendstate-sk8fefrontendstatebase-the-fe-state-base-class),
+the C++ type in `src/native/skate3_fe_types.h`). Skate 2's PDB has the class
+with the same layout, so the fields use its names.
+
+**A screen's life** (`mScreenState`, +16):
+1. OnEnter calls `OpenScreen(screen_type, layer)` (vtable +0x38): records
+   the request and the three callbacks; state 1.
+2. The FE manager's Update (`sub_82D0A158`) calls `RequestScreen`
+   (`sub_82D09410`) for each live state: a requested screen goes to the
+   screen manager (`LoadScreen`, its vtable +4); state 2.
+3. The screen manager calls back: loaded (`sub_82D09368`, stores
+   `mScreenId`, then the state's OnScreenLoaded +0x6C), intro done
+   (`sub_82D09380`: input allowed, state 3, OnIntroDone +0x68).
+4. In state 3 the manager calls OnUpdate(16) every FE tick (a fixed 16 ms
+   step, whatever the frame rate) and the input dispatch hands it codes.
+5. OnLeave calls `CloseScreen(destroy)` (+0x3C): state 4; the outro
+   callback (`sub_82D093A8`) ends it (state 0, OnOutroDone +0x70).
+
+`Show(show, silent)` (+0x1C) shows or hides a loaded screen directly.
+
+**Native** (`skate3_native_fe.cpp`, `skate3_native_boot.cpp`, catalogued in
+[replacements.md](replacements.md)): the base class's OpenScreen,
+CloseScreen, RequestScreen, Show, the three callbacks and the destructor;
+23 states' small enter / leave methods; the Options screen's
+IsItemEnabled and OnHighlight. The harness `fe` step pushes or pops any
+state through the game's own calls, which is how they were exercised
+(`fe_states_smoke.toml`, `options_menu_smoke.toml`).
+
+**Next class:** `FrontEndState_Options` (vtable `0x823034B0`). Its own
+slots: destructor `sub_825E7AD0`, OnEnter `sub_8260BF58` (resets its row
+flags +76..+81, row -1, opens screen 90 when the page is -1, sets a flag
++416 on a global object), OnShown `sub_8260BFE8`, OnScreenLoaded
+`sub_8260C010`, OnLeave `sub_8260C048`, ReceiveInput `sub_8260C258`, +116
+`sub_8260C1D0` (pages 10/11 answer +76), +124 `sub_8260C0F0`. Then the FE
+manager (push, pop, Update, the input dispatch above).
 
 ## What we already hook
 
@@ -105,7 +136,8 @@ These are hooks for one screen each, not a reusable layer.
    native, its arguments, the data it returns (`symbols.toml`, rows in
    [replacements.md](replacements.md)).
 3. **Map the FE state lifecycle** for one menu end to end (Options first, as
-   most of it is hooked): enter, input codes, refresh modes, leave.
+   most of it is hooked): enter, input codes, refresh modes, leave. The base
+   class's part is done (above).
 4. **Replace in native code,** one piece at a time, the usual way (Body
    families, catalogued in replacements.md): the Options state's handlers,
    the popup builder, the tutorial panel's data natives, the button-help bar.

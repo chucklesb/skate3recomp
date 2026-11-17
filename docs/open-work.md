@@ -19,19 +19,29 @@ what was done).
 ## Next up (2026-11-17)
 
 In order; the roadmap has the context ([roadmap.md](roadmap.md), Status):
-1. **Faster test runs** (below, under tooling): a per-step time table
-   across the usual scenarios, then condition waits instead of fixed
-   frame-count settles.
-2. **Codegen re-runs** only when the code generator's own sources change
-   (today any SDK change reruns its ~2.5 min analysis).
-3. **Frame-time follow-ups** (below, under tooling), the Odin 2 texture
+1. **RE-9, class by class** ([re/ui.md](re/ui.md)): `FrontEndState_Options`
+   (vtable `0x823034B0`): its destructor, OnEnter `sub_8260BF58`, OnShown
+   `sub_8260BFE8`, OnScreenLoaded `sub_8260C010`, OnLeave `sub_8260C048`,
+   ReceiveInput `sub_8260C258`, slots +116 `sub_8260C1D0` and +124
+   `sub_8260C0F0`; then the FE manager (push / pop / Update `sub_82D0A158`
+   / input dispatch `sub_825EC0E8`).
+2. **A scenario that reaches `FrontEndStateBase::Show` and the destructor**
+   (native since 2026-11-17, not yet run by any scenario).
+3. **Faster test runs** (below, under tooling): condition waits instead of
+   fixed frame-count settles. `census_menus` missed its Edit Skaters press
+   once in three runs (uncapped, 24 frames after the highlight moved):
+   make its menu steps wait for `fe_ready`.
+4. **Frame-time follow-ups** (below, under tooling), the Odin 2 texture
    re-decode hitch first.
-4. **Native-only phase 1** ([native-only.md](native-only.md)).
-5. **RE-7:** the next native replacements ([re/replacements.md](re/replacements.md)).
+5. **Native-only phase 1** ([native-only.md](native-only.md)).
+6. **RE-7:** the hot direct functions from the call counts
+   (`sub_82E88BA0`, the AABB transform `sub_8258C1E0`, `FastString==`;
+   [re/hot-functions.md](re/hot-functions.md#call-counts)).
 
 Deferred by the user: the KI-125 cloth fix (options in
 [known-issues.md](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps)),
-the photo challenge's closing animation, glass haze, RE-9 and game-style UI.
+the photo challenge's closing animation, glass haze, game-style UI (after
+RE-9).
 
 ## Rendering
 

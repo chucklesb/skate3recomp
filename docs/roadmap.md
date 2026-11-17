@@ -11,6 +11,16 @@ Update it with every commit that finishes or starts an item. Details live in
 the linked pages; the backlog is [open-work.md](open-work.md).
 
 **Now** (2026-11-17):
+0. [~] **RE: our own implementations, class by class** (the user's
+   direction, 2026-11-17). Every native replacement is reverse-engineered
+   code over named structs, never rexglue's statements copied
+   ([re/replacements.md](re/replacements.md), "The standard"). Done: the
+   generated "trivial functions" layer removed; FE, boot, jobs, skinning
+   and culling rewritten over typed structs (shadow mode bit-exact on both
+   platforms); the FE base class `FrontEndStateBase` named from the Skate 2
+   PDB and its screen life native; a call-count build to rank what the
+   game calls most (`tools/re/leaves.py rank`). Next: RE-9 classes
+   (`FrontEndState_Options`, then the FE manager).
 1. [~] **Faster test runs:** the boot-screen scenarios no longer idle
    (158 s -> 58 s); world loads run at frame pace, so Fast Loading lifts
    the cap while loading (teleport 15.4 -> 7.4 s, replay load 13.2 -> 5.7 s
@@ -113,7 +123,12 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   and last-error helpers run as native bodies; Sk8AppMan's pad-sample ring
   push/pop/unpush too (`ring_*`, 2026-11-16). Next: the vrsqrtefp helper
   (SDK), RunSingleJob's slot layout, the BindConstants bodies
-  ([re/replacements.md](re/replacements.md)).
+  ([re/replacements.md](re/replacements.md)). 2026-11-17: the standard
+  (our own code over named structs, class by class) and every existing body
+  rewritten to it; the typed walk found the renderer's palette readers
+  stepping the mesh table by 4 instead of 8 (latent). Call counts
+  ([re/hot-functions.md](re/hot-functions.md#call-counts)): no class
+  dominates; the hot functions are direct calls.
 - RE-8 [~] **Boot flow** ([re/boot.md](re/boot.md)): the handler chain from
   launch to the title is mapped (language select, logo, the EA / Black Box
   FMV, a load wait, the title). No screen is frame-dependent (all time
@@ -135,10 +150,16 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   sample from a 30-slot ring; its push/pop are native (`ring_*`).
   Next: a native handler chain that starts the load at
   once, and the movie handler's side effects (requirements in boot.md).
-- RE-9 [ ] **Frontend and HUD UI** ([re/ui.md](re/ui.md)): reverse the APT
+- RE-9 [~] **Frontend and HUD UI** ([re/ui.md](re/ui.md)): reverse the APT
   menus and HUD (FE states, the natives the movies call, popups, text, the
   tutorial panel, the button-help bar) and replace them with native code.
-  Not a priority (2026-11-17). Once it's done, game-style UI is ordinary
+  Started 2026-11-17 (the user asked for the FE states class by class).
+  Done: `FrontEndStateBase` (vtable `0x82301CE0`): fields and slots named,
+  OpenScreen / CloseScreen / RequestScreen / Show / the three screen
+  callbacks / the destructor native; 23 states' small enter/leave methods
+  and the Options screen's IsItemEnabled / OnHighlight native. Next:
+  `FrontEndState_Options`' own seven methods, then the FE manager (push,
+  pop, update, input dispatch). Once it's done, game-style UI is ordinary
   native code: a reusable library out of `skate3_options_menu.cpp`, the
   free-fly controls in the tutorial panel, the button-help bar on our
   pages, new menus on a reused menu movie.
@@ -152,6 +173,10 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   passed on retry, no symbols); watch for a repeat.
 
 **Done recently:**
+- 2026-11-17 (later): **the replacement standard** (reverse-engineered
+  code over named structs; the generated trivial-function layer removed),
+  FE / jobs / skinning / culling rewritten to it, `FrontEndStateBase`
+  native, the call-count build and `leaves.py rank`.
 - 2026-11-17: **testing builds** (`relwithdebinfo`: harness runs, testing
   pre-releases) compile at -O3 like releases, and the harness defaults to
   them; **controller free-fly** (sticks, triggers, Back exits); harness
