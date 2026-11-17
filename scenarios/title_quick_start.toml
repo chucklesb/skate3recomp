@@ -1,0 +1,74 @@
+# The title screen's quick start (skate3_title_quick_start, docs/re/boot.md):
+# Start during the prompt's 1.5 s delay shows "Press Start" at once (its
+# animation fast-forwarded) and must not leave the title; then A works
+# like Start and leaves it (FE state 22 pops).
+# Skips the intros on the way (A on the language, X on the logo and movie).
+name = "title_quick_start"
+timeout_s = 120
+boot = "none"
+state_every_frames = 10
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_demo_path_probe = true
+skate3_guest_fps_cap_auto = false
+skate3_intro_movie_skip = true
+
+[[step]]
+do = "wait"
+fe_screen = 47
+timeout_s = 60
+[[step]]
+do = "input"
+buttons = "a"
+frames = 3
+[[step]]
+do = "wait"
+fe_screen = 5
+[[step]]
+do = "input"
+buttons = "x"
+frames = 3
+[[step]]
+do = "wait"
+fe_screen = 24
+[[step]]
+do = "wait"
+ms = 300
+[[step]]
+do = "input"
+buttons = "x"
+frames = 3
+[[step]]
+do = "wait"
+fe_screen = 22
+
+[[step]]
+do = "wait"
+ms = 200
+[[step]]
+do = "input"
+buttons = "start"   # the hardest case: Start must only reveal
+frames = 3
+[[step]]
+do = "wait"
+ms = 300
+[[step]]
+do = "screenshot"
+tag = "prompt_early"   # ~0.6 s into the title: the prompt must already show
+[[step]]
+do = "wait"
+ms = 2000
+[[step]]
+do = "screenshot"
+tag = "still_title"    # the revealing Start did not confirm
+[[step]]
+do = "input"
+buttons = "a"
+frames = 3
+[[step]]
+do = "wait"
+ms = 2500
+[[step]]
+do = "screenshot"
+tag = "after_a"        # A confirmed: the title is gone

@@ -114,7 +114,10 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   any button skips the logo and the FMV during the boot
   (`skate3_intro_movie_skip`, "Skippable Intros" in the options menu;
   title at 6.2 s instead of 25.8 s); the logo's update is native
-  (`boot_logo`). Next: a native handler chain that starts the load at
+  (`boot_logo`). The title: any button shows "Press Start" at once
+  (ends its 1.5 s input delay and fast-forwards APT's animation) and A
+  works like Start (`skate3_title_quick_start`, "Quick Title Screen").
+  Next: a native handler chain that starts the load at
   once, and the movie handler's side effects (requirements in boot.md).
 
 **Parked** (the user's call; don't start without asking):

@@ -65,7 +65,7 @@ and ~2,430 frames).
 | Language (FE 47) | `ReceiveInput` `sub_82639440`: 12/13 move through the 6 languages, 2 picks one and pops | none needed |
 | Logo (FE 5) | none (no `ReceiveInput`) | any button: the native `OnUpdate` sets the done byte |
 | Movie (FE 24) | `ReceiveInput` `sub_8260B240` pops it, but only when `this+65` ("skippable") is set, which the boot movie doesn't set | any button: completes the FMV (`FEMoviePlayer::Update` codegen patch, `ShouldForceIntroMovieComplete`) |
-| Title (FE 22) | `ReceiveInput` `sub_82609238`: input 44 (Start) | none needed |
+| Title (FE 22) | `ReceiveInput` `sub_82609238`: Start, after a 1.5 s delay and its animation | any button shows the prompt at once; A works like Start (`skate3_title_quick_start`) |
 
 "Any button" is every digital button except Guide, on a rising edge. One
 detector is shared by the logo and the movie, so a held button skips only
@@ -78,6 +78,49 @@ With a press about a second into each screen, the screens before the title
 took 5.2 s instead of 24.5 s (`scenarios/boot_skip.toml`; Windows and the
 Odin 2 alike, a held X skipped only the logo).
 
+## The title screen (FE state 22)
+**Why the prompt comes late.** Two clocks, measured 2026-11-16:
+- The state's `OnUpdate` `sub_82609050` adds `dt` to a global millisecond
+  counter `0x8308355C` until it passes 1500, then sets the ready byte
+  `this+72`. Only then does input confirm (it is reset to 0 on confirm).
+- The picture is the title's APT (Flash) animation: background fade-in,
+  the logo built letter by letter (0.9-1.5 s), the "Press Start" line
+  (about 1.8 s). It runs on APT's own clock and ignores the ready byte.
+  Setting `+72` early changes nothing on screen.
+
+After 30 s idle with the prompt up, `OnUpdate` clears `+72` and plays the
+intro movie again (FE state 24, attract mode).
+
+**Input.** The FE delivers each pad button to `ReceiveInput`
+`sub_82609238` as a code on press and code + 44 on release (measured with
+the probe, `scenarios/title_input_probe.toml`):
+
+| Button | Start | Back | A | B | Y | X | LB | D-pad down |
+|---|---|---|---|---|---|---|---|---|
+| Press / release | 0 / 44 | 1 / 45 | 2 / 46 | 3 / 47 | 4 / 48 | 5 / 49 | 9 / 53 | 13+17 / 29+33 |
+
+Every code resets the idle timer (`+76`, `+64`). Press 0 arms `+80`;
+release 44 confirms when `+72` (ready), `+80` (armed) and not `+60`
+(busy) hold: it resets the delay counter, plays the confirm sound
+(`sub_825DFAF0`), records the pad (`fe+260`) and calls `sub_82609188`.
+The boot handler `ShowPressStartMode` then sees `+60` and moves on (the
+autosave warning, then the profile flow). Nothing reacts to A.
+
+**APT's clock.** `sub_82E663D0(elapsed_ms)` steps the current movie
+(`*(*(0x83085768)+24)`; one root movie holds every frontend screen):
+it adds `elapsed` to the movie's accumulator (`+36`), advances one frame
+per frame duration (`+44`, ms) and adds that to APT's clock
+`0x8307F3C8` (ActionScript `getTimer()`, `sub_82E6DFD8`).
+
+**Quick title** (`skate3_title_quick_start`, default on; "Quick Title
+Screen" in the options menu; `src/skate3_demo_path.cpp`):
+- A fresh press of any button during the delay ends it (counter to 1501)
+  and adds 3,000 ms to APT's next step, so the logo and the prompt are up
+  at once (0.3 s after the title appears instead of about 1.8 s).
+- That press doesn't confirm: it clears `+80`, and Start / A presses don't
+  arm until every button is up again. A second press is needed.
+- A works like Start: its codes 2 / 46 are passed on as 0 / 44.
+
 ## The FE state objects (TU3)
 From the state-table dump (`skate3_demo_path_probe`, `FE state N obj=...
 vt=...` lines). Vtable slots: +0x0C enter, +0x10 `OnUpdate(this, dt_ms)`,
@@ -88,7 +131,7 @@ vt=...` lines). Vtable slots: +0x0C enter, +0x10 `OnUpdate(this, dt_ms)`,
 | 47 language | `0x82304E70` | `826393E8` (opens screen 94) | `82639400` | `826504C8` | `82639440` |
 | 5 logo | `0x82302D90` | `82608E00` (opens screen 5) | `82608E38` | `82608E18` | - |
 | 24 movie | `0x82303390` | `8260AFD8` | `8260B058` | `8260B150` | `8260B240` |
-| 22 title | `0x82302FB0` | `82608F18` | `82609050` | `82608F58` | `82609238` |
+| 22 title | `0x82302FB0` | `82608F18` | `82609050` | `82608F58` | `82609238` (slot +0x2C `82608EA0` sets the mode `+68`) |
 
 ## What a native boot needs (requirements)
 To replace the boot screens with native code, the replacement must keep:

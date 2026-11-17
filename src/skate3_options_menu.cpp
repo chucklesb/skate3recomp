@@ -463,6 +463,10 @@ Page BuildSystemPage(const RestartSettings& settings) {
   AddToggle(page, "Skippable Intros",
             "At startup, any button skips the Skate 3 logo and the intro movie.",
             {"skate3_intro_movie_skip"});
+  AddToggle(page, "Quick Title Screen",
+            "Any button shows the \"Press Start\" prompt at once, and A works like Start "
+            "on it.",
+            {"skate3_title_quick_start"});
   AddRestart(page, settings, "audio_buffer");
   AddRestart(page, settings, "language");
   return page;

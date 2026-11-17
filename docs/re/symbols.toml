@@ -558,3 +558,34 @@ role = "this+60 += dt; at 10000 ms pops itself (sub_82D0AC88), keeping the curre
 confidence = "confirmed"
 evidence = "disassembly; 10.60 s with no input at every frame rate"
 hooked = "src/skate3_demo_path.cpp (probe, first update)"
+
+[sub_82609050]
+name = "FrontEndState (id 22, title)::OnUpdate"
+signature = "(this, dt_ms)"
+role = "Adds dt to the global prompt-delay counter 0x8308355C until it passes 1500, then sets the ready byte +72. With the prompt up, 30,000 ms idle (+76) clears +72 and plays the intro movie again (FE 24, attract). docs/re/boot.md."
+confidence = "confirmed"
+evidence = "disassembly; title probe (ready at 1.5 s)"
+hooked = "src/skate3_demo_path.cpp (quick title: any button ends the delay)"
+
+[sub_82609238]
+name = "FrontEndState (id 22, title)::ReceiveInput"
+signature = "(this, ?, code)"
+role = "Every code resets the idle timer. Code 0 (Start press) arms +80; 44 (Start release) confirms when +72 ready, +80 armed and +60 clear: resets the delay counter, plays the confirm sound (sub_825DFAF0), records the pad, calls sub_82609188. Codes: a button's press code, release = code + 44 (A 2/46, B 3/47, X 5/49, Y 4/48, Back 1/45, LB 9/53)."
+confidence = "confirmed"
+evidence = "disassembly; title_input_probe.toml"
+hooked = "src/skate3_demo_path.cpp (quick title: A as Start, the revealing press doesn't arm)"
+
+[sub_82E663D0]
+name = "APT movie time step"
+signature = "(elapsed_ms) -> bool"
+role = "Steps the current APT movie (*(*(0x83085768)+24); one root movie holds the frontend screens): accumulator +36 += elapsed, one frame per frame duration (+44 ms), APT clock 0x8307F3C8 += duration per frame."
+confidence = "likely"
+evidence = "disassembly; probe: one movie steps during the title, 32 ms at 30 fps"
+hooked = "src/skate3_demo_path.cpp (quick title: a one-off fast-forward)"
+
+[sub_82E6DFD8]
+name = "AptActionInterpreter::_FunctionAptActionGetTimer"
+signature = "(frame stack)"
+role = "ActionScript getTimer(): pushes APT's clock 0x8307F3C8."
+confidence = "likely"
+evidence = "Skate 2 exact name; disassembly"

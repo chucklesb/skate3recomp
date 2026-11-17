@@ -60,6 +60,11 @@ REXCVAR_DEFINE_BOOL(skate3_intro_movie_skip, true, "Skate 3",
                     "Space and Enter). The language screen and the title already take "
                     "input (docs/re/boot.md)");
 
+REXCVAR_DEFINE_BOOL(skate3_title_quick_start, true, "Skate 3",
+                    "Title screen: any button shows the \"Press Start\" prompt at once "
+                    "instead of after its 1.5 s delay, and A works like Start on it "
+                    "(docs/re/boot.md)");
+
 namespace skate3::native_scene {
 // Fault-guarded guest read (defined in skate3_native_scene.cpp).
 bool GuestTryLoadU32(uint8_t* base, uint32_t addr, uint32_t* out);
@@ -90,6 +95,21 @@ std::atomic<uint32_t> g_guest_pad_buttons{0};
 // Set once the boot flow reaches the title screen (ShowPressStartMode):
 // from then on only A / Start skip (in-game frontend movies).
 std::atomic<bool> g_title_reached{false};
+// Fresh presses since the current intro screen began: every guest pad poll
+// adds its rising edges (NoteGuestPad), a screen's start clears them
+// (ClearPendingPresses), a skip check consumes them (SkipEdge).
+std::atomic<uint32_t> g_pending_presses{0};
+std::atomic<uint32_t> g_ui_prev_buttons{0xFFFF};
+// After a press revealed the title's prompt: Start / A presses don't arm it
+// until every button is up again, so that press can't also confirm.
+std::atomic<bool> g_title_swallow{false};
+// Milliseconds to add to APT's next time step (sub_82E663D0): fast-forwards
+// the title's intro animation (background fade, logo, prompt) to its end.
+std::atomic<uint32_t> g_apt_fast_forward_ms{0};
+
+bool SkipEdge(const char* what, uint16_t mask, bool needs_intro_skip);
+void ClearPendingPresses();
+uint16_t ButtonsDown();
 
 
 bool ProbeEnabled() {
@@ -278,11 +298,131 @@ void BootHandlerProbe(const char* name, uint8_t* base, uint32_t event) {
   }
 }
 
+// Also: each screen's enter (event 0) clears the presses collected so far,
+// so a press made on the previous screen can't skip this one.
 #define SKATE3_BOOT_HANDLER_PROBE(addr, label)       \
   extern "C" REX_FUNC(sub_##addr) {                  \
+    if (ctx.r4.u32 == 0) {                           \
+      ClearPendingPresses();                         \
+    }                                                \
     BootHandlerProbe(label, base, ctx.r4.u32);       \
     __imp__sub_##addr(ctx, base);                    \
   }
+// Probe: the title screen (FE state 22). Its ReceiveInput(this, ?, code)
+// (vtable +0x28) with the FE input code, and in its OnUpdate(this, dt) the
+// prompt flags: +72 ready (set once the global ms counter 0x8308355C passes
+// 1500), +80 armed (input 0), +60 busy, +68 mode.
+constexpr uint32_t kTitlePromptDelayMs = 0x8308355C;
+
+void TitleProbe(const char* what, uint8_t* base, uint32_t self, uint32_t a, uint32_t b) {
+  if (!ProbeEnabled()) {
+    return;
+  }
+  uint32_t delay = 0, w60 = 0, w68 = 0, w72 = 0, w80 = 0;
+  skate3::native_scene::GuestTryLoadU32(base, kTitlePromptDelayMs, &delay);
+  skate3::native_scene::GuestTryLoadU32(base, self + 60, &w60);
+  skate3::native_scene::GuestTryLoadU32(base, self + 68, &w68);
+  skate3::native_scene::GuestTryLoadU32(base, self + 72, &w72);
+  skate3::native_scene::GuestTryLoadU32(base, self + 80, &w80);
+  const uint32_t ready = w72 >> 24, armed = w80 >> 24, busy = w60 >> 24;
+  static std::atomic<uint32_t> s_last{0xFFFFFFFF};
+  const uint32_t key = ready | (armed << 1) | (busy << 2) | ((delay > 1500) << 3) | (w68 << 4);
+  const bool input = what[0] == 'i';
+  if (input || s_last.exchange(key) != key) {
+    REXLOG_INFO("Skate 3 title: {} r4={} r5={} delay={} ready={} armed={} busy={} mode={}", what,
+                a, b, delay, ready, armed, busy, w68);
+  }
+}
+
+// The title's FE input codes (measured): a button's press is its code, its
+// release the code + 44. Start 0 / 44, Back 1, A 2 / 46, B 3, Y 4, X 5,
+// LB 9. ReceiveInput sub_82609238 arms on 0 (+80) and confirms on 44 when
+// the prompt is ready (+72), armed and not busy (+60).
+constexpr uint32_t kTitleStartPress = 0, kTitleStartRelease = 44;
+constexpr uint32_t kTitleAPress = 2, kTitleARelease = 46;
+constexpr uint32_t kTitleReady = 72, kTitleArmed = 80, kTitleMode = 68;
+
+extern "C" REX_FUNC(sub_82609238) {
+  TitleProbe("input", base, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
+  if (REXCVAR_GET(skate3_title_quick_start) && REX_LOAD_U32(ctx.r3.u32 + kTitleMode) == 0) {
+    // A works like Start on the title.
+    if (ctx.r5.u32 == kTitleAPress) {
+      ctx.r5.u64 = kTitleStartPress;
+    } else if (ctx.r5.u32 == kTitleARelease) {
+      ctx.r5.u64 = kTitleStartRelease;
+    }
+    // The press that revealed the prompt doesn't arm it.
+    if (ctx.r5.u32 == kTitleStartPress && g_title_swallow.load(std::memory_order_relaxed)) {
+      REX_STORE_U32(ctx.r3.u32 + 76, 0);  // the idle timer, as any input resets it
+      REX_STORE_U32(ctx.r3.u32 + 64, 0);
+      ctx.r3.u64 = 0;
+      return;
+    }
+  }
+  __imp__sub_82609238(ctx, base);
+}
+
+// Probe: APT's per-movie time step sub_82E663D0(elapsed_ms) on the current
+// movie *(*(0x83085768)+24): logs each distinct movie with its elapsed ms
+// and frame duration while the title is up, and the title state's movie
+// wrapper words (state+56), to tie the two together.
+std::atomic<uint32_t> g_probe_title_state{0};
+
+extern "C" REX_FUNC(sub_82E663D0) {
+  if (const uint32_t ff = g_apt_fast_forward_ms.exchange(0, std::memory_order_relaxed)) {
+    REXLOG_INFO("Skate 3 title: APT fast-forward {} ms", ff);
+    ctx.r3.u64 = ctx.r3.u32 + ff;
+  }
+  if (ProbeEnabled() && g_probe_title_state.load(std::memory_order_relaxed)) {
+    static uint32_t s_seen[16] = {};
+    static int s_count = 0;
+    uint32_t ctxp = 0, movie = 0;
+    skate3::native_scene::GuestTryLoadU32(base, 0x83085768, &ctxp);
+    if (ctxp) skate3::native_scene::GuestTryLoadU32(base, ctxp + 24, &movie);
+    bool seen = false;
+    for (int i = 0; i < s_count; ++i) seen |= s_seen[i] == movie;
+    if (!seen && s_count < 16) {
+      s_seen[s_count++] = movie;
+      uint32_t title = g_probe_title_state.load(), wrapper = 0;
+      skate3::native_scene::GuestTryLoadU32(base, title + 56, &wrapper);
+      std::string words;
+      for (uint32_t k = 0; k < 16 && wrapper; ++k) {
+        uint32_t v = 0;
+        skate3::native_scene::GuestTryLoadU32(base, wrapper + 4 * k, &v);
+        words += fmt::format(" {:08X}", v);
+      }
+      REXLOG_INFO("Skate 3 title: apt step movie=0x{:08X} ctx=0x{:08X} elapsed={} | title "
+                  "wrapper 0x{:08X}:{}",
+                  movie, ctxp, ctx.r3.u32, wrapper, words);
+    }
+  }
+  __imp__sub_82E663D0(ctx, base);
+}
+
+// Before the title's OnUpdate(this, dt): while the prompt is still waiting
+// for its delay (the ms counter kTitlePromptDelayMs <= 1500, +72 clear), a
+// fresh press of any button ends the delay; the update then shows it.
+extern "C" REX_FUNC(sub_82609050) {
+  TitleProbe("update", base, ctx.r3.u32, ctx.r4.u32, 0);
+  g_probe_title_state.store(ctx.r3.u32, std::memory_order_relaxed);
+  if (REXCVAR_GET(skate3_title_quick_start)) {
+    const uint32_t self = ctx.r3.u32;
+    if (g_title_swallow.load(std::memory_order_relaxed) && ButtonsDown() == 0) {
+      g_title_swallow.store(false, std::memory_order_relaxed);
+    }
+    if (REX_LOAD_U8(self + kTitleReady) == 0 && REX_LOAD_U32(kTitlePromptDelayMs) <= 1500 &&
+        SkipEdge("title prompt delay", 0xF3FF, false)) {
+      REX_STORE_U32(kTitlePromptDelayMs, 1501);
+      // The prompt's own animation (about 1.8 s from the title's start)
+      // runs on APT's clock, not this delay: play it to its end now.
+      g_apt_fast_forward_ms.store(3000, std::memory_order_relaxed);
+      REX_STORE_U8(self + kTitleArmed, 0);  // a Start press already dispatched won't confirm
+      g_title_swallow.store(true, std::memory_order_relaxed);
+    }
+  }
+  __imp__sub_82609050(ctx, base);
+}
+
 SKATE3_BOOT_HANDLER_PROBE(826FDE48, "logo (FE 5)")
 SKATE3_BOOT_HANDLER_PROBE(826FDEF0, "movie (FE 24)")
 SKATE3_BOOT_HANDLER_PROBE(826FE058, "wait for load")
@@ -399,36 +539,57 @@ std::function<rex::input::InputSystem*()> g_ui_input_provider;
 // update and the movie tick run on consecutive frames), so a button held
 // from one screen into the next doesn't skip both. Starts "down": a button
 // held since before the first intro screen does nothing.
-bool SkipEdge(const char* what) {
-  static std::atomic<bool> s_was_down{true};
-  if (!REXCVAR_GET(skate3_intro_movie_skip)) {
-    return false;
-  }
-  const bool boot = !g_title_reached.load(std::memory_order_relaxed);
-  // Any digital button during the boot (not Guide); A / Start afterwards.
-  const uint16_t mask =
-      boot ? static_cast<uint16_t>(0xF3FF)
-           : static_cast<uint16_t>(rex::input::X_INPUT_GAMEPAD_A |
-                                   rex::input::X_INPUT_GAMEPAD_START);
-  uint16_t buttons = static_cast<uint16_t>(g_guest_pad_buttons.load(std::memory_order_relaxed));
+uint16_t UiButtons() {
   if (g_ui_input_provider) {
     if (rex::input::InputSystem* input = g_ui_input_provider()) {
       rex::input::X_INPUT_GAMEPAD pad;
       if (input->GetUiGamepadState(&pad)) {
-        buttons = static_cast<uint16_t>(buttons | pad.buttons);
+        return pad.buttons;
       }
     }
   }
-  const bool down = (buttons & mask) != 0;
-  const bool was_down = s_was_down.exchange(down, std::memory_order_relaxed);
-  if (down && !was_down) {
-    REXLOG_INFO("Skate 3: {} skipped by user input (buttons 0x{:04X})", what, buttons);
+  return 0;
+}
+
+uint16_t ButtonsDown() {
+  return static_cast<uint16_t>(g_guest_pad_buttons.load(std::memory_order_relaxed) |
+                               UiButtons());
+}
+
+void ClearPendingPresses() {
+  g_pending_presses.store(0, std::memory_order_relaxed);
+  g_ui_prev_buttons.store(UiButtons(), std::memory_order_relaxed);
+}
+
+// True when a button in `mask` was freshly pressed since the last check or
+// screen start (guest pad edges collected on every poll, plus host UI pad
+// edges). Consumes the pending presses. A button held since before the
+// screen began never counts.
+bool SkipEdge(const char* what, uint16_t mask, bool needs_intro_skip) {
+  if (needs_intro_skip && !REXCVAR_GET(skate3_intro_movie_skip)) {
+    return false;
+  }
+  const uint16_t ui = UiButtons();
+  const uint16_t ui_prev =
+      static_cast<uint16_t>(g_ui_prev_buttons.exchange(ui, std::memory_order_relaxed));
+  const uint16_t presses = static_cast<uint16_t>(
+      g_pending_presses.exchange(0, std::memory_order_relaxed) | (ui & ~ui_prev));
+  if ((presses & mask) != 0) {
+    REXLOG_INFO("Skate 3: {} skipped by user input (buttons 0x{:04X})", what, presses);
     return true;
   }
   return false;
 }
 
-bool UserRequestedMovieSkip() { return SkipEdge("frontend movie"); }
+// Any digital button during the boot (not Guide); A / Start afterwards.
+uint16_t IntroSkipMask() {
+  return g_title_reached.load(std::memory_order_relaxed)
+             ? static_cast<uint16_t>(rex::input::X_INPUT_GAMEPAD_A |
+                                     rex::input::X_INPUT_GAMEPAD_START)
+             : static_cast<uint16_t>(0xF3FF);
+}
+
+bool UserRequestedMovieSkip() { return SkipEdge("frontend movie", IntroSkipMask(), true); }
 
 std::atomic<bool> g_input_worker_quit{false};
 std::thread g_input_worker;
@@ -806,11 +967,15 @@ void NoteGuestPad(uint8_t* base, uint32_t user, uint32_t state_addr, uint32_t re
   }
   uint32_t word = 0;  // X_INPUT_STATE: packet (u32), then buttons (u16)
   if (skate3::native_scene::GuestTryLoadU32(base, state_addr + 4, &word)) {
-    g_guest_pad_buttons.store(word >> 16, std::memory_order_relaxed);
+    const uint32_t now = word >> 16;
+    const uint32_t before = g_guest_pad_buttons.exchange(now, std::memory_order_relaxed);
+    if (const uint32_t pressed = now & ~before) {
+      g_pending_presses.fetch_or(pressed, std::memory_order_relaxed);
+    }
   }
 }
 
-bool IntroSkipPressed() { return SkipEdge("intro screen"); }
+bool IntroSkipPressed() { return SkipEdge("intro screen", IntroSkipMask(), true); }
 
 bool ShouldForceIntroMovieComplete() {
   if (AutomationEnabled() && g_skip_intro_movie.load(std::memory_order_relaxed)) {

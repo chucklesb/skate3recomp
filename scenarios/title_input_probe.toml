@@ -1,0 +1,115 @@
+# RE probe for the title screen's input (docs/re/boot.md, "The title"):
+# skips the intros, then presses single buttons on the title while the
+# probe logs each FE input code (`Skate 3 title: input r5=<code>`) and the
+# prompt flags. Start last: it leaves the title.
+name = "title_input_probe"
+timeout_s = 120
+boot = "none"
+state_every_frames = 10
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_demo_path_probe = true
+skate3_guest_fps_cap_auto = false
+skate3_intro_movie_skip = true
+
+[[step]]
+do = "wait"
+fe_screen = 47
+timeout_s = 60
+[[step]]
+do = "input"
+buttons = "a"
+frames = 3
+[[step]]
+do = "wait"
+fe_screen = 5
+[[step]]
+do = "input"
+buttons = "x"
+frames = 3
+[[step]]
+do = "wait"
+fe_screen = 24
+[[step]]
+do = "wait"
+ms = 500
+[[step]]
+do = "input"
+buttons = "x"
+frames = 3
+[[step]]
+do = "wait"
+fe_screen = 22
+
+# During the prompt delay.
+[[step]]
+do = "wait"
+ms = 300
+[[step]]
+do = "input"
+buttons = "b"
+frames = 3
+[[step]]
+do = "wait"
+ms = 2500
+[[step]]
+do = "screenshot"
+tag = "prompt"
+
+# One button at a time, with the pad released in between.
+[[step]]
+do = "input"
+buttons = "a"
+frames = 3
+[[step]]
+do = "wait"
+ms = 700
+[[step]]
+do = "input"
+buttons = "x"
+frames = 3
+[[step]]
+do = "wait"
+ms = 700
+[[step]]
+do = "input"
+buttons = "y"
+frames = 3
+[[step]]
+do = "wait"
+ms = 700
+[[step]]
+do = "input"
+buttons = "lb"
+frames = 3
+[[step]]
+do = "wait"
+ms = 700
+[[step]]
+do = "input"
+buttons = "back"
+frames = 3
+[[step]]
+do = "wait"
+ms = 700
+[[step]]
+do = "input"
+buttons = "down"
+frames = 3
+[[step]]
+do = "wait"
+ms = 700
+[[step]]
+do = "screenshot"
+tag = "still_title"
+[[step]]
+do = "input"
+buttons = "start"
+frames = 3
+[[step]]
+do = "wait"
+ms = 3000
+[[step]]
+do = "screenshot"
+tag = "after_start"
