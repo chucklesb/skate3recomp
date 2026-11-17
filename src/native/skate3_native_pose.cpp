@@ -180,9 +180,20 @@ bool ComputePack(uint8_t* base, uint32_t instance, uint32_t local_to_world, Writ
 // PackAndMultiply fused, for each part of the entity's current LOD: every
 // bone's pose matrix, skinned by the entity's local_to_world, appended to the
 // part's palette.
+// The first refusal of each kind is logged (the game's code runs instead).
+bool RefuseLw(const char* why, uint32_t entity, uint32_t value) {
+  static std::atomic<uint32_t> s_seen{0};
+  const uint32_t bit = 1u << (uint32_t(why[0]) & 31);
+  if ((s_seen.fetch_or(bit, std::memory_order_relaxed) & bit) == 0) {
+    REXLOG_WARN("pose: lw refused ({}) entity {:08X} value {}", why, entity, value);
+  }
+  return false;
+}
+
 bool ComputeLw(uint8_t* base, uint32_t entity_addr, Writes* e) {
   const auto* entity = Find<LivingWorldEntity>(base, entity_addr);
-  if (!entity || entity->lod >= kLodCount) return false;
+  if (!entity) return RefuseLw("address", entity_addr, 0);
+  if (entity->lod >= kLodCount) return RefuseLw("lod", entity_addr, entity->lod);
   const uint32_t count = entity->lod_part_count[entity->lod];
   const uint32_t parts = entity->lod_instances[entity->lod];
   e->row_words = 12;
@@ -192,7 +203,10 @@ bool ComputeLw(uint8_t* base, uint32_t entity_addr, Writes* e) {
   // The pose comes from a virtual getter; only the classes whose getter is
   // the plain `return pose` are handled (another class: the game's code).
   const auto* getter = Find<be<uint32_t>>(base, entity->vtable + 0x60);
-  if (!getter || *getter != kLivingWorldPoseGetter || count > kMaxLivingWorldParts) return false;
+  if (!getter || *getter != kLivingWorldPoseGetter) {
+    return RefuseLw("getter (another class)", entity_addr, getter ? uint32_t(*getter) : 0);
+  }
+  if (count > kMaxLivingWorldParts) return RefuseLw("parts", entity_addr, count);
   simde__m128 ltw[4];
   if (!LoadRows(base, entity_addr + offsetof(LivingWorldEntity, local_to_world), ltw)) {
     return false;

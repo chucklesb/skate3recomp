@@ -52,6 +52,10 @@ using skate3::native_scene::GuestTryCopy;
 
 using namespace skate3::render;
 
+// The snapshot keeps up to 8 parts per entity (its buffers are sized for
+// that); entities with more are skipped, as before.
+constexpr uint32_t kMaxSnapshotParts = 8;
+
 // MeshContext slots assumed when an instance's context vector looks wrong.
 constexpr uint32_t kCtxSlotsFallback = 50;
 
@@ -276,7 +280,7 @@ void SnapshotLwEntity(uint8_t* base, uint32_t entity) {
     return;
   }
   const uint32_t count = count_w, arr = arr_w;
-  if (count == 0 || count > kMaxLivingWorldParts || !PlausiblePtr(arr)) {
+  if (count == 0 || count > kMaxSnapshotParts || !PlausiblePtr(arr)) {
     return;
   }
   for (uint32_t i = 0; i < count; ++i) {

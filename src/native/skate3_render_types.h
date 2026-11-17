@@ -85,7 +85,9 @@ static_assert(offsetof(ModelInstance, matrix_count) == 0x18);
 // Sk8::cLivingWorldPresEntity (pedestrians and other LivingWorld characters;
 // TU3 grew it past Skate 2's 0x240).
 constexpr uint32_t kLodCount = 3;
-constexpr uint32_t kMaxLivingWorldParts = 8;
+// Parts per LOD: the per-part remap table runs from +0x270 to the pose
+// field (9 parts seen on the Odin 2, 2026-11-17).
+constexpr uint32_t kMaxLivingWorldParts = (0x4B0 - 0x270) / 4;
 struct LivingWorldEntity {
   be<uint32_t> vtable;
   uint8_t unknown_04[0x0C];
@@ -98,7 +100,6 @@ struct LivingWorldEntity {
   be<float> opacity[4];                    // +0x210 x = the alpha the shaders output
   uint8_t unknown_220[0x270 - 0x220];
   be<uint32_t> part_bone_remap[kMaxLivingWorldParts];  // +0x270 per part: be<u32>[] model bone -> pose bone
-  uint8_t unknown_290[0x4B0 - 0x290];
   be<uint32_t> pose;                       // +0x4B0 Matrix44 per skeleton bone (vtable +0x60 returns it)
 };
 static_assert(offsetof(LivingWorldEntity, lod) == 0x10);

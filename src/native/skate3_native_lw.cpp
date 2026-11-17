@@ -50,6 +50,10 @@ using skate3::native_scene::GuestTryCopy;
 
 using namespace skate3::render;
 
+// The snapshot keeps up to 8 parts per entity (its buffers are sized for
+// that); entities with more are skipped, as before.
+constexpr uint32_t kMaxSnapshotParts = 8;
+
 struct LwCtxEntry {
   float alpha = 1.0f;
   uint32_t entity = 0;
@@ -116,7 +120,7 @@ void OnLwEntityTick(uint8_t* base, uint32_t entity) {
     return;
   }
   const uint32_t count = count_w, arr = arr_w;
-  if (count == 0 || count > kMaxLivingWorldParts || !PlausiblePtr(arr)) {
+  if (count == 0 || count > kMaxSnapshotParts || !PlausiblePtr(arr)) {
     return;
   }
   const uint64_t now = NowMs();
