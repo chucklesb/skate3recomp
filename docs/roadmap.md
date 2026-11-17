@@ -125,6 +125,13 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   sample from a 30-slot ring; its push/pop are native (`ring_*`).
   Next: a native handler chain that starts the load at
   once, and the movie handler's side effects (requirements in boot.md).
+- RE-9 [ ] **Frontend and HUD UI** ([re/ui.md](re/ui.md)): reverse the APT
+  menus and HUD (FE states, the natives the movies call, popups, text, the
+  tutorial panel, the button-help bar) and replace them with native code.
+  Not a priority (2026-11-17). Once it's done, game-style UI is ordinary
+  native code: a reusable library out of `skate3_options_menu.cpp`, the
+  free-fly controls in the tutorial panel, the button-help bar on our
+  pages, new menus on a reused menu movie.
 
 **Parked** (the user's call; don't start without asking):
 - The photo challenge's jerky closing animation and snapping pose

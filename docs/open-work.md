@@ -132,6 +132,11 @@ In order; the roadmap has the context ([roadmap.md](roadmap.md), RE-5/RE-7):
 Plan these together, and with the in-game debug menu below in mind (where
 fly mode, recorders and toggles will live), so the overlays share one layout.
 
+- **Game-style UI** (new menus, settings pages, hints such as the free-fly
+  controls, in the game's own look): waits on RE-9, reversing the frontend
+  and HUD and replacing them with native code ([re/ui.md](re/ui.md)). Not a
+  priority (2026-11-17).
+
 - **Renderer indicator inside the performance HUD.** Today the
   NATIVE/EMULATED badge overlaps and hides the performance HUD. Make it the
   HUD's top row: still boxed, its bottom border shared with the HUD's top
