@@ -47,10 +47,19 @@ using ComputeFn = bool (*)(PPCContext& ctx, uint8_t* base, Writes* out);
 // 0 off, 1 shadow, 2 on: the family's own setting.
 using ModeFn = int (*)();
 
+// A control-flow replacement (loops, wrappers, calls into other guest
+// functions): runs in place of the recompiled function. There is nothing to
+// compare, so a Body family has no shadow mode: it runs only when its mode
+// is on and the global override is default (shadow and off both run the
+// recompiled code). Verified by following the disassembly call for call
+// and by runs.
+using BodyFn = void (*)(PPCContext& ctx, uint8_t* base);
+
 struct Family {
   const char* name;
   ModeFn mode;
-  ComputeFn compute;
+  ComputeFn compute;  // pure families (nullptr for a Body family)
+  BodyFn body = nullptr;
   // Window counters (exchanged to 0 at each stats line).
   std::atomic<uint64_t> calls{0}, exact{0}, diff{0}, native{0}, bad{0}, rows{0};
   int id = -1;  // assigned by Register
@@ -62,6 +71,8 @@ void Register(Family* f);
 int ModeOf(const Family& f);
 // The hook body: see the header comment. `orig` is the __imp__ function.
 void Run(Family& f, PPCContext& ctx, uint8_t* base, PPCFn orig);
+// Whether a Body family's native body runs now (mode on, override default).
+bool BodyOn(Family& f);
 // Frame tail (render thread): re-reads the global override; the stats line.
 void OnFrameBuilt();
 

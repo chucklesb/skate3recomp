@@ -25,9 +25,12 @@ row here saying what's missing.
   shadow mode compares every written byte; `on` only once shadow is 100%
   exact everywhere.
 - `control`: loops, wrappers, calls into other guest functions. A Body
-  family: no shadow (nothing to compare), so the native body follows the
-  disassembly call for call and is verified by runs (scheduling counters,
-  char_sync, frame times).
+  family (`native_replace::Family` with a `body`, off/on only; the global
+  `skate3_native_replace_all = off|shadow` runs the recompiled code): no
+  shadow (nothing to compare), so the native body follows the disassembly
+  call for call (same guest calls and arguments, the same stack frame size,
+  LR set to the original return addresses, the same r3) and is verified by
+  runs (scheduling counters, char_sync, frame times).
 
 ## Catalog
 
@@ -43,11 +46,11 @@ row here saying what's missing.
 | `sub_82B76080` | D3D wait poll (one turn of `BlockOnFence`) | control | hooked-only | `skate3_native_fence.cpp`: blocks on the GPU write-back signal before the guest poll | Replace the poll body (spin hints, fence compare, deadlock check) |
 | `sub_82B755C0` | `D3D::CDevice::BlockOnFence` | control | specified | loops on `sub_82B76080` | Replace with the poll |
 | `sub_8290AFA0` | `EA::Jobs::LocalBackend::RunSingleJob` | control | hooked-only | `skate3_native_jobs.cpp` (arming, stats) | Specify the slot layout (8-byte state words at backend+8, count +16, 656-byte job records at backend+4) and the CAS claim; the claim has no shadow, so it needs a careful run-based check |
-| `sub_8290B750` | EA::Jobs worker loop | control | hooked-only | `skate3_native_jobs.cpp` (registers the worker) | Native body |
-| `sub_8290B320` | `WakeThreads` | control | hooked-only (signal path native when `skate3_native_job_wake = on`) | `skate3_native_jobs.cpp`; `jobs:` late/hit counters | Native body for both paths |
-| `sub_82909738`, `sub_82909740` | `Get/SetJobThreadSleepTimeoutMS` | control | specified | backend+1592 | Native body (trivial) |
-| `sub_82EDFEC0` | `WaitForSingleObject` | control | hooked-only | `skate3_native_jobs.cpp` (stats) | Native body (trivial) |
-| `sub_824741F0` | spin-wait on a job | control | specified | caller histogram in `jobs:` | Native body |
+| `sub_8290B750` | EA::Jobs worker loop | control | native-on | `skate3_native_jobs.cpp` `j_worker` (`skate3_native_jobs_replace`); jobs: counters level, reel char_sync 0 | - |
+| `sub_8290B320` | `WakeThreads` | control | native-on | `j_wake`: both paths native; signals only armed workers when `skate3_native_job_wake = on` | - |
+| `sub_82909738`, `sub_82909740` | `Get/SetJobThreadSleepTimeoutMS` | control | native-on | `j_gettmo`, `j_settmo` (backend+1592) | - |
+| `sub_82EDFEC0` | `WaitForSingleObject` | control | native-on | `j_wait` (all 105 callers) | Replace `WaitForSingleObjectEx` `sub_82EE7880` (calls the kernel import) |
+| `sub_824741F0` | spin-wait on a job | control | native-on | `j_spin` | - |
 | `sub_82816A40` | `DoFrustumCulling` | pure | specified (in progress) | 0.24 ms/frame on the Odin 2 job threads | Compute family, shadow then on |
 | `sub_82817138` | `Sk8::VectorizedCullingJob` | control | specified (in progress) | calls `DoFrustumCulling` | Native body |
 | `sub_82812A20` | `BufferedIterativeJobEntryPoint<VectorizedCullingJob>` | control | specified (in progress) | calls the job | Native body |

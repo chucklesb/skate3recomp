@@ -89,7 +89,22 @@ int ModeOf(const Family& f) {
   }
 }
 
+bool BodyOn(Family& f) {
+  if (f.id < 0) Register(&f);
+  return f.id >= 0 && g_override.load(std::memory_order_relaxed) == 0 && f.mode() == 2;
+}
+
 void Run(Family& f, PPCContext& ctx, uint8_t* base, PPCFn orig) {
+  if (f.body) {
+    if (!BodyOn(f)) {
+      orig(ctx, base);
+      return;
+    }
+    f.calls.fetch_add(1, std::memory_order_relaxed);
+    f.native.fetch_add(1, std::memory_order_relaxed);
+    f.body(ctx, base);
+    return;
+  }
   if (f.id < 0) Register(&f);
   const int mode = f.id < 0 ? 0 : ModeOf(f);
   if (mode == 0) {
@@ -121,7 +136,7 @@ void OnFrameBuilt() {
   const int n = g_count.load();
   for (int i = 0; i < n; ++i) {
     Family& f = *g_families[i];
-    const int mode = ModeOf(f);
+    const int mode = f.body ? (BodyOn(f) ? 2 : 0) : ModeOf(f);
     if (mode == 0) continue;
     line += fmt::format(" {}[{} calls={} exact={} diff={} native={} bad={} rows={}]", f.name,
                         mode == 2 ? "on" : "shadow", x(f.calls), x(f.exact), x(f.diff),

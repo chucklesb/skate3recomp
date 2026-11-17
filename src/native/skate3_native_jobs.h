@@ -23,6 +23,10 @@
 // the waker sees the arm and signals. Workers this code has not seen are
 // always signalled; the game's 1 ms timeout stays as a safety net
 // (`late` counts timed-out wakes that then found a job).
+// skate3_native_jobs_replace (default on): native bodies (RE-7 Body
+// families j_*) for the worker loop, WakeThreads, the worker wait, the
+// sleep-timeout getter/setter and the spin-wait sub_824741F0; RunSingleJob
+// stays recompiled (docs/re/replacements.md).
 namespace skate3::native_jobs {
 
 // Frame tail: the stats line, cvar refresh.
