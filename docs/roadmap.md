@@ -12,12 +12,14 @@ the linked pages; the backlog is [open-work.md](open-work.md).
 
 **Now** (2026-11-17):
 1. [~] **Faster test runs:** the boot-screen scenarios no longer idle
-   (158 s -> 58 s; `input until_screen_changes`, demo boots skip the logo).
-   Next: a per-step time table across the usual scenarios, then condition
-   waits instead of fixed frame-count settles
-   ([open-work.md](open-work.md), "Faster test runs").
-2. [ ] **Codegen re-runs only for codegen changes:** today any SDK change
-   reruns the ~2.5 min analysis (the rexglue binary hash decides).
+   (158 s -> 58 s); world loads run at frame pace, so Fast Loading lifts
+   the cap while loading (teleport 15.4 -> 7.4 s, replay load 13.2 -> 5.7 s
+   at 30 fps); `step_times.py` shows where run time goes. Windows, before
+   -> after: boot_to_plaza 45.7 -> 30.1 s, reel_regression 187 -> 94 s,
+   career_complete_challenge 33 -> 25 s, native_tour 293 -> 261 s. Next:
+   an "input accepted" signal from the FE for the menu settles (RE-9).
+2. [x] **Codegen re-runs only for codegen changes** (2026-11-17): a UI-only
+   SDK edit no longer reruns the ~2.5 min analysis (10 s).
 3. [x] **Branches:** `native-only` here and in the SDK fork (`native-only`, from
    `linux-aarch64-cross` 062fb8d and SDK `vulkan-debug-labels` 4ef36cf).
 
