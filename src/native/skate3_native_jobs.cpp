@@ -8,6 +8,7 @@
 #include <tuple>
 #include <vector>
 #include <chrono>
+#include <cstddef>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -18,6 +19,7 @@
 #include <rex/ppc/context.h>
 
 #include "generated/skate3_init.h"
+#include "native/skate3_native_guest_frame.h"
 #include "native/skate3_native_replace.h"
 #include "harness/harness.h"
 #include "harness/harness_profile.h"
@@ -47,11 +49,64 @@ namespace skate3::native_jobs {
 namespace {
 
 constexpr int kMaxWorkers = 32;
-constexpr uint32_t kWorkerEvent = 0x2C;     // worker: its wake event (handle)
-constexpr uint32_t kBackendSelfRun = 1597;  // backend: u8, the caller runs jobs itself
-constexpr uint32_t kBackendSlots = 76;      // backend: slot i event at +76 + 48 i
-constexpr uint32_t kSlotStride = 48;
-constexpr uint32_t kSlotActive = 36;        // slot event - 36: u8 active
+
+using rex::be;
+
+// EA::Jobs, as far as these functions use it (docs/re/types.md "EA::Jobs").
+// A worker slot in the backend, one per job thread.
+struct JobSlot {
+  uint8_t active;           // +0
+  uint8_t unknown_01[35];
+  be<uint32_t> wake_event;  // +36  the worker's event handle
+  uint8_t unknown_28[8];
+};
+static_assert(sizeof(JobSlot) == 48);
+
+// LocalBackend (Skate 2 name): runs jobs (vtable +0x60 RunSingleJob(mask)).
+struct JobBackend {
+  be<uint32_t> vtable;
+  uint8_t unknown_04[36];
+  JobSlot slots[32];              // +40
+  uint8_t unknown_628[16];
+  be<uint32_t> sleep_timeout_ms;  // +1592
+  uint8_t unknown_63c;
+  uint8_t caller_runs_jobs;       // +1597: no workers, the caller runs them
+};
+static_assert(offsetof(JobBackend, slots) == 40);
+static_assert(offsetof(JobBackend, sleep_timeout_ms) == 1592);
+static_assert(offsetof(JobBackend, caller_runs_jobs) == 1597);
+
+// A job thread's state (the worker loop's argument).
+struct JobWorker {
+  be<uint32_t> unknown_00;
+  be<uint32_t> backend;      // +4
+  uint8_t unknown_08;
+  uint8_t quit;              // +9
+  uint8_t unknown_0a[22];
+  be<uint32_t> thread_mask;  // +32  which jobs it may run
+  uint8_t unknown_24[8];
+  be<uint32_t> wake_event;   // +44
+};
+static_assert(offsetof(JobWorker, thread_mask) == 32);
+static_assert(offsetof(JobWorker, wake_event) == 44);
+
+// The 16-byte job handle the spin-wait polls (at +64 of its argument),
+// passed by value to its owner's IsDone as two 64-bit halves.
+struct JobHandle {
+  be<uint64_t> id;      // +0
+  be<uint32_t> owner;   // +8   answers IsDone
+  be<uint16_t> serial;  // +12
+  be<uint16_t> unknown_0e;
+  bool Valid() const { return owner != 0 && (serial != 0 || id != 0); }
+};
+static_assert(sizeof(JobHandle) == 16);
+
+// A guest object by address (REX_PHYS_HOST_OFFSET: the physical mirror at
+// 0xE0000000+ is shifted on some hosts).
+template <typename T>
+T& At(uint8_t* base, uint32_t addr) {
+  return *reinterpret_cast<T*>(base + addr + REX_PHYS_HOST_OFFSET(addr));
+}
 
 struct Worker {
   std::atomic<uint32_t> event{0};
@@ -183,8 +238,9 @@ extern "C" REX_FUNC(sub_8290AFA0) {
 
 namespace {
 
-// The original's stack frame: stwu r1,-size(r1) with the back chain, popped
-// on exit.
+using skate3::native_guest::CallMethod;
+
+// The original's stack frame: the back chain only, popped on exit.
 struct GuestFrame {
   PPCContext& ctx;
   uint64_t saved;
@@ -196,31 +252,23 @@ struct GuestFrame {
   ~GuestFrame() { ctx.r1.u64 = saved; }
 };
 
-inline void CallVirtual(PPCContext& ctx, uint8_t* base, uint32_t obj, uint32_t slot_off,
-                        uint32_t ret) {
-  const uint32_t fn = REX_LOAD_U32(REX_LOAD_U32(obj) + slot_off);
-  ctx.ctr.u64 = fn;
-  ctx.lr = ret;
-  REX_CALL_INDIRECT_FUNC(ctx.ctr.u32);
-}
-
 constexpr uint32_t kVtRunSingleJob = 0x60;     // backend vtable
 constexpr uint32_t kVtSleepTimeout = 0x64;     // backend vtable: GetJobThreadSleepTimeoutMS
 constexpr uint32_t kVtIsDone = 0x30;           // job-handle owner vtable
-constexpr uint32_t kSleepTimeoutField = 1592;  // backend: u32 ms
 constexpr uint32_t kJobManagerGlobal = 0x830CFE04;
 
-// GetJobThreadSleepTimeoutMS (sub_82909738): lwz r3,1592(r3).
+// GetJobThreadSleepTimeoutMS (sub_82909738).
 void BodyGetTimeout(PPCContext& ctx, uint8_t* base) {
-  ctx.r3.u64 = REX_LOAD_U32(ctx.r3.u32 + kSleepTimeoutField);
+  ctx.r3.u64 = At<JobBackend>(base, ctx.r3.u32).sleep_timeout_ms;
 }
 
-// SetJobThreadSleepTimeoutMS (sub_82909740): stw r4,1592(r3).
+// SetJobThreadSleepTimeoutMS (sub_82909740).
 void BodySetTimeout(PPCContext& ctx, uint8_t* base) {
-  REX_STORE_U32(ctx.r3.u32 + kSleepTimeoutField, ctx.r4.u32);
+  At<JobBackend>(base, ctx.r3.u32).sleep_timeout_ms = ctx.r4.u32;
 }
 
-// sub_82EDFEC0: li r5,0; b WaitForSingleObjectEx (a tail call: LR kept).
+// sub_82EDFEC0: WaitForSingleObject(handle, ms) = WaitForSingleObjectEx(handle,
+// ms, not alertable), a tail call.
 void BodyWait(PPCContext& ctx, uint8_t* base) {
   ctx.r5.u64 = 0;
   sub_82EE7880(ctx, base);
@@ -234,21 +282,26 @@ void BodyTimeout(PPCContext& ctx, uint8_t* base) {
     ctx.r3.u64 = 0;
     return;
   }
-  const uint64_t t = uint64_t(ctx.r4.u32) * uint64_t(-10000ll);
-  ctx.r11.u64 = t;
-  REX_STORE_U64(ctx.r3.u32, t);
+  At<be<uint64_t>>(base, ctx.r3.u32) = uint64_t(ctx.r4.u32) * uint64_t(-10000ll);
 }
 
-// sub_82EE6260(r3 status): the last error from an NTSTATUS, frame 96.
-// RtlNtStatusToDosError (import sub_82F9D184), then, unless the word at
-// r13+336 is set, stores the result as the thread's last error
-// (*(r13+256) + 352); returns the DOS error.
+// sub_82EE6260(status): SetLastError from an NTSTATUS, frame 96. Converts it
+// (RtlNtStatusToDosError), stores it as the current thread's last error
+// unless the processor block's flag at +336 suppresses that, and returns it.
+// r13 is the processor control region (Xbox 360 kernel): +256 the current
+// thread, whose +352 is its last error.
+constexpr uint32_t kPcrCurrentThread = 256;
+constexpr uint32_t kPcrSuppressLastError = 336;  // purpose inferred from this use
+constexpr uint32_t kThreadLastError = 352;
 void BodySetLastError(PPCContext& ctx, uint8_t* base) {
   GuestFrame frame(ctx, base, 96);
   ctx.lr = 0x82EE6270;
-  __imp__RtlNtStatusToDosError(ctx, base);
-  if (REX_LOAD_U32(ctx.r13.u32 + 336) == 0) {
-    REX_STORE_U32(REX_LOAD_U32(ctx.r13.u32 + 256) + 352, ctx.r3.u32);
+  __imp__RtlNtStatusToDosError(ctx, base);  // r3 = the DOS error
+  // Kernel blocks may sit above the physical mirror: the guest accessors.
+  const uint32_t pcr = ctx.r13.u32;
+  if (REX_LOAD_U32(pcr + kPcrSuppressLastError) == 0) {
+    const uint32_t thread = REX_LOAD_U32(pcr + kPcrCurrentThread);
+    REX_STORE_U32(thread + kThreadLastError, ctx.r3.u32);
   }
 }
 
@@ -277,7 +330,7 @@ void BodyWaitEx(PPCContext& ctx, uint8_t* base) {
     if (status < 0) {
       ctx.lr = 0x82EE78D8;
       sub_82EE6260(ctx, base);
-      ctx.r3.u64 = 0xFFFFFFFFFFFFFFFFull;  // li r3,-1
+      ctx.r3.s64 = -1;
       return;
     }
     if (alertable == 0 || status != 257) return;
@@ -286,21 +339,21 @@ void BodyWaitEx(PPCContext& ctx, uint8_t* base) {
 
 // The worker loop sub_8290B750(worker), frame 96.
 void BodyWorker(PPCContext& ctx, uint8_t* base) {
-  const uint32_t worker = ctx.r3.u32;
+  // Run jobs until none is left, then sleep on the wake event (with the
+  // backend's timeout); until told to quit.
+  const auto& worker = At<JobWorker>(base, ctx.r3.u32);
   GuestFrame frame(ctx, base, 96);
-  while (REX_LOAD_U8(worker + 9) == 0) {
-    ctx.r3.u64 = REX_LOAD_U32(worker + 4);
-    ctx.r4.u64 = REX_LOAD_U32(worker + 32);
-    CallVirtual(ctx, base, ctx.r3.u32, kVtRunSingleJob, 0x8290B788);
-    if ((ctx.r3.u32 & 0xFF) != 0) continue;
-    ctx.r3.u64 = REX_LOAD_U32(worker + 4);
-    CallVirtual(ctx, base, ctx.r3.u32, kVtSleepTimeout, 0x8290B7A8);
-    ctx.r4.u64 = ctx.r3.u64;
-    ctx.r3.u64 = REX_LOAD_U32(worker + 44);
+  while (worker.quit == 0) {
+    ctx.r4.u64 = worker.thread_mask;
+    CallMethod(ctx, base, worker.backend, kVtRunSingleJob, 0x8290B788);
+    if ((ctx.r3.u32 & 0xFF) != 0) continue;  // ran one: look for more
+    CallMethod(ctx, base, worker.backend, kVtSleepTimeout, 0x8290B7A8);
+    ctx.r4.u64 = ctx.r3.u64;  // timeout ms
+    ctx.r3.u64 = worker.wake_event;
     ctx.lr = 0x8290B7B4;
-    sub_82EDFEC0(ctx, base);
+    sub_82EDFEC0(ctx, base);  // WaitForSingleObject
   }
-  ctx.r3.s64 = 0;
+  ctx.r3.u64 = 0;
 }
 
 // The spin-wait sub_824741F0(?, handle, mode), frame 112: mode 2 runs jobs
@@ -314,22 +367,22 @@ void BodySpinWait(PPCContext& ctx, uint8_t* base) {
   const uint32_t ret_done = mode == 2 ? 0x82474274 : 0x82474308;
   const uint32_t ret_run = mode == 2 ? 0x824742A8 : 0x8247433C;
   GuestFrame frame(ctx, base, 112);
+  const auto& handle = At<JobHandle>(base, h + 64);
   for (;;) {
-    const uint32_t owner = REX_LOAD_U32(h + 72);
-    const bool valid = owner != 0 && (REX_LOAD_U16(h + 76) != 0 || REX_LOAD_U64(h + 64) != 0);
-    if (valid) {
-      ctx.r3.u64 = owner;
-      ctx.r4.u64 = REX_LOAD_U64(h + 64);
-      ctx.r5.u64 = REX_LOAD_U64(h + 72);
-      CallVirtual(ctx, base, owner, kVtIsDone, ret_done);
+    // Done? An empty handle counts as done; otherwise ask its owner, passing
+    // the handle by value (two 64-bit halves).
+    if (handle.Valid()) {
+      ctx.r4.u64 = handle.id;
+      ctx.r5.u64 = At<be<uint64_t>>(base, h + 72);  // owner, serial, unknown_0e
+      CallMethod(ctx, base, handle.owner, kVtIsDone, ret_done);
     } else {
       ctx.r3.u64 = 1;
     }
     if ((ctx.r3.u32 & 0xFF) != 0) return;
-    const uint32_t mgr = REX_LOAD_U32(REX_LOAD_U32(kJobManagerGlobal) + 8);
-    ctx.r3.u64 = REX_LOAD_U32(mgr);
+    // Not yet: run a job meanwhile, on the main backend.
+    const uint32_t holder = At<be<uint32_t>>(base, At<be<uint32_t>>(base, kJobManagerGlobal) + 8);
     ctx.r4.u64 = mask;
-    CallVirtual(ctx, base, ctx.r3.u32, kVtRunSingleJob, ret_run);
+    CallMethod(ctx, base, At<be<uint32_t>>(base, holder), kVtRunSingleJob, ret_run);
   }
 }
 
@@ -342,12 +395,11 @@ bool StatsOn() { return g_stats.load(std::memory_order_relaxed); }
 void BodyWake(PPCContext& ctx, uint8_t* base) {
   const uint32_t self = ctx.r3.u32;
   GuestFrame frame(ctx, base, 112);
-  if (REX_LOAD_U8(self + kBackendSelfRun) != 0) {
+  if (At<JobBackend>(base, self).caller_runs_jobs != 0) {
     if (StatsOn()) Add(g_s.self_run);
     do {
-      ctx.r3.u64 = self;
-      ctx.r4.u64 = 63;
-      CallVirtual(ctx, base, self, kVtRunSingleJob, 0x8290B35C);
+      ctx.r4.u64 = 63;  // any job
+      CallMethod(ctx, base, self, kVtRunSingleJob, 0x8290B35C);
     } while ((ctx.r3.u32 & 0xFF) != 0);
     return;
   }
@@ -357,10 +409,9 @@ void BodyWake(PPCContext& ctx, uint8_t* base) {
     // arm-flag reads.
     std::atomic_thread_fence(std::memory_order_seq_cst);
   }
-  for (uint32_t i = 0; i < 32; ++i) {
-    const uint32_t slot = self + kBackendSlots + kSlotStride * i;
-    if (REX_LOAD_U8(slot - kSlotActive) == 0) continue;
-    const uint32_t event = REX_LOAD_U32(slot);
+  for (const JobSlot& slot : At<JobBackend>(base, self).slots) {
+    if (slot.active == 0) continue;
+    const uint32_t event = slot.wake_event;
     if (selective) {
       Worker* w = FindWorker(event);
       if (w && !w->armed.exchange(false, std::memory_order_seq_cst)) {
@@ -391,8 +442,8 @@ native_replace::Family g_f_spin{"j_spin", &BodyMode, nullptr, &BodySpinWait};
 // off (the earlier hook; kept so off = the game exactly when job_wake is off).
 void WakeRecompiled(PPCContext& ctx, uint8_t* base) {
   const uint32_t self = ctx.r3.u32;
-  if (!g_on.load(std::memory_order_relaxed) || REX_LOAD_U8(self + kBackendSelfRun) != 0) {
-    if (StatsOn() && REX_LOAD_U8(self + kBackendSelfRun) != 0) Add(g_s.self_run);
+  if (!g_on.load(std::memory_order_relaxed) || At<JobBackend>(base, self).caller_runs_jobs != 0) {
+    if (StatsOn() && At<JobBackend>(base, self).caller_runs_jobs != 0) Add(g_s.self_run);
     __imp__sub_8290B320(ctx, base);
     return;
   }
@@ -413,7 +464,7 @@ extern "C" REX_FUNC(sub_82909740) {
 // (keyed by its event, worker+0x2C). It runs for the thread's life, so the
 // mode is fixed when the thread starts.
 extern "C" REX_FUNC(sub_8290B750) {
-  RegisterWorker(REX_LOAD_U32(ctx.r3.u32 + kWorkerEvent));
+  RegisterWorker(At<JobWorker>(base, ctx.r3.u32).wake_event);
   native_replace::Run(g_f_worker, ctx, base, &__imp__sub_8290B750);
 }
 

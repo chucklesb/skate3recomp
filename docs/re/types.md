@@ -40,6 +40,27 @@ Derived states start at +60: `TimedScreenState` (logo; +60 elapsed ms,
 +64 done), `TitleState`, `LanguageSelectState`, `OptionsState` (+68 page,
 +72 highlighted row), and the smaller ones in `skate3_native_fe.cpp`.
 
+### EA::Jobs (worker threads, backend, job handles)
+
+Source of truth: `src/native/skate3_native_jobs.cpp` (`static_assert`ed);
+names from Skate 2 where they exist (`LocalBackend`, `RunSingleJob`).
+
+| Struct | Offset | Field | Status |
+|---|---|---|---|
+| `JobBackend` | +0 | vtable (+0x60 RunSingleJob(mask), +0x64 GetJobThreadSleepTimeoutMS) | confirmed |
+| | +40 | 32 worker slots of 48 bytes: +0 active (u8), +36 the worker's wake event | confirmed |
+| | +1592 | sleep timeout (ms) | confirmed |
+| | +1597 | the caller runs jobs itself (no workers) (u8) | confirmed |
+| `JobWorker` | +4 | its backend | confirmed |
+| | +9 | quit (u8) | confirmed |
+| | +32 | thread mask (which jobs it may run) | confirmed |
+| | +44 | wake event | confirmed |
+| `JobHandle` (16 bytes, at +64 of the spin-wait's argument) | +0 | id (u64) | likely |
+| | +8 | owner (answers IsDone, vtable +0x30, the handle by value) | confirmed |
+| | +12 | serial (u16) | likely |
+
+The job manager global `0x830CFE04`: `*(*(+8))` is the main backend.
+
 ### `Sk8::Render::cModelInstance`
 
 One model instance: the model, its per-mesh contexts and the packed bone

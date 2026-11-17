@@ -95,12 +95,11 @@ struct OptionsState : FrontEndState {
 static_assert(offsetof(OptionsState, page) == 68);
 static_assert(offsetof(OptionsState, highlighted_row) == 72);
 
-// A guest object by address. FE objects live on the guest heap
-// (0x40000000-0x50000000), below the physical mirror, so base + addr is
-// their host address on every platform.
+// A guest object by address (REX_PHYS_HOST_OFFSET: the physical mirror at
+// 0xE0000000+ is shifted on some hosts). Include after generated/skate3_init.h.
 template <typename T>
 T& At(uint8_t* base, uint32_t addr) {
-  return *reinterpret_cast<T*>(base + addr);
+  return *reinterpret_cast<T*>(base + addr + REX_PHYS_HOST_OFFSET(addr));
 }
 
 // Calls this->vtable[slot] with r3 = self and the caller's r4/r5 as set,

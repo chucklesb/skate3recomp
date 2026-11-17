@@ -31,6 +31,21 @@ function we understand, never a copy of rexglue's output.
   generated "trivial functions" layer was tried and removed the same day:
   it was rexglue's statements under another name).
 
+**Audit against the standard (2026-11-17):**
+- `skate3_native_fe.cpp`, `skate3_native_boot.cpp`: rewritten over
+  `skate3_fe_types.h`; meet it.
+- `skate3_native_jobs.cpp`: rewritten over `JobBackend` / `JobWorker` /
+  `JobHandle` ([types.md](types.md)); meets it.
+- `skate3_native_padring.cpp`: meets it (named ring fields, host atomics).
+- `skate3_native_pose.cpp`, `skate3_native_lw.cpp`: behaviour-level (bones,
+  palettes, rows) and SIMD only for bit-exactness; still raw offsets where
+  [types.md](types.md) has the layouts (`cModelInstance`, `MeshContext`).
+  Next: read them through those structs. `lwrows` (`sub_827816C0`) is a
+  160-byte row copy; write it as one.
+- `skate3_native_cull.cpp`: behaviour-level, registers only as call
+  arguments; raw offsets and its own frame helper. Next: a culling-params
+  struct, the shared `skate3_native_guest_frame.h`.
+
 **Statuses:**
 - `native-on`: native code runs in its place by default;
 - `native-shadow`: native code runs and is compared, the recompiled code

@@ -38,4 +38,13 @@ struct GuestFrame {
   }
 };
 
+// Calls obj->vtable[slot] (a byte offset) with r3 = obj and the other
+// argument registers as the caller set them, returning to `ret`.
+inline void CallMethod(PPCContext& ctx, uint8_t* base, uint32_t obj, uint32_t slot, uint32_t ret) {
+  const uint32_t fn = REX_LOAD_U32(REX_LOAD_U32(obj) + slot);
+  ctx.r3.u64 = obj;
+  ctx.lr = ret;
+  REX_CALL_INDIRECT_FUNC(fn);
+}
+
 }  // namespace skate3::native_guest
