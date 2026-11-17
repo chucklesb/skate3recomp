@@ -217,6 +217,64 @@ void BodyWait(PPCContext& ctx, uint8_t* base) {
   sub_82EE7880(ctx, base);
 }
 
+// sub_82EEEA98(r3 out, r4 ms): the kernel timeout for a Win32 one. -1
+// (INFINITE) returns 0 (no timeout); otherwise *(s64*)out = u32(ms) *
+// -10000 (relative, 100 ns units) and returns out (r3 unchanged).
+void BodyTimeout(PPCContext& ctx, uint8_t* base) {
+  if (ctx.r4.s32 == -1) {
+    ctx.r3.u64 = 0;
+    return;
+  }
+  const uint64_t t = uint64_t(ctx.r4.u32) * uint64_t(-10000ll);
+  ctx.r11.u64 = t;
+  REX_STORE_U64(ctx.r3.u32, t);
+}
+
+// sub_82EE6260(r3 status): the last error from an NTSTATUS, frame 96.
+// RtlNtStatusToDosError (import sub_82F9D184), then, unless the word at
+// r13+336 is set, stores the result as the thread's last error
+// (*(r13+256) + 352); returns the DOS error.
+void BodySetLastError(PPCContext& ctx, uint8_t* base) {
+  GuestFrame frame(ctx, base, 96);
+  ctx.lr = 0x82EE6270;
+  __imp__RtlNtStatusToDosError(ctx, base);
+  if (REX_LOAD_U32(ctx.r13.u32 + 336) == 0) {
+    REX_STORE_U32(REX_LOAD_U32(ctx.r13.u32 + 256) + 352, ctx.r3.u32);
+  }
+}
+
+// WaitForSingleObjectEx (sub_82EE7880: r3 handle, r4 timeout ms, r5
+// alertable), frame 128: sub_82EEEA98(sp+80, ms) makes the kernel timeout
+// (its pointer, or 0 for INFINITE); then NtWaitForSingleObjectEx (import
+// sub_82F9D134: handle, mode 1, alertable & 0xFF, timeout), again while
+// alertable and the status is 257 (STATUS_ALERTED); a negative status sets
+// the last error (sub_82EE6260) and returns -1, otherwise the status.
+void BodyWaitEx(PPCContext& ctx, uint8_t* base) {
+  const uint32_t handle = ctx.r3.u32;
+  const uint32_t alertable = ctx.r5.u32;
+  GuestFrame frame(ctx, base, 128);
+  ctx.r3.u64 = ctx.r1.u32 + 80;  // r4 (ms) passes through
+  ctx.lr = 0x82EE789C;
+  sub_82EEEA98(ctx, base);
+  const uint32_t timeout = ctx.r3.u32;
+  for (;;) {
+    ctx.r3.u64 = handle;
+    ctx.r4.u64 = 1;
+    ctx.r5.u64 = alertable & 0xFF;
+    ctx.r6.u64 = timeout;
+    ctx.lr = 0x82EE78B8;
+    __imp__NtWaitForSingleObjectEx(ctx, base);
+    const int32_t status = ctx.r3.s32;
+    if (status < 0) {
+      ctx.lr = 0x82EE78D8;
+      sub_82EE6260(ctx, base);
+      ctx.r3.u64 = 0xFFFFFFFFFFFFFFFFull;  // li r3,-1
+      return;
+    }
+    if (alertable == 0 || status != 257) return;
+  }
+}
+
 // The worker loop sub_8290B750(worker), frame 96.
 void BodyWorker(PPCContext& ctx, uint8_t* base) {
   const uint32_t worker = ctx.r3.u32;
@@ -313,6 +371,9 @@ int BodyMode() { return REXCVAR_GET(skate3_native_jobs_replace) ? 2 : 0; }
 native_replace::Family g_f_get_timeout{"j_gettmo", &BodyMode, nullptr, &BodyGetTimeout};
 native_replace::Family g_f_set_timeout{"j_settmo", &BodyMode, nullptr, &BodySetTimeout};
 native_replace::Family g_f_wait{"j_wait", &BodyMode, nullptr, &BodyWait};
+native_replace::Family g_f_wait_ex{"j_waitex", &BodyMode, nullptr, &BodyWaitEx};
+native_replace::Family g_f_timeout{"k_timeout", &BodyMode, nullptr, &BodyTimeout};
+native_replace::Family g_f_last_error{"k_lasterr", &BodyMode, nullptr, &BodySetLastError};
 native_replace::Family g_f_worker{"j_worker", &BodyMode, nullptr, &BodyWorker};
 native_replace::Family g_f_wake{"j_wake", &BodyMode, nullptr, &BodyWake};
 native_replace::Family g_f_spin{"j_spin", &BodyMode, nullptr, &BodySpinWait};
@@ -365,6 +426,20 @@ extern "C" REX_FUNC(sub_82EDFEC0) {
   t_last_wait = r == 0 ? 1 : r == 0x102 ? 2 : 0;
   if (r == 0) Add(g_s.signalled);
   else if (r == 0x102) Add(g_s.timeouts);
+}
+
+// The Win32 timeout and last-error helpers WaitForSingleObjectEx uses.
+extern "C" REX_FUNC(sub_82EEEA98) {
+  native_replace::Run(g_f_timeout, ctx, base, &__imp__sub_82EEEA98);
+}
+
+extern "C" REX_FUNC(sub_82EE6260) {
+  native_replace::Run(g_f_last_error, ctx, base, &__imp__sub_82EE6260);
+}
+
+// WaitForSingleObjectEx (callers: WaitForSingleObject sub_82EDFEC0 and one more).
+extern "C" REX_FUNC(sub_82EE7880) {
+  native_replace::Run(g_f_wait_ex, ctx, base, &__imp__sub_82EE7880);
 }
 
 // EA::Jobs LocalBackend::WakeThreads(backend) (Skate 2 name, virtual).

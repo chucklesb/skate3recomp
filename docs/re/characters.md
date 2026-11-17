@@ -146,8 +146,8 @@ from:
 - `cLivingWorldPresEntity::BindConstants` (`sub_827C1720`): the same
   `0xD5DF94E7` and `0x39E49D7A` parameters from `+528` and `+592`.
 - Its derived class bound by `sub_827C25D8` (Skate 2 lead:
-  `MeshIndicator::BindConstants`): `sub_827816C0` computes 9 rows from a global
-  lighting object, stored to `+1232..+1360` and bound as `0x040E4D1E`; plus
+  `MeshIndicator::BindConstants`): `sub_827816C0` copies 9 rows (and 4 words)
+  from a global lighting object, stored to `+1232..+1360` and bound as `0x040E4D1E`; plus
   `0xB005EA6C` from `+1168` and `0x576C94F7` from `+1184`.
 
 **`SetParameter` keeps a pointer, not a copy:** the constants reach the GPU

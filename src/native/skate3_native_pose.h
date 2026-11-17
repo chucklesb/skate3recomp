@@ -29,6 +29,9 @@ int Mode();
 extern native_replace::Family g_pack;  // sub_827E5B30 (r3 instance, r4 localToWorld)
 extern native_replace::Family g_lw;    // sub_827C1D38 (r3 entity)
 extern native_replace::Family g_ubt;   // sub_827A52C8 (r3 parts, r4 count, r5 src, r6 remaps)
+// sub_827816C0 (r3 dst, r4 src): a 160-byte row copy; own cvar
+// skate3_native_lw_rows_replace.
+extern native_replace::Family g_lw_rows;
 
 // Frame tail: re-reads the cvar.
 void OnFrameBuilt();

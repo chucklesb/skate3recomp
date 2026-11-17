@@ -432,7 +432,7 @@ name = "WaitForSingleObject"
 signature = "(handle, timeout_ms) -> WaitForSingleObjectEx(handle, timeout, FALSE) (sub_82EE7880)"
 confidence = "likely"
 evidence = "disassembly (tail call with r5 = 0); 105 callers; results 0 / 0x102 seen in the jobs: probe"
-hooked = "src/native/skate3_native_jobs.cpp (worker wait stats only)"
+hooked = "src/native/skate3_native_jobs.cpp (native body j_wait)"
 
 [sub_824741F0]
 name = "Spin-wait on a job (runs jobs while waiting)"
@@ -477,3 +477,19 @@ signature = "(records, n) : VectorizedCullingJob(record[0..3]) per 16-byte recor
 confidence = "likely"
 evidence = "Skate 2 exact name; disassembly"
 replaced = "src/native/skate3_native_cull.cpp (cull_ent)"
+
+[sub_82EE7880]
+name = "WaitForSingleObjectEx"
+signature = "(handle, timeout_ms, alertable) -> status, or -1 with the last error set"
+role = "sub_82EEEA98(sp+80, ms) builds the kernel timeout (pointer or 0 for INFINITE); NtWaitForSingleObjectEx (import sub_82F9D134: handle, mode 1, alertable, timeout), repeated while alertable and the status is 257; a negative status goes to sub_82EE6260 (last error) and returns -1."
+confidence = "likely"
+evidence = "disassembly (25 instructions); callers sub_82EDFEC0, sub_82F38400"
+hooked = "src/native/skate3_native_jobs.cpp (native body j_waitex)"
+
+[sub_827816C0]
+name = "LivingWorld lighting row copy"
+signature = "(dst, src) -> void"
+role = "Copies 160 bytes: 9 vectors at +0..+128 (lvx/stvx, 16-byte aligned) and 4 words at +144..+156. Called by the LivingWorld-derived BindConstants sub_827C25D8 (the 9 rows bound as 0x040E4D1E from entity+1232) and by sub_82812040."
+confidence = "confirmed"
+evidence = "disassembly (38 instructions, no calls); replace: lwrows shadow"
+hooked = "src/native/skate3_native_pose.cpp (Compute family lwrows)"

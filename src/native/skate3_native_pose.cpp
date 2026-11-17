@@ -14,6 +14,7 @@
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
+#include "generated/skate3_init.h"
 #include "native/skate3_native_guest_read.h"
 #include "native/skate3_native_replace.h"
 #include "skate3_native_scene.h"
@@ -24,6 +25,12 @@ REXCVAR_DEFINE_STRING(skate3_native_pose_replace, "on", "Skate 3",
                       "LivingWorld batch pack writer (sub_827C1D38) computed natively, bit for "
                       "bit; shadow compares with the recompiled functions (pose: lines), on "
                       "replaces them (default since 2026-11-16; off runs the recompiled code)")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+
+REXCVAR_DEFINE_STRING(skate3_native_lw_rows_replace, "on", "Skate 3",
+                      "RE-7: the LivingWorld-derived BindConstants' 160-byte row copy "
+                      "(sub_827816C0: 9 vectors + 4 words, r4 to r3): off | shadow (compared; "
+                      "replace: lwrows) | on")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
 namespace skate3::native_pose {
@@ -238,6 +245,41 @@ bool LwCompute(PPCContext& ctx, uint8_t* base, Writes* w) {
   return ComputeLw(base, ctx.r3.u32, w);
 }
 
+std::atomic<int> g_rows_mode{-1};
+
+int ReadRowsMode() {
+  const std::string v = REXCVAR_GET(skate3_native_lw_rows_replace);
+  return v == "on" ? 2 : v == "shadow" ? 1 : 0;
+}
+
+int RowsMode() {
+  int m = g_rows_mode.load(std::memory_order_relaxed);
+  if (m < 0) {
+    m = ReadRowsMode();
+    g_rows_mode.store(m, std::memory_order_relaxed);
+  }
+  return m;
+}
+
+// sub_827816C0 (r3 dst, r4 src): lvx/stvx of the 9 vectors at +0..+128
+// (addresses masked to 16), then lwz/stw of the 4 words at +144..+156.
+// Called by the LivingWorld-derived BindConstants (sub_827C25D8) and
+// sub_82812040; the source is the global lighting object's 9 rows + 4 words.
+bool LwRowsCompute(PPCContext& ctx, uint8_t* base, Writes* w) {
+  const uint32_t dst = ctx.r3.u32, src = ctx.r4.u32;
+  w->row_words = 4;
+  w->addr.clear();
+  w->words.clear();
+  // The guest interleaves each load with its store; computing everything
+  // first matches it unless the blocks overlap (never seen; refuse).
+  const uint32_t gap = dst > src ? dst - src : src - dst;
+  if (gap != 0 && gap < 176) return false;
+  for (uint32_t k = 0; k < 9; ++k) {
+    if (!Copy(w->Add(Vec(dst + 16 * k)), base, Vec(src + 16 * k), 16)) return false;
+  }
+  return Copy(w->Add(dst + 144), base, src + 144, 16);
+}
+
 bool UbtCompute(PPCContext& ctx, uint8_t* base, Writes* w) {
   // A plain copy (lvx/stvx): no floating-point mode involved.
   return ComputeUbt(base, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, w);
@@ -257,9 +299,15 @@ int Mode() {
 native_replace::Family g_pack{"pack", &Mode, &PackCompute};
 native_replace::Family g_lw{"lw", &Mode, &LwCompute};
 native_replace::Family g_ubt{"ubt", &Mode, &UbtCompute};
+native_replace::Family g_lw_rows{"lwrows", &RowsMode, &LwRowsCompute};
 
 void OnFrameBuilt() {
   g_mode.store(ReadMode(), std::memory_order_relaxed);
+  g_rows_mode.store(ReadRowsMode(), std::memory_order_relaxed);
 }
 
 }  // namespace skate3::native_pose
+
+extern "C" REX_FUNC(sub_827816C0) {
+  skate3::native_replace::Run(skate3::native_pose::g_lw_rows, ctx, base, &__imp__sub_827816C0);
+}
