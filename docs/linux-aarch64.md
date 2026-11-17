@@ -21,6 +21,10 @@ The script runs five steps, which can also be run one at a time with
 2. `codegen`: builds `rexglue` natively in `nix develop .#codegen` with the
    `linux-host-codegen` preset, then runs `generate-all`. The recompiled
    sources in `generated/` are the same for every target architecture.
+   The ~2.5 minute analysis reruns only when the SDK sources that decide the
+   generated code change (the code generator, the XEX loader and export
+   tables, the decoder, the templates: `cmake/RunCodegen.cmake`); other SDK
+   edits skip it in ~10 s. `SKATE3_FORCE_CODEGEN=1` always regenerates.
 3. `build`: configures and builds the `linux-aarch64-release` preset in
    `nix develop .#cross`. That preset uses
    `cmake/toolchains/linux-aarch64.cmake`: unwrapped clang/lld targeting
