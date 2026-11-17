@@ -222,11 +222,13 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
     each button: career, free skate, options). That needs RE of the
     front-end screens' action handlers.
   - **Menu settles** (presses 30-150 frames apart, ~4.7 min across the
-    menu scenarios): a press during a screen transition is dropped. An
-    "input accepted" signal from the FE (`StateManagerFrontEnd`'s input
-    lock or the ScreenManager's pending intro/outro callbacks; Skate 2
-    layouts, TU3 offsets unknown) would let `input` wait for it; RE-9
-    groundwork.
+    menu scenarios): found 2026-11-17, a menu screen takes input only when
+    its FE state is active (`fe_ready`, [re/ui.md](re/ui.md)), and `input`
+    now waits for it. Shortening the settles still broke native_tour:
+    presses after a load starts (no menu on top) arrive too early. Next: a
+    "loading done" condition for those presses (presence back to gameplay,
+    or the next screen's push), then shorter settles, checked with a
+    contact sheet against a reference run.
 - **Fly and noclip mode** to move the camera or skater through geometry, for
   looking at shadows and their casters.
 - **Scripted "backwards man" speed glitch** as a timed pad sequence (find the
