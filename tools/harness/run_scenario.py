@@ -2,7 +2,7 @@
 """Run scenario-harness scenarios locally or on a DroidDeck handheld.
 
     run_scenario.py local  <scenario.toml> --exe <skate3 or AppImage> [-- args...]
-    run_scenario.py odin2  <scenario.toml> [--config release|relwithdebinfo] [--no-build] [--no-deploy]
+    run_scenario.py odin2  <scenario.toml> [--config relwithdebinfo|release] [--no-build] [--no-deploy]
                            [--force-deploy] [-- args...]  # builds/deploys only what changed
     run_scenario.py live   [--config ...] [--no-deploy] [-- args...]  # live mode (inbox + recording)
     run_scenario.py windows <scenario.toml> [--config ...] [--backend d3d12|vulkan] [--no-build]
@@ -1315,8 +1315,8 @@ def main() -> int:
     p_odin.add_argument("--no-deploy", action="store_true")
     p_odin.add_argument("--no-build", action="store_true",
                         help="deploy the existing linux-aarch64 build without rebuilding it")
-    p_odin.add_argument("--config", choices=CONFIGS, default="release",
-                        help="which linux-aarch64 build to deploy (default release)")
+    p_odin.add_argument("--config", choices=CONFIGS, default="relwithdebinfo",
+                        help="which linux-aarch64 build to deploy (default relwithdebinfo)")
     p_odin.add_argument("--out", type=Path, default=REPO / "out/harness-runs")
     p_odin.add_argument("--force-deploy", action="store_true",
                      help="package and deploy even if the device already runs this build")
@@ -1325,7 +1325,7 @@ def main() -> int:
                              "LD_PRELOAD=/root/renderdoc/librenderdoc.so")
     p_win = sub.add_parser("windows", help="run a scenario on this PC (Windows x64 build)")
     p_win.add_argument("scenario", type=Path)
-    p_win.add_argument("--config", choices=CONFIGS, default="release")
+    p_win.add_argument("--config", choices=CONFIGS, default="relwithdebinfo")
     p_win.add_argument("--backend", choices=BACKENDS, default="d3d12")
     p_win.add_argument("--no-build", action="store_true",
                        help="run the staged build as is (default: build.sh <config> build stage)")
@@ -1340,7 +1340,7 @@ def main() -> int:
                             "(default: the scenario's timeout_s + 120)")
     p_ab = sub.add_parser("ab", help="run a scenario on the Odin 2 and on Windows, then compare")
     p_ab.add_argument("scenario", type=Path)
-    p_ab.add_argument("--config", choices=CONFIGS, default="release")
+    p_ab.add_argument("--config", choices=CONFIGS, default="relwithdebinfo")
     p_ab.add_argument("--backends", default="d3d12,vulkan",
                       help="Windows backends to run, comma-separated (default d3d12,vulkan)")
     p_ab.add_argument("--no-build", action="store_true",
@@ -1364,7 +1364,7 @@ def main() -> int:
                         help="odin2: deploy the existing linux-aarch64 build without rebuilding it")
     p_live.add_argument("--no-deploy", action="store_true",
                         help="odin2: reuse the deployed build; windows: skip the build")
-    p_live.add_argument("--config", choices=CONFIGS, default="release")
+    p_live.add_argument("--config", choices=CONFIGS, default="relwithdebinfo")
     p_live.add_argument("--backend", choices=BACKENDS, default="d3d12", help="windows only")
     p_live.add_argument("--env", action="append", default=[], metavar="KEY=VALUE")
     p_live.add_argument("--force-deploy", action="store_true",
@@ -1376,7 +1376,7 @@ def main() -> int:
                             "or 0xADDRESS in skate3's own address space")
     p_sym.add_argument("--target", choices=("odin2", "windows"), default="odin2")
     p_sym.add_argument("--config", choices=CONFIGS,
-                       help="default: the deployed config for odin2, release for windows")
+                       help="default: the deployed config for odin2, relwithdebinfo for windows")
     p_send = sub.add_parser("send")
     p_send.add_argument("verb")
     p_send.add_argument("pairs", nargs="*")
@@ -1425,8 +1425,8 @@ def main() -> int:
     if a.cmd == "symbolize":
         config = a.config
         if config is None:
-            deployed = deployed_config() if a.target == "odin2" else "release"
-            config = deployed if deployed in CONFIGS else "release"
+            deployed = deployed_config() if a.target == "odin2" else "relwithdebinfo"
+            config = deployed if deployed in CONFIGS else "relwithdebinfo"
         return symbolize(a.target, config, a.addrs)
 
     if a.cmd == "local":
@@ -1468,7 +1468,7 @@ def main() -> int:
 
     if a.cmd == "send" and a.target == "windows":
         config = a.config or (WIN_LIVE_CONFIG.read_text().strip()
-                              if WIN_LIVE_CONFIG.exists() else "release")
+                              if WIN_LIVE_CONFIG.exists() else "relwithdebinfo")
         box = win_stage(config) / WIN_HARNESS_OUT
         cid = f"cli{int(time.time() * 1000)}"
         (box / "inbox").mkdir(parents=True, exist_ok=True)

@@ -70,8 +70,12 @@ python3 -I tools/harness/run_scenario.py live -- --native_render_pass_census=tru
 python3 -I tools/harness/census_report.py out/harness-runs/<run>
 ```
 
-`--config release|relwithdebinfo` picks the build for `odin2`, `live`,
-`windows` and `ab`.
+`--config relwithdebinfo|release` picks the build for `odin2`, `live`,
+`windows` and `ab`. The default is `relwithdebinfo`, the testing builds'
+config: compiled like a release (-O3) but with debug info, and the same build
+tree `tools/release/build-testing.sh` packages, so a tested build is already
+compiled when the testing AppImage is made. Only full GitHub releases use
+`release` (debug info stripped).
 
 **The Windows window (`--display`):** `windows` and `ab` runs start the game
 in one of three modes, so a run doesn't take over the desktop by default:

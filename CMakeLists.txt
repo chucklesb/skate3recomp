@@ -23,6 +23,12 @@ endif()
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Testing builds (RelWithDebInfo: harness runs, testing pre-releases) compile
+# like full releases, only with debug info: -O3, not CMake's default -O2. The
+# flag comes after CMAKE_<LANG>_FLAGS_RELWITHDEBINFO on the command line, so
+# it wins; it covers every target added below, the SDK included.
+add_compile_options("$<$<AND:$<CONFIG:RelWithDebInfo>,$<COMPILE_LANGUAGE:C,CXX>>:-O3>")
+
 # Standalone C++ unit tests (tests/CMakeLists.txt). They only need the C++
 # standard library. SKATE3_TESTS_ONLY configures nothing else, so the tests
 # build without the SDK submodule, game data, the title update or codegen
