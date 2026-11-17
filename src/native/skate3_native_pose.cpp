@@ -1,4 +1,10 @@
 // Native replacements for the character pose functions (see the header).
+//
+// Written over the render types in skate3_render_types.h (ModelInstance,
+// ModelData, MeshData, LivingWorldEntity). The skinning math keeps the
+// guest's floating-point operation order (a multiply, then three fused
+// multiply-adds per row) because the result must be bit-exact; everything
+// around it is plain C++ over named fields.
 
 #include "native/skate3_native_pose.h"
 
@@ -17,6 +23,7 @@
 #include "generated/skate3_init.h"
 #include "native/skate3_native_guest_read.h"
 #include "native/skate3_native_replace.h"
+#include "native/skate3_render_types.h"
 #include "skate3_native_scene.h"
 
 REXCVAR_DEFINE_STRING(skate3_native_pose_replace, "on", "Skate 3",
@@ -28,19 +35,19 @@ REXCVAR_DEFINE_STRING(skate3_native_pose_replace, "on", "Skate 3",
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
 REXCVAR_DEFINE_STRING(skate3_native_lw_rows_replace, "on", "Skate 3",
-                      "RE-7: the LivingWorld-derived BindConstants' 160-byte row copy "
-                      "(sub_827816C0: 9 vectors + 4 words, r4 to r3): off | shadow (compared; "
-                      "replace: lwrows) | on")
+                      "RE-7: the LivingWorld-derived BindConstants' copy of the 160-byte "
+                      "lighting rows (sub_827816C0): off | shadow (compared; replace: lwrows) "
+                      "| on")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
 namespace skate3::native_pose {
 namespace {
 
+using namespace skate3::render;
 using skate3::native_replace::Writes;
 
-constexpr uint32_t kInstStride = 0x28;  // cModelInstance
-constexpr uint32_t kMaxBones = 256;     // bounds; the game's counts sit far below
-constexpr uint32_t kLwPoseGetter = 0x827B8228;  // vtable +0x60: return *(this+0x4B0)
+constexpr uint32_t kMaxParts = 64;   // refuse beyond: the game's counts sit far below
+constexpr uint32_t kMaxBones = 256;  // per mesh, likewise
 
 std::atomic<int> g_mode{-1};
 
@@ -49,194 +56,177 @@ int ReadMode() {
   return v == "on" ? 2 : v == "shadow" ? 1 : 0;
 }
 
-// Direct guest reads, as the recompiled functions do. These replacements
-// only touch the addresses the guest code itself would touch on the same
-// call, so a plain load is as safe as the original; the fault-guarded
-// GuestTryCopy (a non-inlined SEH / sigsetjmp call per read) made the
-// native path slower than the recompiled one. The address checks keep
-// garbage pointers (null-ish values) out.
-inline bool Readable(uint32_t addr, uint32_t n) {
-  return addr >= 0x10000 && uint64_t(addr) + n <= 0x100000000ull;
-}
-
-inline bool Copy(void* dst, uint8_t* base, uint32_t addr, uint32_t n) {
-  if (!Readable(addr, n)) return false;
-  std::memcpy(dst, base + addr, n);
+// A matrix as the guest's vector loads read it, in host floats.
+bool LoadMatrix(uint8_t* base, uint32_t addr, float out[16]) {
+  const Matrix44* m = Find<Matrix44>(base, VectorAligned(addr));
+  if (!m) return false;
+  for (int i = 0; i < 16; ++i) out[i] = m->m[i];
   return true;
 }
 
-inline bool U32(uint8_t* base, uint32_t addr, uint32_t* out) {
-  uint32_t raw = 0;
-  if (!Copy(&raw, base, addr, 4)) return false;
-  *out = __builtin_bswap32(raw);
+bool LoadRows(uint8_t* base, uint32_t addr, simde__m128 rows[4]) {
+  float f[16];
+  if (!LoadMatrix(base, addr, f)) return false;
+  for (int j = 0; j < 4; ++j) rows[j] = simde_mm_loadu_ps(f + 4 * j);
   return true;
 }
 
-inline bool U16(uint8_t* base, uint32_t addr, uint16_t* out) {
-  uint16_t raw = 0;
-  if (!Copy(&raw, base, addr, 2)) return false;
-  *out = __builtin_bswap16(raw);
-  return true;
-}
-
-// lvx / stvx ignore the low 4 address bits.
-constexpr uint32_t Vec(uint32_t addr) { return addr & ~15u; }
-
-// 16 big-endian floats (one Matrix44) from guest memory, as lvx reads them.
-bool Load16(uint8_t* base, uint32_t addr, float out[16]) {
-  uint32_t raw[16];
-  if (!Copy(raw, base, Vec(addr), sizeof(raw))) return false;
-  for (int i = 0; i < 16; ++i) out[i] = std::bit_cast<float>(__builtin_bswap32(raw[i]));
-  return true;
-}
-
-// One bone: rows k of M x L as the guest computes them (m.x * L0, then FMAs
-// of m.y * L1, m.z * L2, m.w * L3), then the first three rows of the
-// transpose, as big-endian words.
-void PackBone(const float m[16], const simde__m128 l[4], uint32_t out_be[12]) {
-  alignas(16) float r[4][4];
+// One bone's palette entry: bone x local_to_world, transposed, first three
+// rows. Each row k of the product is computed as the guest does (bone[k].x
+// * L0, then fused multiply-adds of .y * L1, .z * L2, .w * L3).
+void SkinBone(const float bone[16], const simde__m128 local_to_world[4], uint32_t out_be[12]) {
+  alignas(16) float product[4][4];
   for (int k = 0; k < 4; ++k) {
-    simde__m128 acc = simde_mm_mul_ps(l[0], simde_mm_set1_ps(m[4 * k + 0]));
-    acc = simde_mm_fmadd_ps(l[1], simde_mm_set1_ps(m[4 * k + 1]), acc);
-    acc = simde_mm_fmadd_ps(l[2], simde_mm_set1_ps(m[4 * k + 2]), acc);
-    acc = simde_mm_fmadd_ps(l[3], simde_mm_set1_ps(m[4 * k + 3]), acc);
-    simde_mm_store_ps(r[k], acc);
+    simde__m128 acc = simde_mm_mul_ps(local_to_world[0], simde_mm_set1_ps(bone[4 * k + 0]));
+    acc = simde_mm_fmadd_ps(local_to_world[1], simde_mm_set1_ps(bone[4 * k + 1]), acc);
+    acc = simde_mm_fmadd_ps(local_to_world[2], simde_mm_set1_ps(bone[4 * k + 2]), acc);
+    acc = simde_mm_fmadd_ps(local_to_world[3], simde_mm_set1_ps(bone[4 * k + 3]), acc);
+    simde_mm_store_ps(product[k], acc);
   }
-  for (int c = 0; c < 3; ++c) {
+  for (int row = 0; row < 3; ++row) {
     for (int k = 0; k < 4; ++k) {
-      out_be[c * 4 + k] = __builtin_bswap32(std::bit_cast<uint32_t>(r[k][c]));
+      out_be[row * 4 + k] = __builtin_bswap32(std::bit_cast<uint32_t>(product[k][row]));
     }
   }
 }
 
-bool LoadL(uint8_t* base, uint32_t addr, simde__m128 l[4]) {
-  float f[16];
-  if (!Load16(base, addr, f)) return false;
-  for (int j = 0; j < 4; ++j) l[j] = simde_mm_loadu_ps(f + 4 * j);
+// Every mesh of a skinned model, in order: calls fn(mesh) for each, after
+// the checks the game makes. Returns false (refuse) on an unreadable
+// pointer; true when done or when the game would skip the model.
+template <typename Fn>
+bool ForEachSkinnedMesh(uint8_t* base, const ModelData& model, Fn&& fn) {
+  if (model.num_bones > kMaxSkinnedModelBones) return true;  // the game skips it
+  for (uint32_t i = 0; i < model.num_meshes; ++i) {
+    const auto* entry = Find<MeshTableEntry>(base, model.mesh_table + i * sizeof(MeshTableEntry));
+    const MeshData* mesh = entry ? Find<MeshData>(base, entry->mesh) : nullptr;
+    if (!mesh) return false;
+    if (mesh->bone_count == 0) continue;
+    if (mesh->bone_count > kMaxBones) return false;
+    if (!fn(*mesh)) return false;
+  }
   return true;
 }
 
-// Sk8::UpdateBoneTransforms (sub_827A52C8): a gather. For each part k
-// (stride 0x28), each mesh of its model, each bone: copy the 64-byte
-// Matrix44 srcPalette[remaps[k][u16 (mesh+0x4C)[j]]] to the part's
-// m_matrices (+0x14), advancing 64. Models above 80 bones are skipped.
-bool ComputeUbt(uint8_t* base, uint32_t parts, uint32_t count, uint32_t src, uint32_t remaps,
+// The model bone a mesh bone maps to, then the pose bone through the part's
+// remap table.
+bool PoseBone(uint8_t* base, const MeshData& mesh, uint32_t j, uint32_t remap, uint32_t* out) {
+  const auto* model_bone = Find<be<uint16_t>>(base, mesh.bone_map + 2 * j);
+  const auto* pose_bone = model_bone ? Find<be<uint32_t>>(base, remap + 4u * *model_bone) : nullptr;
+  if (!pose_bone) return false;
+  *out = *pose_bone;
+  return true;
+}
+
+// Sk8::UpdateBoneTransforms (sub_827A52C8): a gather. For each part and each
+// mesh of its model, copy each bone's pose matrix into the part's palette
+// (m_matrices), one 64-byte Matrix44 after another.
+bool ComputeUbt(uint8_t* base, uint32_t parts, uint32_t count, uint32_t pose, uint32_t remaps,
                 Writes* e) {
   e->row_words = 16;
   e->addr.clear();
   e->words.clear();
-  if (count > 64) return false;
+  if (count > kMaxParts) return false;
   for (uint32_t k = 0; k < count; ++k) {
-    const uint32_t part = parts + k * kInstStride;
-    uint32_t model = 0, out = 0, remap = 0, mesh_table = 0;
-    uint16_t nb = 0, nm = 0;
-    if (!U32(base, part, &model) || !U32(base, part + 0x14, &out) ||
-        !U32(base, remaps + 4 * k, &remap) || !U16(base, model + 0x34, &nb)) {
-      return false;
-    }
-    if (nb > 80) continue;
-    if (!U16(base, model + 0x32, &nm)) return false;
-    if (nm == 0) continue;
-    if (!U32(base, model + 0x24, &mesh_table)) return false;
-    for (uint32_t mi = 0; mi < nm; ++mi) {
-      uint32_t mesh = 0, cnt = 0, list = 0;
-      if (!U32(base, mesh_table + 8 * mi, &mesh) || !U32(base, mesh + 0x48, &cnt)) return false;
-      if (cnt == 0) continue;
-      if (cnt > kMaxBones || !U32(base, mesh + 0x4C, &list)) return false;
-      for (uint32_t j = 0; j < cnt; ++j) {
-        uint16_t idx = 0;
-        uint32_t sb = 0;
-        if (!U16(base, list + 2 * j, &idx) || !U32(base, remap + 4u * idx, &sb)) return false;
-        const uint32_t from = Vec(src + (sb << 6));
+    const auto* part = Find<ModelInstance>(base, parts + k * sizeof(ModelInstance));
+    const auto* remap = Find<be<uint32_t>>(base, remaps + 4 * k);
+    const ModelData* model = part ? Find<ModelData>(base, part->model) : nullptr;
+    if (!part || !remap || !model) return false;
+    uint32_t out = part->matrices;
+    const bool ok = ForEachSkinnedMesh(base, *model, [&](const MeshData& mesh) {
+      for (uint32_t j = 0; j < mesh.bone_count; ++j) {
+        uint32_t bone = 0;
+        if (!PoseBone(base, mesh, j, *remap, &bone)) return false;
+        const auto* from = Find<Matrix44>(base, VectorAligned(pose + bone * sizeof(Matrix44)));
+        if (!from) return false;
         const size_t at = e->words.size();
         e->words.resize(at + 16);
-        if (!Copy(e->words.data() + at, base, from, 64)) return false;
-        e->addr.push_back(Vec(out));
-        out += 64;
+        std::memcpy(e->words.data() + at, from, sizeof(Matrix44));  // stays big-endian
+        e->addr.push_back(VectorAligned(out));
+        out += sizeof(Matrix44);
       }
-    }
+      return true;
+    });
+    if (!ok) return false;
   }
   return true;
 }
 
-// Pack: count at +0x18, rows in place at m_matrices (+0x14): bone i reads
-// 64 bytes at +64i and writes 48 at +48i (never ahead of a later read).
-bool ComputePack(uint8_t* base, uint32_t inst, uint32_t ltow, Writes* e) {
-  uint32_t count = 0, mat = 0;
-  simde__m128 l[4];
-  if (!U32(base, inst + 0x18, &count) || !U32(base, inst + 0x14, &mat) || count > kMaxBones ||
-      (count != 0 && (mat < 0x10000 || !LoadL(base, ltow, l)))) {
+// Sk8::PackAndMultiplyMatricesForUpload (sub_827E5B30): in place, each of
+// the instance's matrix_count Matrix44s becomes its 48-byte palette entry
+// (entry i is written after matrix i is read, and 48(i+1) <= 64(i+1), so a
+// later read is never overwritten first).
+bool ComputePack(uint8_t* base, uint32_t instance, uint32_t local_to_world, Writes* e) {
+  const auto* inst = Find<ModelInstance>(base, instance);
+  if (!inst || inst->matrix_count > kMaxBones) return false;
+  const uint32_t count = inst->matrix_count;
+  const uint32_t palette = inst->matrices;
+  simde__m128 ltw[4];
+  if (count != 0 && (!InGuestRange(palette, 1) || !LoadRows(base, local_to_world, ltw))) {
     return false;
   }
   e->row_words = 12;
   e->addr.clear();
   e->words.resize(size_t(count) * 12);
   for (uint32_t i = 0; i < count; ++i) {
-    float m[16];
-    if (!Load16(base, mat + 64 * i, m)) return false;
-    PackBone(m, l, e->words.data() + size_t(i) * 12);
-    e->addr.push_back(Vec(mat) + 48 * i);
+    float bone[16];
+    if (!LoadMatrix(base, palette + sizeof(Matrix44) * i, bone)) return false;
+    SkinBone(bone, ltw, e->words.data() + size_t(i) * 12);
+    e->addr.push_back(VectorAligned(palette) + sizeof(PaletteRows) * i);
   }
   return true;
 }
 
-// The LivingWorld writer (sub_827C1D38): see docs/re/symbols.toml.
-bool ComputeLw(uint8_t* base, uint32_t entity, Writes* e) {
-  uint32_t lod = 0, count = 0, parts = 0, vtbl = 0, getter = 0, src = 0;
-  if (!U32(base, entity + 0x10, &lod) || lod > 8 || !U32(base, entity + (lod + 5) * 4, &count) ||
-      !U32(base, entity + (lod + 8) * 4, &parts) || !U32(base, entity, &vtbl) ||
-      !U32(base, vtbl + 0x60, &getter)) {
-    return false;
-  }
+// The LivingWorld batch pack writer (sub_827C1D38): UpdateBoneTransforms and
+// PackAndMultiply fused, for each part of the entity's current LOD: every
+// bone's pose matrix, skinned by the entity's local_to_world, appended to the
+// part's palette.
+bool ComputeLw(uint8_t* base, uint32_t entity_addr, Writes* e) {
+  const auto* entity = Find<LivingWorldEntity>(base, entity_addr);
+  if (!entity || entity->lod >= kLodCount) return false;
+  const uint32_t count = entity->lod_part_count[entity->lod];
+  const uint32_t parts = entity->lod_instances[entity->lod];
   e->row_words = 12;
   e->addr.clear();
   e->words.clear();
   if (count == 0) return true;
-  if (getter != kLwPoseGetter) {
-    return false;  // another class: keep the guest's (counted as bad)
+  // The pose comes from a virtual getter; only the classes whose getter is
+  // the plain `return pose` are handled (another class: the game's code).
+  const auto* getter = Find<be<uint32_t>>(base, entity->vtable + 0x60);
+  if (!getter || *getter != kLivingWorldPoseGetter || count > kMaxLivingWorldParts) return false;
+  simde__m128 ltw[4];
+  if (!LoadRows(base, entity_addr + offsetof(LivingWorldEntity, local_to_world), ltw)) {
+    return false;
   }
-  simde__m128 l[4];
-  if (!U32(base, entity + 0x4B0, &src) || !LoadL(base, entity + 0x160, l)) return false;
   for (uint32_t k = 0; k < count; ++k) {
-    const uint32_t inst = parts + k * kInstStride;
-    uint32_t model = 0, remap = 0, out = 0, mesh_table = 0;
-    uint16_t nb = 0, nm = 0;
-    if (!U32(base, inst, &model) || !U32(base, inst + 0x14, &out) ||
-        !U32(base, entity + 0x270 + 4 * k, &remap) || !U16(base, model + 0x34, &nb)) {
-      return false;
-    }
-    if (nb > 80) continue;  // the guest skips these models
-    if (!U16(base, model + 0x32, &nm)) return false;
-    if (nm == 0) continue;
-    if (!U32(base, model + 0x24, &mesh_table)) return false;
-    for (uint32_t mi = 0; mi < nm; ++mi) {
-      uint32_t mesh = 0, cnt = 0, list = 0;
-      if (!U32(base, mesh_table + 8 * mi, &mesh) || !U32(base, mesh + 0x48, &cnt)) return false;
-      if (cnt == 0) continue;
-      if (cnt > kMaxBones || !U32(base, mesh + 0x4C, &list)) return false;
-      for (uint32_t j = 0; j < cnt; ++j) {
-        uint16_t idx = 0;
-        uint32_t sb = 0;
+    const auto* part = Find<ModelInstance>(base, parts + k * sizeof(ModelInstance));
+    const ModelData* model = part ? Find<ModelData>(base, part->model) : nullptr;
+    if (!model) return false;
+    const uint32_t remap = entity->part_bone_remap[k];
+    uint32_t out = part->matrices;
+    const bool ok = ForEachSkinnedMesh(base, *model, [&](const MeshData& mesh) {
+      for (uint32_t j = 0; j < mesh.bone_count; ++j) {
+        uint32_t bone = 0;
         float m[16];
-        if (!U16(base, list + 2 * j, &idx) || !U32(base, remap + 4u * idx, &sb) ||
-            !Load16(base, src + (sb << 6), m)) {
+        if (!PoseBone(base, mesh, j, remap, &bone) ||
+            !LoadMatrix(base, entity->pose + bone * sizeof(Matrix44), m)) {
           return false;
         }
         const size_t at = e->words.size();
         e->words.resize(at + 12);
-        PackBone(m, l, e->words.data() + at);
-        e->addr.push_back(Vec(out));
-        out += 48;
+        SkinBone(m, ltw, e->words.data() + at);
+        e->addr.push_back(VectorAligned(out));
+        out += sizeof(PaletteRows);
       }
-    }
+      return true;
+    });
+    if (!ok) return false;
   }
   return true;
 }
 
 bool PackCompute(PPCContext& ctx, uint8_t* base, Writes* w) {
-  ctx.fpscr.enableFlushMode();  // the guest's VMX mode (the function sets it too)
-  // Computed in full before writing: in place, a bone's rows are read
-  // before any later write reaches them (48i + 48 <= 64(i + 1)).
+  ctx.fpscr.enableFlushMode();  // the guest's vector float mode (the function sets it too)
+  // Computed in full before writing; see ComputePack for why in place is safe.
   return ComputePack(base, ctx.r3.u32, ctx.r4.u32, w);
 }
 
@@ -261,27 +251,39 @@ int RowsMode() {
   return m;
 }
 
-// sub_827816C0 (r3 dst, r4 src): lvx/stvx of the 9 vectors at +0..+128
-// (addresses masked to 16), then lwz/stw of the 4 words at +144..+156.
-// Called by the LivingWorld-derived BindConstants (sub_827C25D8) and
-// sub_82812040; the source is the global lighting object's 9 rows + 4 words.
+// The lighting rows a LivingWorld-derived BindConstants (sub_827C25D8) and
+// sub_82812040 take from the global lighting object: 9 vector rows and 4
+// words, 160 bytes.
+struct LightingRows {
+  be<float> rows[9][4];   // +0, copied with vector loads (16-byte aligned)
+  be<uint32_t> words[4];  // +144
+};
+static_assert(sizeof(LightingRows) == 160);
+
+// sub_827816C0(dst, src): copies the lighting rows.
 bool LwRowsCompute(PPCContext& ctx, uint8_t* base, Writes* w) {
   const uint32_t dst = ctx.r3.u32, src = ctx.r4.u32;
   w->row_words = 4;
   w->addr.clear();
   w->words.clear();
-  // The guest interleaves each load with its store; computing everything
-  // first matches it unless the blocks overlap (never seen; refuse).
+  // The game copies row by row; copying all first is the same unless the
+  // blocks overlap (never seen; refuse).
   const uint32_t gap = dst > src ? dst - src : src - dst;
-  if (gap != 0 && gap < 176) return false;
+  if (gap != 0 && gap < sizeof(LightingRows) + 16) return false;
   for (uint32_t k = 0; k < 9; ++k) {
-    if (!Copy(w->Add(Vec(dst + 16 * k)), base, Vec(src + 16 * k), 16)) return false;
+    const uint32_t row = offsetof(LightingRows, rows) + 16 * k;
+    const auto* from = Find<be<float>[4]>(base, VectorAligned(src + row));
+    if (!from) return false;
+    std::memcpy(w->Add(VectorAligned(dst + row)), from, 16);
   }
-  return Copy(w->Add(dst + 144), base, src + 144, 16);
+  const auto* words = Find<be<uint32_t>[4]>(base, src + offsetof(LightingRows, words));
+  if (!words) return false;
+  std::memcpy(w->Add(dst + offsetof(LightingRows, words)), words, 16);
+  return true;
 }
 
 bool UbtCompute(PPCContext& ctx, uint8_t* base, Writes* w) {
-  // A plain copy (lvx/stvx): no floating-point mode involved.
+  // A plain copy: no floating-point mode involved.
   return ComputeUbt(base, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, w);
 }
 

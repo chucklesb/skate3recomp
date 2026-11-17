@@ -63,6 +63,9 @@ The job manager global `0x830CFE04`: `*(*(+8))` is the main backend.
 
 ### `Sk8::Render::cModelInstance`
 
+Source of truth for this and the model, mesh and LivingWorld layouts
+below: `src/native/skate3_render_types.h` (`static_assert`ed).
+
 One model instance: the model, its per-mesh contexts and the packed bone
 palette. Skate 2 sizeof 0x28; TU3 0x28 (`confirmed`: the stride of
 `UpdateBoneTransforms`' part array, [characters.md](characters.md)).
@@ -97,7 +100,7 @@ matches Skate 2; the mesh data does not.
 
 | Structure | Offset | Field | In TU3 |
 |---|---|---|---|
-| `tRModelData` | +0x24 | `m_pMeshTable` (8-byte entries, mesh data pointer first) | confirmed |
+| `tRModelData` | +0x24 | `m_pMeshTable` (8-byte entries, mesh data pointer first; the pack writer steps by 8) | confirmed |
 | | +0x32 | `m_iNumMeshes` | confirmed |
 | | +0x34 | `m_iNumBones` (UBT skips models above 80) | confirmed |
 | mesh data (`tRMeshData`) | +0x48 | the mesh's bone count (palette length) | confirmed; Skate 2 has `m_uiNumBoneMats` at +0x40 and `m_pBlendShapeTable` here |

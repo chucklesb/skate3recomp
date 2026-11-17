@@ -15,8 +15,10 @@
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
+#include "generated/skate3_init.h"
 #include "native/skate3_native_entity.h"
 #include "native/skate3_native_guest_read.h"
+#include "native/skate3_render_types.h"
 #include "skate3_native_scene.h"
 
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_palette_serve, true, "Skate 3",
@@ -48,24 +50,16 @@ using skate3::native_scene::DrawItem;
 using skate3::native_scene::FrameScene;
 using skate3::native_scene::GuestTryCopy;
 
-// cModelInstance field offsets (sizeof 0x28).
-constexpr uint32_t kInstModel = 0x00;
-constexpr uint32_t kInstArrCtx = 0x04;     // m_arrMeshContext begin
-constexpr uint32_t kInstArrCtxEnd = 0x08;  // VectorBase end (validated, else 50-slot cap)
-constexpr uint32_t kInstMatrices = 0x14;   // packed palette, 48-byte 3x4 rows
-constexpr uint32_t kCtxStride = 0x50;
+using namespace skate3::render;
+
+// MeshContext slots assumed when an instance's context vector looks wrong.
 constexpr uint32_t kCtxSlotsFallback = 50;
 
-bool LoadU32(uint8_t* base, uint32_t addr, uint32_t* out) {
-  if (addr < 0x10000) {
-    return false;
-  }
-  uint32_t raw;
-  if (!GuestTryCopy(&raw, base + addr, 4)) {
-    return false;
-  }
-  *out = __builtin_bswap32(raw);
-  return true;
+// A fault-guarded copy of a guest object: this runs beside the game, on
+// objects that may be torn down under it.
+template <typename T>
+bool TryRead(uint8_t* base, uint32_t addr, T* out) {
+  return addr >= 0x10000 && GuestTryCopy(out, base + addr + REX_PHYS_HOST_OFFSET(addr), sizeof(T));
 }
 
 // Plausible guest heap/image pointer (the guest address space tops out under
@@ -212,15 +206,15 @@ void ProbeInstance(const float* row) {
 
 // Copy one instance's header + m_matrices rows.
 void SnapshotPack(uint8_t* base, uint32_t inst) {
-  uint32_t head[0x28 / 4];
-  if (!GuestTryCopy(head, base + inst, sizeof(head))) {
+  ModelInstance head;
+  if (!TryRead(base, inst, &head)) {
     return;
   }
-  const uint32_t model = __builtin_bswap32(head[kInstModel / 4]);
-  const uint32_t arr = __builtin_bswap32(head[kInstArrCtx / 4]);
-  const uint32_t arr_end = __builtin_bswap32(head[kInstArrCtxEnd / 4]);
-  const uint32_t matrices = __builtin_bswap32(head[kInstMatrices / 4]);
-  const uint32_t count = __builtin_bswap32(head[0x18 / 4]);
+  const uint32_t model = head.model;
+  const uint32_t arr = head.mesh_contexts_begin;
+  const uint32_t arr_end = head.mesh_contexts_end;
+  const uint32_t matrices = head.matrices;
+  const uint32_t count = head.matrix_count;
   if (!PlausiblePtr(model) || !PlausiblePtr(arr) || !PlausiblePtr(matrices)) {
     return;
   }
@@ -230,14 +224,14 @@ void SnapshotPack(uint8_t* base, uint32_t inst) {
   snap.seq = tl_pack_seq;
   snap.part = tl_pack_part;
   snap.arr_begin = arr;
-  if (arr_end > arr && (arr_end - arr) % kCtxStride == 0 &&
-      (arr_end - arr) / kCtxStride <= 256) {
+  if (arr_end > arr && (arr_end - arr) % kMeshContextSize == 0 &&
+      (arr_end - arr) / kMeshContextSize <= 256) {
     snap.arr_bytes = arr_end - arr;
   } else {
-    snap.arr_bytes = kCtxSlotsFallback * kCtxStride;
+    snap.arr_bytes = kCtxSlotsFallback * kMeshContextSize;
   }
-  // +0x18 tracked as the pack count: it equals the highest blend index the
-  // mesh references, so it is trusted within bounds.
+  // matrix_count tracked as the pack count: it equals the highest blend
+  // index the mesh references, so it is trusted within bounds.
   snap.rows = (count >= 1 && count <= 96) ? count : 84;
   constexpr uint32_t fpr = 12u;
   uint32_t raw[96 * 12];
@@ -271,49 +265,53 @@ void SnapshotPack(uint8_t* base, uint32_t inst) {
 // its own PackSnap keyed to exactly its MeshContext, so the containment
 // matching works unchanged.
 void SnapshotLwEntity(uint8_t* base, uint32_t entity) {
-  uint32_t idx = 0, count = 0, arr = 0;
-  if (!LoadU32(base, entity + 16, &idx) || idx > 1024 ||
-      !LoadU32(base, entity + (idx + 5) * 4, &count) ||
-      !LoadU32(base, entity + (idx + 8) * 4, &arr) || count == 0 || count > 8 ||
-      !PlausiblePtr(arr)) {
+  // The current LOD's parts.
+  be<uint32_t> lod_w, count_w, arr_w;
+  if (!TryRead(base, entity + offsetof(LivingWorldEntity, lod), &lod_w) || lod_w >= kLodCount) {
+    return;
+  }
+  const uint32_t lod = lod_w;
+  if (!TryRead(base, entity + offsetof(LivingWorldEntity, lod_part_count) + 4 * lod, &count_w) ||
+      !TryRead(base, entity + offsetof(LivingWorldEntity, lod_instances) + 4 * lod, &arr_w)) {
+    return;
+  }
+  const uint32_t count = count_w, arr = arr_w;
+  if (count == 0 || count > kMaxLivingWorldParts || !PlausiblePtr(arr)) {
     return;
   }
   for (uint32_t i = 0; i < count; ++i) {
-    const uint32_t rec = arr + i * 0x28;
-    uint32_t head[0x28 / 4];
-    if (!GuestTryCopy(head, base + rec, sizeof(head))) {
+    const uint32_t rec = arr + i * sizeof(ModelInstance);
+    ModelInstance head;
+    if (!TryRead(base, rec, &head)) {
       continue;
     }
-    const uint32_t model = __builtin_bswap32(head[kInstModel / 4]);
-    const uint32_t actx = __builtin_bswap32(head[kInstArrCtx / 4]);
-    const uint32_t matrices = __builtin_bswap32(head[kInstMatrices / 4]);
-    if (!PlausiblePtr(model) || !PlausiblePtr(actx) || !PlausiblePtr(matrices)) {
+    const uint32_t actx = head.mesh_contexts_begin;
+    const uint32_t matrices = head.matrices;
+    ModelData model;
+    if (!PlausiblePtr(head.model) || !PlausiblePtr(actx) || !PlausiblePtr(matrices) ||
+        !TryRead(base, head.model, &model)) {
       continue;
     }
-    // Model walk mirrors the writer's own: mesh table at +0x24 (ptr array,
-    // stride 4), mesh count u16 at +0x32, bone-count gate u16 at +0x34
-    // (<= 80, same gate the writer applies). Every bone count must land in
-    // 1..96; a wrong table shape fails here and the instance is skipped.
-    uint32_t count_w = 0, table = 0, gate_w = 0;
-    if (!LoadU32(base, model + 0x30, &count_w) ||
-        !LoadU32(base, model + 0x24, &table) ||
-        !LoadU32(base, model + 0x34, &gate_w)) {
-      continue;
-    }
-    const uint32_t nmesh = count_w & 0xFFFF;
-    if (nmesh == 0 || nmesh > 16 || (gate_w >> 16) > 80) {
+    // The pack writer's walk: each mesh of the model (skipped above 80
+    // model bones), its bone count. Every count must land in 1..96; a
+    // wrong table shape fails here and the instance is skipped.
+    const uint32_t nmesh = model.num_meshes;
+    if (nmesh == 0 || nmesh > 16 || model.num_bones > kMaxSkinnedModelBones) {
       continue;
     }
     uint32_t bones[16];
     uint32_t total = 0;
     bool ok = true;
     for (uint32_t k = 0; k < nmesh && ok; ++k) {
-      uint32_t mesh = 0, bc = 0;
-      ok = LoadU32(base, table + k * 4, &mesh) && PlausiblePtr(mesh) &&
-           LoadU32(base, mesh + 0x48, &bc) && bc >= 1 && bc <= 96;
+      MeshTableEntry entry;
+      be<uint32_t> bc_w;
+      ok = TryRead(base, model.mesh_table + k * sizeof(MeshTableEntry), &entry) &&
+           PlausiblePtr(entry.mesh) &&
+           TryRead(base, entry.mesh + offsetof(MeshData, bone_count), &bc_w) && bc_w >= 1 &&
+           bc_w <= 96;
       if (ok) {
-        bones[k] = bc;
-        total += bc;
+        bones[k] = bc_w;
+        total += bones[k];
       }
     }
     if (!ok || total == 0 || total > 96) {
@@ -343,8 +341,8 @@ void SnapshotLwEntity(uint8_t* base, uint32_t entity) {
       snap.inst = rec;
       snap.entity = entity;
       snap.seq = tl_pack_seq;
-      snap.arr_begin = actx + k * kCtxStride;  // exactly this mesh's ctx
-      snap.arr_bytes = kCtxStride;
+      snap.arr_begin = actx + k * kMeshContextSize;  // exactly this mesh's ctx
+      snap.arr_bytes = kMeshContextSize;
       snap.row_ofs = ofs + row * 12;
       snap.rows = bones[k];
       g_packs.push_back(snap);
@@ -538,11 +536,11 @@ uint32_t ServeAuthoritativePalettesImpl(uint8_t* base,
         const bool contains =
             item.ctx >= snap.arr_begin &&
             item.ctx < snap.arr_begin + snap.arr_bytes &&
-            (item.ctx - snap.arr_begin) % kCtxStride == 0;
+            (item.ctx - snap.arr_begin) % kMeshContextSize == 0;
         if (!contains) {
           continue;
         }
-        if (snap.arr_bytes == kCtxStride) {
+        if (snap.arr_bytes == kMeshContextSize) {
           // Exact per-piece ctx window (LW slice): unambiguous;
           // keep overwriting so the frame's last pack wins.
           const float* r = rows.data() + snap.row_ofs;

@@ -37,14 +37,18 @@ function we understand, never a copy of rexglue's output.
 - `skate3_native_jobs.cpp`: rewritten over `JobBackend` / `JobWorker` /
   `JobHandle` ([types.md](types.md)); meets it.
 - `skate3_native_padring.cpp`: meets it (named ring fields, host atomics).
-- `skate3_native_pose.cpp`, `skate3_native_lw.cpp`: behaviour-level (bones,
-  palettes, rows) and SIMD only for bit-exactness; still raw offsets where
-  [types.md](types.md) has the layouts (`cModelInstance`, `MeshContext`).
-  Next: read them through those structs. `lwrows` (`sub_827816C0`) is a
-  160-byte row copy; write it as one.
-- `skate3_native_cull.cpp`: behaviour-level, registers only as call
-  arguments; raw offsets and its own frame helper. Next: a culling-params
-  struct, the shared `skate3_native_guest_frame.h`.
+- `skate3_native_pose.cpp` (pack, lw, ubt, lwrows) and the renderer's
+  palette readers (`skate3_native_lw.cpp`, `skate3_native_palette.cpp`):
+  rewritten over `skate3_render_types.h` (`ModelInstance`, `ModelData`,
+  `MeshData`, `LivingWorldEntity`); the skinning math keeps the guest's
+  operation order for bit-exactness. Shadow mode 2026-11-17: every call
+  exact (plaza and a replay). The typed walk fixed a latent bug in the two
+  readers: they stepped the model's mesh table by 4 bytes instead of 8, so a
+  multi-mesh model's later meshes were read from the wrong words (no such
+  model in the plaza: the `native-lw:` line counts them).
+- `skate3_native_cull.cpp`: rewritten over `CullingParams`,
+  `CullDescriptor`, `Box`, `OccluderPlane` ([culling.md](culling.md)); the
+  vector math keeps the guest's order. Shadow: every call exact.
 
 **Statuses:**
 - `native-on`: native code runs in its place by default;

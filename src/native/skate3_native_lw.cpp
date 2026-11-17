@@ -30,7 +30,9 @@
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
+#include "generated/skate3_init.h"
 #include "native/skate3_native_guest_read.h"
+#include "native/skate3_render_types.h"
 
 REXCVAR_DEFINE_BOOL(
     skate3_native_render_scene_lw_palette, true, "Skate 3",
@@ -46,14 +48,7 @@ namespace {
 
 using skate3::native_scene::GuestTryCopy;
 
-// Entity/instance layout (verified: SnapshotLwEntity + sub_827C1720).
-constexpr uint32_t kLwOpacity = 528;       // Vector4, x = alpha
-constexpr uint32_t kInstModel = 0x00;      // cModelInstance model ptr
-constexpr uint32_t kInstArrCtx = 0x04;     // m_arrMeshContext begin
-constexpr uint32_t kInstArrCtxEnd = 0x08;  // VectorBase end
-constexpr uint32_t kInstMatrices = 0x14;   // packed palette, 48-byte rows
-constexpr uint32_t kInstStride = 0x28;
-constexpr uint32_t kCtxStride = 0x50;
+using namespace skate3::render;
 
 struct LwCtxEntry {
   float alpha = 1.0f;
@@ -74,17 +69,16 @@ std::unordered_map<uint32_t, LwCtxEntry> g_ctx;  // MeshContext -> entity state
 std::atomic<uint32_t> g_ents_window{0};
 std::atomic<uint32_t> g_ents_last{0};
 std::atomic<uint64_t> g_ents_win_start{0};
+// Palette snapshots per 10 s, and how many came from models with more than
+// one mesh (before 2026-11-17 those walked the mesh table with the wrong
+// stride and were skipped or mis-sliced): the `native-lw:` line.
+std::atomic<uint32_t> g_pal_insts{0}, g_pal_multi{0}, g_windows{0};
 
-bool LoadU32(uint8_t* base, uint32_t addr, uint32_t* out) {
-  if (addr < 0x10000) {
-    return false;
-  }
-  uint32_t raw;
-  if (!GuestTryCopy(&raw, base + addr, 4)) {
-    return false;
-  }
-  *out = __builtin_bswap32(raw);
-  return true;
+// A fault-guarded copy of a guest object: this runs beside the game, on
+// objects that may be torn down under it.
+template <typename T>
+bool TryRead(uint8_t* base, uint32_t addr, T* out) {
+  return addr >= 0x10000 && GuestTryCopy(out, base + addr + REX_PHYS_HOST_OFFSET(addr), sizeof(T));
 }
 
 bool PlausiblePtr(uint32_t p) {
@@ -102,19 +96,27 @@ uint64_t NowMs() {
 void OnLwEntityTick(uint8_t* base, uint32_t entity) {
   // Fresh opacity first: an unreadable/insane alpha means teardown or a
   // non-conforming subclass; skip the entity, never store garbage.
-  uint32_t alpha_u = 0;
-  if (!LoadU32(base, entity + kLwOpacity, &alpha_u)) {
+  be<float> opacity_x;
+  if (!TryRead(base, entity + offsetof(LivingWorldEntity, opacity), &opacity_x)) {
     return;
   }
-  const float alpha = std::bit_cast<float>(alpha_u);
+  const float alpha = opacity_x;
   if (!(alpha >= -0.01f && alpha <= 1.01f)) {
     return;
   }
-  uint32_t idx = 0, count = 0, arr = 0;
-  if (!LoadU32(base, entity + 16, &idx) || idx > 1024 ||
-      !LoadU32(base, entity + (idx + 5) * 4, &count) ||
-      !LoadU32(base, entity + (idx + 8) * 4, &arr) || count == 0 ||
-      count > 8 || !PlausiblePtr(arr)) {
+  // The current LOD's parts (lod, then its part count and instance array).
+  be<uint32_t> lod_w;
+  if (!TryRead(base, entity + offsetof(LivingWorldEntity, lod), &lod_w) || lod_w >= kLodCount) {
+    return;
+  }
+  const uint32_t lod = lod_w;
+  be<uint32_t> count_w, arr_w;
+  if (!TryRead(base, entity + offsetof(LivingWorldEntity, lod_part_count) + 4 * lod, &count_w) ||
+      !TryRead(base, entity + offsetof(LivingWorldEntity, lod_instances) + 4 * lod, &arr_w)) {
+    return;
+  }
+  const uint32_t count = count_w, arr = arr_w;
+  if (count == 0 || count > kMaxLivingWorldParts || !PlausiblePtr(arr)) {
     return;
   }
   const uint64_t now = NowMs();
@@ -125,6 +127,12 @@ void OnLwEntityTick(uint8_t* base, uint32_t entity) {
                                                    std::memory_order_relaxed)) {
         g_ents_last.store(g_ents_window.exchange(0, std::memory_order_relaxed),
                           std::memory_order_relaxed);
+        if (g_windows.fetch_add(1, std::memory_order_relaxed) % 10 == 9) {
+          REXLOG_INFO("native-lw: entities/s={} palette snapshots={} (multi-mesh models {})",
+                      g_ents_last.load(std::memory_order_relaxed),
+                      g_pal_insts.exchange(0, std::memory_order_relaxed),
+                      g_pal_multi.exchange(0, std::memory_order_relaxed));
+        }
       }
     }
     g_ents_window.fetch_add(1, std::memory_order_relaxed);
@@ -143,44 +151,44 @@ void OnLwEntityTick(uint8_t* base, uint32_t entity) {
   float pal[8 * 96 * 12];
   uint32_t pal_used = 0;
   for (uint32_t i = 0; i < count; ++i) {
-    const uint32_t rec = arr + i * kInstStride;
-    uint32_t cbegin = 0, cend = 0;
-    if (!LoadU32(base, rec + kInstArrCtx, &cbegin) ||
-        !LoadU32(base, rec + kInstArrCtxEnd, &cend) || !PlausiblePtr(cbegin) ||
-        cend <= cbegin || (cend - cbegin) % kCtxStride != 0) {
+    ModelInstance inst;
+    if (!TryRead(base, arr + i * sizeof(ModelInstance), &inst)) {
       continue;
     }
-    const uint32_t slots = (cend - cbegin) / kCtxStride;
+    const uint32_t cbegin = inst.mesh_contexts_begin, cend = inst.mesh_contexts_end;
+    if (!PlausiblePtr(cbegin) || cend <= cbegin || (cend - cbegin) % kMeshContextSize != 0) {
+      continue;
+    }
+    const uint32_t slots = (cend - cbegin) / kMeshContextSize;
     if (slots > 64) {
       continue;
     }
-    // The entity's own packed palette (m_matrices): per-mesh bone counts
-    // from the model walk (mesh table +0x24, count u16 +0x32, bone-count
-    // gate u16 +0x34 <= 80, mesh bone count +0x48 - the verified
-    // SnapshotLwEntity conventions); mesh k's slice starts after the
-    // preceding meshes' rows and pairs with ctx slot k.
+    // The entity's own packed palette (matrices): per-mesh bone counts from
+    // the model's mesh table, the same walk as the pack writer (skipped above
+    // 80 model bones); mesh k's slice starts after the preceding meshes' rows
+    // and pairs with ctx slot k.
     uint32_t bones[16];
     uint32_t nmesh = 0;
     uint32_t inst_pal_ofs = UINT32_MAX;
     if (want_pal) {
-      uint32_t model = 0, matrices = 0, count_w = 0, table = 0, gate_w = 0;
-      if (LoadU32(base, rec + kInstModel, &model) &&
-          LoadU32(base, rec + kInstMatrices, &matrices) &&
-          PlausiblePtr(model) && PlausiblePtr(matrices) &&
-          LoadU32(base, model + 0x30, &count_w) &&
-          LoadU32(base, model + 0x24, &table) &&
-          LoadU32(base, model + 0x34, &gate_w) && (gate_w >> 16) <= 80) {
-        const uint32_t nm = count_w & 0xFFFF;
+      const uint32_t matrices = inst.matrices;
+      ModelData model;
+      if (PlausiblePtr(inst.model) && PlausiblePtr(matrices) &&
+          TryRead(base, inst.model, &model) && model.num_bones <= kMaxSkinnedModelBones) {
+        const uint32_t nm = model.num_meshes;
         if (nm >= 1 && nm <= 16) {
           uint32_t total = 0;
           bool ok = true;
           for (uint32_t k = 0; k < nm && ok; ++k) {
-            uint32_t mesh = 0, bc = 0;
-            ok = LoadU32(base, table + k * 4, &mesh) && PlausiblePtr(mesh) &&
-                 LoadU32(base, mesh + 0x48, &bc) && bc >= 1 && bc <= 96;
+            MeshTableEntry entry;
+            be<uint32_t> bc_w;
+            ok = TryRead(base, model.mesh_table + k * sizeof(MeshTableEntry), &entry) &&
+                 PlausiblePtr(entry.mesh) &&
+                 TryRead(base, entry.mesh + offsetof(MeshData, bone_count), &bc_w) &&
+                 bc_w >= 1 && bc_w <= 96;
             if (ok) {
-              bones[k] = bc;
-              total += bc;
+              bones[k] = bc_w;
+              total += bones[k];
             }
           }
           uint32_t raw[96 * 12];
@@ -194,6 +202,8 @@ void OnLwEntityTick(uint8_t* base, uint32_t entity) {
             inst_pal_ofs = pal_used;
             pal_used += total * 12;
             nmesh = nm;
+            g_pal_insts.fetch_add(1, std::memory_order_relaxed);
+            if (nm > 1) g_pal_multi.fetch_add(1, std::memory_order_relaxed);
           }
         }
       }
@@ -201,7 +211,7 @@ void OnLwEntityTick(uint8_t* base, uint32_t entity) {
     uint32_t row = 0;
     for (uint32_t k = 0; k < slots && nctx < 8 * 64; ++k) {
       CtxRec& c = ctxs[nctx++];
-      c.ctx = cbegin + k * kCtxStride;
+      c.ctx = cbegin + k * kMeshContextSize;
       if (k < nmesh && inst_pal_ofs != UINT32_MAX) {
         c.pal_ofs = inst_pal_ofs + row * 12;
         c.pal_rows = bones[k];

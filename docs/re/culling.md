@@ -81,3 +81,17 @@ in the occluder setup are plain copies (min/max corners).
   | Odin 2 (median of 3) | 4.26 | 4.06 ms/frame (-5%) |
 
   Frame times level on both (Odin 2 busy p99 11.6-11.9 ms on, 11.7-12.7 off).
+
+## Layouts (source of truth: `src/native/skate3_native_cull.cpp`)
+
+- `CullingParams` (the job's data, `*(job + 8)`): `occluder_planes[160]`
+  (32 bytes each: point, normal; 5 per occluder) at +0, `size_axis` +5136,
+  `frustum[6]` (x, y, z, d) +5152 (plane 4 also gives the size test's depth),
+  `occluder_count` +5260, `size_min` +5264, `size_far` +5268, `size_scale`
+  +5272.
+- `CullDescriptor` (DoFrustumCulling's first argument): `boxes` (32-byte
+  min/max `Box`es), `sizes` (16-byte vectors, or 0), +8 unknown,
+  `visibility` (u16 per item), `count` (u16, +16).
+- VectorizedCullingJob's stack: the change counter at +80, the splatted
+  occluder planes (96 bytes each: px, py, pz, nx, ny, nz) at +96.
+
