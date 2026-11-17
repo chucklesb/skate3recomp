@@ -13,6 +13,7 @@ implementation and then deleted.
 | Page | What it covers |
 |---|---|
 | [symbols.toml](symbols.toml) | The function map: address, name, signature, role, confidence, evidence |
+| [replacements.md](replacements.md) | RE-7 catalog: every specified function, whether native code replaces it, and what's left |
 | [workarounds.md](workarounds.md) | Every host-side layer that guesses instead of knowing, and what would replace it |
 | [types.md](types.md) | Structure layouts, from the Skate 2 PDB, with what TU3 is known to keep or change |
 | [characters.md](characters.md) | Characters: skeleton, parts, palettes, the pack and bone-transform functions |

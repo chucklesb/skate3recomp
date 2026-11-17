@@ -440,3 +440,17 @@ signature = "(?, job handle, mode) : mode 0 loops RunSingleJob(mask 1), mode 2 m
 role = "No sleep or yield (unlike JobInstanceHandle::WaitOn sub_82909510, which sleeps through sub_82909BD0). The main-thread caller of most RunSingleJob misses; costs ~0.10 ms/frame on the Odin 2 at 30 fps (incl. the jobs it runs)."
 confidence = "likely"
 evidence = "decompile; jobs: probe caller histogram (LR 0x8247433C)"
+
+[sub_82B76080]
+name = "D3D wait poll (one turn of BlockOnFence and the other D3D waits)"
+signature = "(state: +0 device, +8 completed-fence value seen last poll, timestamps)"
+role = "~32 db16cyc spin hints, then *(device+10896) (a pointer to the GPU-written completed-fence word, physical mirror) against state+8; DebugGpuDeadlock after a long stall."
+confidence = "likely"
+evidence = "disassembly; fence: counters (skate3_native_fence_wait)"
+hooked = "src/native/skate3_native_fence.cpp (blocks on the GPU write-back signal while the word has not moved)"
+
+[sub_82B755C0]
+name = "D3D::CDevice::BlockOnFence"
+role = "loops on sub_82B76080 until the fence passes; 39% of the render thread's CPU on the Odin 2 uncapped before the fence wait"
+confidence = "likely"
+evidence = "Skate 2 name; profiler stacks; disassembly"

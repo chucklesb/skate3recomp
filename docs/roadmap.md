@@ -71,7 +71,9 @@ the linked pages; the backlog is [open-work.md](open-work.md).
 - RE-6 [ ] **Who issues the emulated passes** native-only must replace
   (pitches 160 and 1200).
 - RE-7 [~] **Shadow-mode replacements:** native code in place of
-  recompiled functions, verified in shadow mode first. Done (2026-11-16, on
+  recompiled functions, verified in shadow mode first. Catalog of what is
+  specified vs replaced: [re/replacements.md](re/replacements.md); replace
+  trivial specified functions at once, cycles or not. Done (2026-11-16, on
   by default): `UpdateBoneTransforms`, `PackAndMultiplyMatricesForUpload`
   and the LivingWorld batch pack writer, bit-exact on both platforms, no
   frame-time cost (`src/native/skate3_native_pose.cpp`,
