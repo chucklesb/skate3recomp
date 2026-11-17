@@ -208,8 +208,15 @@ def main() -> int:
     phase = ddctl("state").get("session", {}).get("phase")
     log(f"session phase {phase}; image {image.name} (version {version or '?'})")
     if phase != "IDLE":
-        raise SystemExit("a session is running: stop it first (droiddeckctl stop) - "
-                         "Remove/Add are disabled and a run would be killed")
+        # The Odin 2 is a test device: end whatever runs (Remove/Add are
+        # disabled while a session is up).
+        log(f"ending the running session ({phase})")
+        ddctl("stop")
+        deadline = time.time() + 30
+        while (phase := ddctl("state").get("session", {}).get("phase")) != "IDLE":
+            if time.time() > deadline:
+                raise SystemExit(f"the session did not stop (phase {phase})")
+            time.sleep(1)
 
     back_to_main()
     old = installed(a.name)
