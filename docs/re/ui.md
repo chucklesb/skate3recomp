@@ -28,6 +28,26 @@ free-fly controls) becomes ordinary native code instead of one-off hooks.
 - **Text** goes through `GetLocaleText` (`sub_825AA818`): string IDs such as
   `ID_GAMESETTINGS_VSYNC_TOGGLE` are hashed and looked up in the localizer.
 
+## Input: when a screen accepts it (2026-11-17)
+
+`sub_825EC0E8` (the state manager's input dispatch; `S = *(0x830CFE14) +
+0x200`, the object whose stack the harness reads at `+0x210`) hands an FE
+input code to the top screen's `ReceiveInput` (vtable `+0x28`) only if:
+- the queued-state list `S+32..+36` (20-byte records) is empty,
+- the lock byte `S+12` is clear,
+- `*(*(0x830354EC + 28)) + 11264` is zero,
+- `sub_825EB998` doesn't claim the code,
+- and the top state object (`*(S+8)[id]`) is **active**: `+16 == 3`
+  (measured: 1 while entering, 2 while its intro plays, 3 active), byte
+  `+49` set, word `+52` zero.
+
+Popups (`S+112..+116`) take the input first (state 29). Measured on Windows
+(`census_menus`): only the state went through 1 -> 2 -> 3 on each screen
+change; the lock, queue and global stayed 0. The time to "active": language
+select ~0.2 s (why an early A was dropped), pause menu ~0.1 s,
+Create-a-Skater ~0.45 s. The harness exposes this as `fe_ready` (`fe_input`
+events, `wait fe_ready`, and `input` waits for it while a menu is up).
+
 ## What we already hook
 
 `src/skate3_options_menu.cpp` (the recomp settings inside the game's Options

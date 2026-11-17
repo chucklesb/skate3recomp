@@ -28,6 +28,7 @@
 #include <rex/graphics/native_guest_renderer.h>
 
 #include "skate3_demo_path.h"
+#include "skate3_native_render.h"
 #include "skate3_native_scene.h"
 #include "harness/harness_profile.h"
 #include <rex/kernel/guest_presence.h>
@@ -131,6 +132,14 @@ struct GameState {
   float skater_yaw = 0.0f;      // heading, degrees (game::SkaterYawDeg; teleport yaw=)
   double skater_speed = 0.0;    // units/s, 3D
   uint32_t backlog = 0;         // native renderer decode backlog (DecodeBacklog)
+  // The FE input dispatch's gates (sub_825EC0E8, docs/re/ui.md): the top
+  // screen gets input only when fe_ready. lock = byte S+12, pending = the
+  // queued-state list S+32..36 (20-byte records), popups = S+112..116,
+  // phase / shown / outro = the top state's +16 (3 = active), byte +49,
+  // word +52; glob = *(*(0x830354EC+28))+11264. S = mgr + 0x200.
+  uint32_t fe_lock = 0, fe_pending = 0, fe_popups = 0, fe_phase = 0, fe_shown = 0, fe_outro = 0,
+           fe_glob = 0;
+  bool fe_ready = false;
   double skater_hspeed = 0.0;   // units/s, horizontal (x/z)
   bool cam_valid = false;
   float cam_pos[3] = {};
@@ -249,6 +258,11 @@ struct Run {
   uint64_t frame = 0;
   std::atomic<uint64_t> frame_atomic{0};  // frame, readable without mu
   uint64_t poll = 0;
+  // Frames in capped-frame time: 1 per frame, but dt x cap on frames that
+  // skate3_fast_loading ran uncapped, so `wait frames = N` keeps meaning N
+  // frames at the cap (a 600-frame wait across a load was 20 s at 30 fps
+  // and became ~4 s uncapped, desyncing native_tour's menu presses).
+  double paced_frame = 0.0;
   GameState state;
   int64_t state_every = 10;
   uint64_t census_frame = 0;  // last pass-census event
@@ -878,13 +892,15 @@ bool WaitUntil(Run& r, double timeout_s, Pred pred) {
   return true;
 }
 
+// Waits N frames in capped-frame time (Run::paced_frame), so uncapped load
+// frames count by elapsed time.
 bool WaitFrames(Run& r, int64_t frames, double timeout_s) {
-  uint64_t target;
+  double target;
   {
     std::lock_guard lk(r.mu);
-    target = r.frame + static_cast<uint64_t>(std::max<int64_t>(0, frames));
+    target = r.paced_frame + static_cast<double>(std::max<int64_t>(0, frames)) - 0.5;
   }
-  return WaitUntil(r, timeout_s, [&] { return r.frame >= target; });
+  return WaitUntil(r, timeout_s, [&] { return r.paced_frame >= target; });
 }
 
 // ------------------------------------------------------------ steps
@@ -930,6 +946,11 @@ bool StatePredicate(const GameState& s, const Step& st, std::string* why) {
   }
   if (st.fe_screen && s.fe_top != *st.fe_screen) {
     *why = "FE top screen is " + std::to_string(s.fe_top);
+    return false;
+  }
+  if (st.fe_ready && s.fe_ready != *st.fe_ready) {
+    *why = std::string("the top FE screen is ") + (s.fe_ready ? "" : "not ") +
+           "accepting input (state " + std::to_string(s.fe_phase) + ")";
     return false;
   }
   if (st.speed_gt && !(s.skater_valid && s.skater_speed > *st.speed_gt)) {
@@ -1093,7 +1114,7 @@ Outcome ExecuteExpect(Run& r, const Step& st) {
       return Fail(std::string("bad regex: ") + e.what());
     }
   }
-  if (st.presence || st.fe_screen || st.speed_gt || st.speed_lt) {
+  if (st.presence || st.fe_screen || st.fe_ready || st.speed_gt || st.speed_lt) {
     std::lock_guard lk(r.mu);
     std::string why;
     if (!StatePredicate(r.state, st, &why)) {
@@ -1109,6 +1130,28 @@ Outcome Execute(Run& r, const Step& st) {
       return ExecuteWait(r, st);
 
     case Verb::kInput: {
+      // A menu screen drops input until it is active (fe_ready): wait for it.
+      const auto wait_ready = [&] {
+        if (!st.wait_ready) {
+          return;
+        }
+        uint64_t f0;
+        {
+          std::lock_guard lk(r.mu);
+          if (r.state.fe_depth < 2 || r.state.fe_ready) {
+            return;
+          }
+          f0 = r.frame;
+        }
+        const bool ok = WaitUntil(r, 10.0, [&] { return r.state.fe_depth < 2 || r.state.fe_ready; });
+        uint64_t waited;
+        {
+          std::lock_guard lk(r.mu);
+          waited = r.frame - f0;
+        }
+        Event(r, "input_ready_wait", "\"frames\":" + std::to_string(waited) +
+                                         ",\"ready\":" + (ok ? "true" : "false"));
+      };
       if (st.until_screen_changes) {
         // Tap, then give the screen every_ms to react; again until the top
         // FE screen is no longer the one up at the start (or timeout_s).
@@ -1123,6 +1166,7 @@ Outcome Execute(Run& r, const Step& st) {
         int taps = 0;
         while (true) {
           uint64_t until;
+          wait_ready();
           {
             std::lock_guard lk(r.mu);
             if (left()) {
@@ -1156,6 +1200,7 @@ Outcome Execute(Run& r, const Step& st) {
                                     std::to_string(to) + ",\"taps\":" + std::to_string(taps));
         return {};
       }
+      wait_ready();
       uint64_t until;
       {
         std::lock_guard lk(r.mu);
@@ -2200,6 +2245,7 @@ std::string StepJson(const Step& st) {
     std::string cond;
     const auto add = [&](const std::string& c) { cond += (cond.empty() ? "" : " ") + c; };
     if (st.gameplay) add("gameplay");
+    if (st.fe_ready) add(std::string("fe_ready=") + (*st.fe_ready ? "true" : "false"));
     if (st.frames) add("frames=" + std::to_string(*st.frames));
     if (st.ms) add("ms=" + std::to_string(*st.ms));
     if (st.fe_screen) add("fe_screen=" + std::to_string(*st.fe_screen));
@@ -2640,6 +2686,24 @@ void OnFrame(uint8_t* base) {
     if (!s.fe_stack.empty()) {
       s.fe_top = s.fe_stack.back().first;
     }
+    // Input gates (see GameState).
+    const uint32_t S = mgr + 0x200;
+    uint32_t w = 0, a = 0, b = 0, table = 0, obj = 0;
+    if (ReadU32(base, S + 12, &w)) s.fe_lock = w >> 24;
+    if (ReadU32(base, S + 32, &a) && ReadU32(base, S + 36, &b) && b >= a) s.fe_pending = (b - a) / 20;
+    if (ReadU32(base, S + 112, &a) && ReadU32(base, S + 116, &b) && b >= a) s.fe_popups = (b - a) / 4;
+    if (!s.fe_stack.empty() && s.fe_top >= 0 && s.fe_top < 256 && ReadU32(base, S + 8, &table) &&
+        table && ReadU32(base, table + 4 * static_cast<uint32_t>(s.fe_top), &obj) && obj) {
+      ReadU32(base, obj + 16, &s.fe_phase);
+      if (ReadU32(base, obj + 48, &w)) s.fe_shown = (w >> 16) & 0xFF;
+      ReadU32(base, obj + 52, &s.fe_outro);
+    }
+    uint32_t g1 = 0, g2 = 0;
+    if (ReadU32(base, 0x830354EC + 28, &g1) && g1 && ReadU32(base, g1, &g2) && g2) {
+      ReadU32(base, g2 + 11264, &s.fe_glob);
+    }
+    s.fe_ready = s.fe_depth > 0 && s.fe_lock == 0 && s.fe_pending == 0 && s.fe_glob == 0 &&
+                 s.fe_phase == 3 && s.fe_shown != 0 && s.fe_outro == 0;
   }
   if (const uint32_t vc = native_scene::MainViewCamera()) {
     float v[16];
@@ -2709,7 +2773,7 @@ void OnFrame(uint8_t* base) {
 
   bool write_state = false;
   std::string state_line;
-  std::string fe_event;
+  std::string fe_event, fe_input_event;
   const char* replay_event = nullptr;
   const char* movie_event = nullptr;
   bool census_due = false;
@@ -2722,6 +2786,8 @@ void OnFrame(uint8_t* base) {
     r->frame_atomic.store(r->frame, std::memory_order_relaxed);
     const double dt = std::chrono::duration<double>(now - r->last_frame_time).count();
     r->last_frame_time = now;
+    const double lifted = skate3::native_render::LiftedCapThisFrame();
+    r->paced_frame += lifted > 0.0 ? std::clamp(dt * lifted, 0.0, 1.0) : 1.0;
     s.frame = r->frame;
     s.t = std::chrono::duration<double>(now - r->t0).count();
     s.fps = dt > 0.0 ? (r->state.fps * 0.9 + (1.0 / dt) * 0.1) : r->state.fps;
@@ -2777,6 +2843,17 @@ void OnFrame(uint8_t* base) {
       fe_event = "\"stack\":" + FeStackJson(s.fe_stack) + ",\"from\":" +
                  FeStackJson(r->state.fe_stack);
     }
+    if (s.fe_ready != r->state.fe_ready || s.fe_lock != r->state.fe_lock ||
+        s.fe_pending != r->state.fe_pending || s.fe_phase != r->state.fe_phase ||
+        s.fe_glob != r->state.fe_glob || s.fe_popups != r->state.fe_popups) {
+      char buf[200];
+      std::snprintf(buf, sizeof(buf),
+                    "\"ready\":%s,\"top\":%lld,\"lock\":%u,\"pending\":%u,\"popups\":%u,"
+                    "\"phase\":%u,\"shown\":%u,\"outro\":%u,\"glob\":%u",
+                    s.fe_ready ? "true" : "false", static_cast<long long>(s.fe_top), s.fe_lock,
+                    s.fe_pending, s.fe_popups, s.fe_phase, s.fe_shown, s.fe_outro, s.fe_glob);
+      fe_input_event = buf;
+    }
     if (s.replay_active != r->state.replay_active) {
       replay_event = s.replay_active ? "replay_start" : "replay_stop";
     }
@@ -2818,6 +2895,9 @@ void OnFrame(uint8_t* base) {
   }
   if (!fe_event.empty()) {
     Event(*r, "fe", fe_event);
+  }
+  if (!fe_input_event.empty()) {
+    Event(*r, "fe_input", fe_input_event);
   }
   if (replay_event) {
     Event(*r, replay_event, {});

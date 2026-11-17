@@ -344,6 +344,9 @@ constexpr uint32_t kTitleReady = 72, kTitleArmed = 80, kTitleMode = 68;
 
 extern "C" REX_FUNC(sub_82609238) {
   TitleProbe("input", base, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
+  if (ProbeEnabled()) {
+    REXLOG_INFO("Skate 3 title: input from lr={:08X}", static_cast<uint32_t>(ctx.lr));
+  }
   if (REXCVAR_GET(skate3_title_quick_start) && REX_LOAD_U32(ctx.r3.u32 + kTitleMode) == 0) {
     // A works like Start on the title.
     if (ctx.r5.u32 == kTitleAPress) {

@@ -299,6 +299,8 @@ bool LoadingNow(uint8_t* base) {
 // render thread at the swap boundary. Absolute-schedule pacing (target +=
 // interval) so sleep jitter never accumulates; resyncs when the guest falls
 // more than one interval behind (loads, hitches).
+double g_lifted_cap = 0.0;  // see LiftedCapThisFrame
+
 void PaceGuestFrameImpl(uint8_t* base) {
   double cap = REXCVAR_GET(skate3_guest_fps_cap);
   if (REXCVAR_GET(skate3_guest_fps_cap_auto)) {
@@ -317,6 +319,7 @@ void PaceGuestFrameImpl(uint8_t* base) {
     s_loading = loading;
     REXLOG_INFO("fast loading: {}", loading ? "loading, frame cap lifted" : "frame cap restored");
   }
+  g_lifted_cap = loading ? cap : 0.0;
   if (cap < 1.0 || loading) {
     s_next = {};
     return;
@@ -525,6 +528,7 @@ extern "C" REX_FUNC(sub_82B82E08) {
   using Clock = std::chrono::steady_clock;
   const auto t0 = Clock::now();
   skate3::native_render::g_last_pace_ms = 0.0f;
+  skate3::native_render::g_lifted_cap = 0.0;
   if (skate3::native_render::Enabled()) {
     skate3::native_render::OnFrameEnd(base);
   }
@@ -1221,3 +1225,6 @@ extern "C" REX_FUNC(sub_827C1D38) {
   }
 }
 
+namespace skate3::native_render {
+double LiftedCapThisFrame() { return g_lifted_cap; }
+}  // namespace skate3::native_render

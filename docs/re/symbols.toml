@@ -567,6 +567,13 @@ confidence = "confirmed"
 evidence = "disassembly; title probe (ready at 1.5 s)"
 hooked = "src/skate3_demo_path.cpp (quick title: any button ends the delay)"
 
+[sub_825EC0E8]
+name = "FrontEnd state manager: input dispatch"
+signature = "(S, ?, code, ?)  S = *(0x830CFE14) + 0x200"
+role = "Routes an FE input code to the top screen's ReceiveInput (vtable +0x28). Drops it while the queued-state list S+32..36 is non-empty, the lock byte S+12 is set, *(*(0x830354EC+28))+11264 is non-zero, or sub_825EB998 claims it; popups (S+112..116) go to state 29. The top state (S+8 table, stack S+16..20, 20-byte records) takes input only when its +16 is 3 (1 entering, 2 intro, 3 active), byte +49 is set and word +52 is 0. Skate 2 transfer said Fesl::TransactorImpl::Nonblock (wrong)."
+confidence = "likely"
+evidence = "disassembly; the title's ReceiveInput lr (825EC2C4); harness fe_input events in census_menus (2026-11-17)"
+
 [sub_82609238]
 name = "FrontEndState (id 22, title)::ReceiveInput"
 signature = "(this, ?, code)"

@@ -130,6 +130,10 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
   s.override_pad = mode == "override";
   s.async = t["async"].value_or(false);
   s.until_screen_changes = t["until_screen_changes"].value_or(false);
+  s.wait_ready = t["wait_ready"].value_or(true);
+  if (auto v = t["fe_ready"].value<bool>()) {
+    s.fe_ready = *v;
+  }
   s.every_ms = Integer(t, "every_ms").value_or(300);
 
   s.file = t["file"].value_or(std::string());
@@ -406,7 +410,7 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
       }
       break;
     case Verb::kWait:
-      if (!s.gameplay && !s.frames && !s.ms && !s.fe_screen && !s.presence && s.log.empty() &&
+      if (!s.gameplay && !s.frames && !s.ms && !s.fe_screen && !s.fe_ready && !s.presence && s.log.empty() &&
           !s.speed_gt && !s.speed_lt) {
         *error = "wait needs one of gameplay, frames, ms, fe_screen, presence, log, speed_gt, "
                  "speed_lt";
@@ -451,7 +455,8 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
       }
       break;
     case Verb::kExpect:
-      if (s.log.empty() && s.no_log.empty() && !s.speed_gt && !s.speed_lt && !s.presence && !s.fe_screen) {
+      if (s.log.empty() && s.no_log.empty() && !s.speed_gt && !s.speed_lt && !s.presence && !s.fe_screen &&
+          !s.fe_ready) {
         *error = "expect needs one of log, no_log, speed_gt, speed_lt, presence, fe_screen";
         return false;
       }

@@ -1,0 +1,31 @@
+# World load times (docs/re/boot.md, "World loads run at frame pace"):
+# boot to free skate, a teleport into another district (a map load from
+# the default save's Downtown spot), a replay's load and its exit. Compare
+# skate3_fast_loading on and off at a frame cap, e.g.
+#   rs.sh windows scenarios/load_times.toml -- --skate3_guest_fps_cap=30
+#     --skate3_guest_fps_cap_auto=false --skate3_fast_loading=false
+# (the cap and the setting come from the command line: scenario cvars would
+# override them). Needs a saved replay (clip 1).
+
+name = "load_times"
+timeout_s = 400
+boot = "demo"
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 300
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "teleport"
+location = "Z_UN_ClockTower"
+timeout_s = 120
+
+[[step]]
+do = "play_reel"
+clip = 1
+exit = "skate"

@@ -30,7 +30,7 @@
 namespace skate3::harness {
 
 enum class Verb {
-  kWait,        // gameplay=true | frames=N | ms=N | fe_screen=N | presence=N |
+  kWait,        // gameplay=true | frames=N | ms=N | fe_screen=N | fe_ready=b | presence=N |
                 // log="regex" | speed_gt=x | speed_lt=x ; timeout_s=N (default 120)
   kInput,       // buttons="a+lb" lt rt (0..1) lx ly rx ry (-1..1) frames=N
                 // mode="override"|"overlay" async=false
@@ -47,7 +47,7 @@ enum class Verb {
   kPause,       // hold the game at the next frame boundary
   kStep,        // frames=N while paused
   kResume,
-  kExpect,      // log="regex" | no_log="regex" | speed_gt | speed_lt | presence | fe_screen
+  kExpect,      // log="regex" | no_log="regex" | speed_gt | speed_lt | presence | fe_screen | fe_ready
   kExit,        // code=0
   kQuery,       // live channel only: what="state"|"status"
   kCapture,     // tag="x" frames=1: RenderDoc capture of the next N frames (RenderDoc attached)
@@ -95,6 +95,12 @@ struct Step {
   // input: repeat the tap until the top FE screen is no longer the one that
   // was up when the step began (a screen that ignores early input).
   bool until_screen_changes = false;
+  // input: while a menu screen is on top (FE depth >= 2), wait (up to 10 s)
+  // until it accepts input (fe_ready: its state is active, not entering or
+  // playing its intro) before pressing.
+  bool wait_ready = true;
+  // wait / expect: fe_ready = true|false.
+  std::optional<bool> fe_ready;
   // Inserted by the harness, not written in the scenario ("start_spot": the
   // settle and teleport after the first gameplay wait); events say so.
   std::string implicit;
