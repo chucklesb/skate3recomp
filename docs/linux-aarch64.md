@@ -113,27 +113,30 @@ harness, which stays idle unless it is switched on from the command line.
 **A local testing build, not published** (for the device only):
 
 ```sh
-SKATE3_APPIMAGE_VARIANT=testing SKATE3_APPIMAGE_KEEP_DEBUG=1 \
-  nix develop .#cross --command \
-  tools/cross-aarch64/build.sh relwithdebinfo sysroot codegen build appimage
+tools/release/build-testing.sh            # build only (~40 s when unchanged)
+tools/release/build-testing.sh --install  # and replace the app on the Odin 2 (~25 s)
 ```
 
 It writes `out/release/skate3recomp-testing-<version>-aarch64.AppImage`, with
-the `git describe` version (e.g. `2.1.0.4-dev.g9f8a303`). To replace the
-testing app on the device:
-1. In DroidDeck, with no session running: **Desktop**, open
-   **Skate3Recomp Testing**, **Remove**, and confirm **Remove**. That deletes
-   `/opt/appimages/user/<id>` and its menu entry. Game files, settings and
-   saves live elsewhere and stay.
+the `git describe` version (e.g. `2.1.0.6-dev.gab03439`). `--install` runs
+`tools/harness/droiddeck_install_appimage.py` (DroidDeck must be idle; add
+`--smoke` to launch it once), which does what you would do by hand:
+1. **Desktop**, open **Skate3Recomp Testing**, **Remove**, confirm. That
+   deletes `/opt/appimages/user/<id>` and its menu entry; game files,
+   settings and saves live elsewhere and stay.
 2. `adb push` the AppImage to `/storage/emulated/0/Download/`.
-3. **Desktop → Add → AppImage → Choose file**, pick it (the picker's
-   Search filters the folder), leave the name empty (it comes from the
-   AppImage) and press **Add**. Extraction takes a few seconds.
-4. Delete the copy in Download.
+3. **Desktop → Add → AppImage → Choose file**, go to Download, filter for
+   the file, pick it, leave the name empty (it comes from the AppImage),
+   **Add**.
+4. Check the installed binary's version, delete the copy in Download.
 
-`droiddeckctl ui click` drives the same buttons (`--match "Remove"`; the
-dialog's own button is a later `--index`), and `adb shell input text`
-types into the picker's filter after a click on "Filter this folder".
+Script traps (all handled): each `droiddeckctl` call costs ~1 s (an
+`adb shell content call` starts a Java process), so it dumps once per screen
+and taps node centres with `adb shell input tap`; the picker reopens in the
+last folder it showed; in landscape the keyboard goes full screen and covers
+everything (one Back hides it) while the UI dump still lists the app's nodes;
+off-screen rows report zero-width bounds; a failure presses Back until no
+dialog is open.
 
 ### Release notes
 

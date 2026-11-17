@@ -1,7 +1,9 @@
 add_custom_target(generate-skate3
-    COMMAND $<TARGET_FILE:rex::rexglue> codegen
-            ${SKATE3_CODEGEN_ARGS}
-            "${CMAKE_CURRENT_BINARY_DIR}/manifests/skate3.toml"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DREXGLUE=$<TARGET_FILE:rex::rexglue>"
+            "-DMANIFEST=${CMAKE_CURRENT_BINARY_DIR}/manifests/skate3.toml"
+            "-DTOOL_STAMP=${CMAKE_CURRENT_SOURCE_DIR}/generated/codegen-tool.skate3.sha256"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunCodegen.cmake"
     COMMAND "${CMAKE_COMMAND}"
             "-DSKATE3_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplySkate3CodegenPatches.cmake"
@@ -11,9 +13,11 @@ add_custom_target(generate-skate3
 )
 
 add_custom_target(generate-eawebkit
-    COMMAND $<TARGET_FILE:rex::rexglue> codegen
-            ${SKATE3_CODEGEN_ARGS}
-            "${CMAKE_CURRENT_BINARY_DIR}/manifests/eawebkit.toml"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DREXGLUE=$<TARGET_FILE:rex::rexglue>"
+            "-DMANIFEST=${CMAKE_CURRENT_BINARY_DIR}/manifests/eawebkit.toml"
+            "-DTOOL_STAMP=${CMAKE_CURRENT_SOURCE_DIR}/generated/codegen-tool.eawebkit.sha256"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunCodegen.cmake"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     COMMENT "Generating recompiled code for EAWebkit.xex"
     VERBATIM

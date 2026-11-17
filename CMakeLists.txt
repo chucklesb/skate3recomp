@@ -169,10 +169,9 @@ endif()
 # copies; rexglue applies the sibling .xexp patch when it loads each module.
 set(SKATE3_CODEGEN_DEFAULT_XEX "${SKATE3_GAME_DATA_ROOT_CONFIG}/default.xex")
 set(SKATE3_CODEGEN_EAWEBKIT_XEX "${SKATE3_GAME_DATA_ROOT_CONFIG}/data/webkit/EAWebkit.xex")
-# generate-all is an explicit regenerate step. rexglue's input stamp does not
-# cover the rexglue build itself, so a codegen fix would otherwise be skipped;
-# unchanged outputs are still left untouched.
-set(SKATE3_CODEGEN_ARGS "--ignore-stamp")
+# generate-all runs cmake/RunCodegen.cmake: rexglue's input stamp skips an
+# unchanged project, and a changed rexglue binary (SHA-256) forces a full
+# regenerate (the stamp doesn't cover the rexglue build itself).
 set(SKATE3_FUNCTION_CONFIG_INCLUDES
     "  \"${SKATE3_SOURCE_DIR_CONFIG}/config/skate3_functions.toml\",")
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
