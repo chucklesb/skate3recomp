@@ -15,9 +15,15 @@ skate3_demo_path_signed_in = true
 skate3_demo_path_probe = true
 skate3_guest_fps_cap_auto = false
 
+# Ends once the title is up (it waits for input from there on).
 [[step]]
 do = "wait"
-ms = 45000
+fe_screen = 22
+timeout_s = 90
+
+[[step]]
+do = "wait"
+ms = 500
 
 [[step]]
 do = "screenshot"

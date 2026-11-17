@@ -23,16 +23,18 @@ timeout_s = 60
 
 [[step]]
 do = "wait"
-ms = 1000
+ms = 500
 
 [[step]]
 do = "screenshot"
 tag = "language"
 
+# The language screen ignores input for its first moments: tap until it goes.
 [[step]]
 do = "input"
 buttons = "a"
 frames = 3
+until_screen_changes = true
 
 [[step]]
 do = "wait"
@@ -41,7 +43,7 @@ timeout_s = 10
 
 [[step]]
 do = "wait"
-ms = 1000
+ms = 500
 
 [[step]]
 do = "screenshot"
@@ -59,7 +61,12 @@ timeout_s = 10
 
 [[step]]
 do = "wait"
-ms = 1500
+ms = 300
+
+# The X held from the logo must not have skipped the movie too.
+[[step]]
+do = "expect"
+fe_screen = 24
 
 [[step]]
 do = "screenshot"
@@ -77,15 +84,20 @@ timeout_s = 10
 
 [[step]]
 do = "wait"
-ms = 1500
+ms = 500
 
 [[step]]
 do = "screenshot"
 tag = "title"
 
+# No press carried into the title: it stays up past its 1.5 s prompt delay.
 [[step]]
 do = "wait"
-ms = 3000
+ms = 1500
+
+[[step]]
+do = "expect"
+fe_screen = 22
 
 [[step]]
 do = "screenshot"

@@ -22,6 +22,7 @@ timeout_s = 60
 do = "input"
 buttons = "a"
 frames = 3
+until_screen_changes = true
 [[step]]
 do = "wait"
 fe_screen = 5

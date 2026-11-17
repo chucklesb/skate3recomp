@@ -12,8 +12,8 @@ menu; the team screen; Create-a-Skater with an accepted edit (a hat on, then
 off again, so the profile ends as it started; each exit saves it and
 regenerates the skater photo); Import Skater; the replay editor with Take
 Photo (declined); My Replays; a career photo in the photo viewer (FE 36).
-native_tour_boot is a normal boot through the intro movies to the title
-screen.
+native_tour_boot is a boot through every boot screen to the title: one
+screenshot per screen, then a press skips it.
 
 Not reached by script (see docs/native-only.md): a photo challenge's shutter
 and photo screens (needs the trick landed) and the career "new team member"
@@ -173,10 +173,22 @@ def tour() -> str:
 
 
 def boot_tour() -> str:
+    # Each boot screen once: wait for it, let it draw for 0.5 s, shoot it,
+    # then skip it (A picks the language; any button skips the logo and the
+    # movie, tapped again until the screen leaves, as early taps can be
+    # ignored). Then the title, before and after its prompt is revealed.
     s = Steps()
-    for i in range(6):
-        s.add(do="wait", ms=8000)
-        s.add(do="screenshot", tag=f"boot_{i}")
+    for screen, tag, button in ((47, "language", "a"), (5, "logo", "x"), (24, "movie", "x")):
+        s.add(do="wait", fe_screen=screen, timeout_s=60)
+        s.add(do="wait", ms=500)
+        s.add(do="screenshot", tag=f"boot_{tag}")
+        s.add(do="input", buttons=button, frames=3, until_screen_changes=True)
+    s.add(do="wait", fe_screen=22, timeout_s=60)
+    s.add(do="wait", ms=500)
+    s.add(do="screenshot", tag="boot_title")
+    s.add(do="input", buttons="x", frames=3)  # reveals "Press Start" at once
+    s.add(do="wait", ms=500)
+    s.add(do="screenshot", tag="boot_title_prompt")
     return "".join(s.out)
 
 
@@ -189,8 +201,8 @@ def main() -> int:
     (out / "native_tour.toml").write_text(
         HEADER.format(doc=doc, name="native_tour", timeout=1200, boot="demo") + "\n" + tour())
     (out / "native_tour_boot.toml").write_text(
-        HEADER.format(doc="# A normal boot through the intro movies (native_tour's boot part).",
-                      name="native_tour_boot", timeout=200, boot="none") + "\n" + boot_tour())
+        HEADER.format(doc="# Every boot screen once, each shot then skipped (native_tour's boot part).",
+                      name="native_tour_boot", timeout=120, boot="none") + "\n" + boot_tour())
     print("wrote scenarios/native_tour.toml, scenarios/native_tour_boot.toml")
     return 0
 

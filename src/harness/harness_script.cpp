@@ -129,6 +129,8 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
   }
   s.override_pad = mode == "override";
   s.async = t["async"].value_or(false);
+  s.until_screen_changes = t["until_screen_changes"].value_or(false);
+  s.every_ms = Integer(t, "every_ms").value_or(300);
 
   s.file = t["file"].value_or(std::string());
   s.start = t["start"].value_or(true);
@@ -416,6 +418,19 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
         *error = "input needs frames = N (how long to hold)";
         return false;
       }
+      if (s.until_screen_changes) {
+        if (s.async) {
+          *error = "input: until_screen_changes can't be async";
+          return false;
+        }
+        if (s.every_ms < 50) {
+          *error = "input: every_ms must be >= 50";
+          return false;
+        }
+        if (!t.get("timeout_s")) {
+          s.timeout_s = 15.0;
+        }
+      }
       break;
     case Verb::kPlay:
       if (s.file.empty()) {
@@ -436,8 +451,8 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
       }
       break;
     case Verb::kExpect:
-      if (s.log.empty() && s.no_log.empty() && !s.speed_gt && !s.speed_lt && !s.presence) {
-        *error = "expect needs one of log, no_log, speed_gt, speed_lt, presence";
+      if (s.log.empty() && s.no_log.empty() && !s.speed_gt && !s.speed_lt && !s.presence && !s.fe_screen) {
+        *error = "expect needs one of log, no_log, speed_gt, speed_lt, presence, fe_screen";
         return false;
       }
       break;

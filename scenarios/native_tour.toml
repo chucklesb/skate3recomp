@@ -7,8 +7,8 @@
 # off again, so the profile ends as it started; each exit saves it and
 # regenerates the skater photo); Import Skater; the replay editor with Take
 # Photo (declined); My Replays; a career photo in the photo viewer (FE 36).
-# native_tour_boot is a normal boot through the intro movies to the title
-# screen.
+# native_tour_boot is a boot through every boot screen to the title: one
+# screenshot per screen, then a press skips it.
 name = "native_tour"
 timeout_s = 1200
 boot = "demo"

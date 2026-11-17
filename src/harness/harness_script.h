@@ -34,6 +34,8 @@ enum class Verb {
                 // log="regex" | speed_gt=x | speed_lt=x ; timeout_s=N (default 120)
   kInput,       // buttons="a+lb" lt rt (0..1) lx ly rx ry (-1..1) frames=N
                 // mode="override"|"overlay" async=false
+                // until_screen_changes=true every_ms=300 timeout_s=15: tap
+                // again every every_ms until the top FE screen changes
   kPlay,        // file="x.s3rec" mode="override"|"overlay" async=false
   kRecord,      // start=true|false file="name.s3rec" note="..."
   kCvar,        // [step.set] name = value ...
@@ -45,7 +47,7 @@ enum class Verb {
   kPause,       // hold the game at the next frame boundary
   kStep,        // frames=N while paused
   kResume,
-  kExpect,      // log="regex" | no_log="regex" | speed_gt | speed_lt | presence
+  kExpect,      // log="regex" | no_log="regex" | speed_gt | speed_lt | presence | fe_screen
   kExit,        // code=0
   kQuery,       // live channel only: what="state"|"status"
   kCapture,     // tag="x" frames=1: RenderDoc capture of the next N frames (RenderDoc attached)
@@ -90,6 +92,10 @@ struct Step {
   PadState pad;
   bool override_pad = true;  // mode = "override" (default) | "overlay"
   bool async = false;
+  // input: repeat the tap until the top FE screen is no longer the one that
+  // was up when the step began (a screen that ignores early input).
+  bool until_screen_changes = false;
+  int64_t every_ms = 300;
 
   // play / record
   std::string file;

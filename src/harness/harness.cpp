@@ -1091,7 +1091,7 @@ Outcome ExecuteExpect(Run& r, const Step& st) {
       return Fail(std::string("bad regex: ") + e.what());
     }
   }
-  if (st.presence || st.speed_gt || st.speed_lt) {
+  if (st.presence || st.fe_screen || st.speed_gt || st.speed_lt) {
     std::lock_guard lk(r.mu);
     std::string why;
     if (!StatePredicate(r.state, st, &why)) {
@@ -1107,6 +1107,53 @@ Outcome Execute(Run& r, const Step& st) {
       return ExecuteWait(r, st);
 
     case Verb::kInput: {
+      if (st.until_screen_changes) {
+        // Tap, then give the screen every_ms to react; again until the top
+        // FE screen is no longer the one up at the start (or timeout_s).
+        int64_t from;
+        {
+          std::lock_guard lk(r.mu);
+          from = r.state.fe_top;
+        }
+        const auto deadline = Clock::now() + std::chrono::duration_cast<Clock::duration>(
+                                                 std::chrono::duration<double>(st.timeout_s));
+        const auto left = [&] { return r.state.fe_top != from; };
+        int taps = 0;
+        while (true) {
+          uint64_t until;
+          {
+            std::lock_guard lk(r.mu);
+            if (left()) {
+              break;
+            }
+            r.script_pad = st.pad;
+            r.script_override = st.override_pad;
+            r.script_until_frame = r.frame + static_cast<uint64_t>(*st.frames);
+            r.script_active = true;
+            until = r.script_until_frame;
+          }
+          ++taps;
+          if (!WaitUntil(r, static_cast<double>(*st.frames) / 10.0 + 30.0,
+                         [&] { return r.frame >= until; })) {
+            return Fail("game stopped presenting frames during input");
+          }
+          if (WaitUntil(r, static_cast<double>(st.every_ms) / 1000.0, left)) {
+            break;
+          }
+          if (Clock::now() >= deadline) {
+            return Fail("input: FE screen " + std::to_string(from) + " still on top after " +
+                        std::to_string(taps) + " taps");
+          }
+        }
+        int64_t to;
+        {
+          std::lock_guard lk(r.mu);
+          to = r.state.fe_top;
+        }
+        Event(r, "input_until", "\"from\":" + std::to_string(from) + ",\"to\":" +
+                                    std::to_string(to) + ",\"taps\":" + std::to_string(taps));
+        return {};
+      }
       uint64_t until;
       {
         std::lock_guard lk(r.mu);
