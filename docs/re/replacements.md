@@ -59,6 +59,10 @@ row here saying what's missing.
 | `sub_82609050`, `sub_82609238` | title `OnUpdate` / `ReceiveInput` (FE 22) | control | hooked-only | the quick title wraps them (`skate3_title_quick_start`); [boot.md](boot.md#the-title-screen-fe-state-22) | Replace with the boot handler chain |
 | `sub_82639400` | language select `OnUpdate` (FE 47) | control | specified | 10,000 ms timeout, then pops itself | Replace with the boot handler chain |
 | `sub_826FDC50`..`sub_826FE1D8` | `StateBootFlow` handlers (7) | control | specified | [boot.md](boot.md): events, transitions, the load phase | Native chain: needs the movie handler's side effects understood |
+| `sub_8296D1F0`, `sub_8296D0D0`, `sub_826991B8` | pad ring pop / push / unpush (Sk8AppMan) | control | native-on | `skate3_native_padring.cpp` `ring_pop`/`ring_push`/`ring_unpush` (`skate3_native_padring_replace`); host atomics on the guest indices; Windows + Odin 2: plaza frame times level, reel char_sync 0, boot_skip input; [boot.md](boot.md#before-the-boot-flow-the-game-tick-and-its-pad-sample-rings) | - |
+| `sub_82699230` | pad ring consume | control | specified | drains ring idx, copies the 4 pad records per sample (`sub_82966F30`) | Replace with `sub_82966F30` (the per-pad debounce, specify it) |
+| `sub_826D34B8` | Sk8AppMan per-tick update | control | hooked-only | harness request point, gate probe | Large (every game system's update); later |
+| `sub_829661F0` | render loop | control | specified | stopwatch, app mutex, presenter render, unlock | Replace once the presenter's render path is mapped |
 | `sub_82816A40` | `DoFrustumCulling` | pure | native-on | `skate3_native_cull.cpp` `cull`; shadow bit-exact on both platforms; [culling.md](culling.md) | - |
 | `sub_82817138` | `Sk8::VectorizedCullingJob` | control | native (with `cull` on) | `cull_job` | - |
 | `sub_82812A20` | `BufferedIterativeJobEntryPoint<VectorizedCullingJob>` | control | native (with `cull` on) | `cull_ent` | - |
