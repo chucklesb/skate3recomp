@@ -360,6 +360,7 @@ set(SKATE3_COMMON_SOURCES
     src/native/skate3_native_replace.cpp
     src/native/skate3_native_fence.cpp
     src/native/skate3_native_jobs.cpp
+    src/native/skate3_native_cull.cpp
     src/skate3_native_debug_dialog.cpp
     src/skate3_native_render.cpp
     src/skate3_native_scene.cpp
