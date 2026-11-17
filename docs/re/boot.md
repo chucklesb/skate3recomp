@@ -59,6 +59,28 @@ and ~2,430 frames).
   run, 10.9 s in two others), so scenarios wait for each screen
   (`wait fe_screen = N`), not a fixed time.
 
+## World loads run at frame pace
+Measured 2026-11-17 (Windows, the same boot, teleport and replay in each
+run, two runs per cap): every world load takes about twice as long at a
+30 fps cap as uncapped.
+
+| Load | 30 fps cap | uncapped |
+|---|---|---|
+| Title -> free skate (the boot's world load) | 12.8 s | 8.5 s |
+| Teleport to another district (map load) | 15.4 s | 6.7 s |
+| Replay load (loading screen) | 13.2 s | 5.6 s |
+| Replay exit back to free skate | 9.3 s | 5.5 s |
+
+So the loads advance per presented frame, not on their own clock. How they
+look from outside: the boot load and a map teleport are out of gameplay
+(presence context `0x8001` = 0) with only the root FE screen on the stack;
+replays load behind FE screen 52 (the loading screen) with presence 1.
+Menus are out of gameplay too but always have a screen above the root.
+`skate3_fast_loading` (default on; "Fast Loading" in the options menu)
+lifts the frame cap while that holds (`LoadingNow`,
+`src/skate3_native_render.cpp`). Which part of a load is per-frame (the
+streamer's per-frame budget, the main loop's tick) is not yet known.
+
 ## Input today
 | Screen | The game's own input | Our skip (`skate3_intro_movie_skip`, default on) |
 |---|---|---|

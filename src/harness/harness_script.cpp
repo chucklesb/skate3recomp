@@ -552,8 +552,10 @@ std::optional<Scenario> LoadScenario(const std::string& path, std::string* error
     Step settle;
     settle.verb = Verb::kWait;
     settle.frames = 90;
+    settle.implicit = "start_spot";
     Step tp;
     tp.verb = Verb::kTeleport;
+    tp.implicit = "start_spot";
     tp.location = sc.start_spot;
     tp.timeout_s = 120.0;  // a map load (Industrial) takes ~11 s on its own
     it = sc.steps.insert(it + 1, std::move(settle));

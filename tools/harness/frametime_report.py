@@ -10,7 +10,8 @@ two guest swaps), split into the parts measured at the swap hook:
     swap     the guest swap (present, GPU back-pressure)
     harness  the harness's own frame hook
 
-plus the frontend top / depth, flags (1 replay, 2 movie, 4 paused) and the
+plus the frontend top / depth, flags (1 replay, 2 movie, 4 paused, 8 out of
+gameplay: loading, menus; since 2026-11-17) and the
 running step. Paused frames are left out. Under each of the worst frames it
 lists the log.txt lines written during that frame (--log-lines N, 0: none).
 
@@ -21,7 +22,8 @@ standard deviation), and "busy" (the frame without the cap wait). Under a
 frame cap the fps stays at the cap while busy shows how much headroom is
 left, so busy is the number to watch for regressions and optimization.
 
-Segments: all; ingame (frontend [0], no movie: free skate and reels);
+Segments: all; ingame (frontend [0], no movie, in gameplay: free skate and
+reels; loads are out of gameplay and uncapped with skate3_fast_loading);
 reel<N> (reel_start .. reel_stop); "perf <name>" marks (a `mark` step with
 text "perf <name>" up to the next mark or "perf end"); and with --by-step,
 every step.
@@ -75,7 +77,8 @@ def load(d: Path):
 def segments(rows, events, by_step: bool):
     """name -> (first frame, last frame) or a row predicate."""
     segs = {"all": lambda r: True,
-            "ingame": lambda r: r["fe_depth"] == 1 and r["fe_top"] == 0 and not r["flags"] & 2}
+            "ingame": lambda r: (r["fe_depth"] == 1 and r["fe_top"] == 0
+                                and not r["flags"] & 2 and not r["flags"] & 8)}
     last = rows[-1]["frame"] if rows else 0
     reel_n = 0
     start = None

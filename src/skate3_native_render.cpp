@@ -28,6 +28,7 @@
 #endif
 
 #include <rex/cvar.h>
+#include <rex/kernel/guest_presence.h>
 #include <rex/logging.h>
 #include <rex/ui/window.h>
 
@@ -65,6 +66,13 @@ REXCVAR_DEFINE_BOOL(skate3_guest_fps_cap_auto, true, "Skate 3",
                     "landing inside the panel's minimum refresh period tears even "
                     "under VRR. Overrides skate3_guest_fps_cap while the display "
                     "refresh is known.")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skate3_fast_loading, true, "Skate 3",
+                    "Lift the guest frame cap while the game loads (the boot's world load, "
+                    "a map teleport, a replay's loading screen). Loading advances per frame, "
+                    "so at a 30 fps cap it takes about twice as long as uncapped (Windows: "
+                    "teleport 15.4 -> 6.7 s, replay load 13.2 -> 5.6 s). Gameplay, menus "
+                    "and replays keep the cap.")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
 namespace skate3::native_scene {
@@ -263,11 +271,35 @@ void OnClothDraw(uint8_t* base, uint32_t r4, uint32_t r5, uint32_t r6, uint32_t 
   g_current_frame.push_back({3, key, 0, dyn});
 }
 
+// Loading right now (skate3_fast_loading): the loading screen (FE screen 52)
+// is up, or the game is out of gameplay (presence context 0x8001 = 0) with
+// only the root FE screen on the stack, which is how the boot's world load,
+// a map teleport and a challenge load look. Menus are out of gameplay too,
+// but always have a screen above the root; the title and intros report
+// presence 7.
+constexpr uint32_t kFeLoadingScreen = 52;
+bool LoadingNow(uint8_t* base) {
+  if (base == nullptr) {
+    return false;
+  }
+  uint32_t mgr = 0, beg = 0, end = 0, top = 0xFFFFFFFF;
+  if (skate3::native_scene::GuestTryLoadU32(base, 0x830CFE14, &mgr) && mgr &&
+      skate3::native_scene::GuestTryLoadU32(base, mgr + 0x210, &beg) &&
+      skate3::native_scene::GuestTryLoadU32(base, mgr + 0x214, &end) && end >= beg + 20 &&
+      end - beg < 20 * 64) {
+    skate3::native_scene::GuestTryLoadU32(base, end - 20, &top);
+  }
+  if (top == kFeLoadingScreen) {
+    return true;
+  }
+  return top == 0 && rex::kernel::guest_presence::GameplayContextValue() == 0;
+}
+
 // Precise guest frame pacing (see skate3_guest_fps_cap): called on the guest
 // render thread at the swap boundary. Absolute-schedule pacing (target +=
 // interval) so sleep jitter never accumulates; resyncs when the guest falls
 // more than one interval behind (loads, hitches).
-void PaceGuestFrameImpl() {
+void PaceGuestFrameImpl(uint8_t* base) {
   double cap = REXCVAR_GET(skate3_guest_fps_cap);
   if (REXCVAR_GET(skate3_guest_fps_cap_auto)) {
     // Refresh-derived cap (see the cvar). Falls through to the explicit cap
@@ -279,7 +311,13 @@ void PaceGuestFrameImpl() {
     }
   }
   static std::chrono::steady_clock::time_point s_next{};
-  if (cap < 1.0) {
+  static bool s_loading = false;
+  const bool loading = cap >= 1.0 && REXCVAR_GET(skate3_fast_loading) && LoadingNow(base);
+  if (loading != s_loading) {
+    s_loading = loading;
+    REXLOG_INFO("fast loading: {}", loading ? "loading, frame cap lifted" : "frame cap restored");
+  }
+  if (cap < 1.0 || loading) {
     s_next = {};
     return;
   }
@@ -309,15 +347,15 @@ void PaceGuestFrameImpl() {
 // The last frame's cap wait, ms (harness frames.csv: "pace").
 float g_last_pace_ms = 0.0f;
 
-void PaceGuestFrame() {
+void PaceGuestFrame(uint8_t* base) {
   const auto t0 = std::chrono::steady_clock::now();
-  PaceGuestFrameImpl();
+  PaceGuestFrameImpl(base);
   g_last_pace_ms =
       std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
 void OnFrameEnd(uint8_t* base) {
-  PaceGuestFrame();
+  PaceGuestFrame(base);
   // EMULATED-mode guest frame breakdown (emulated gameplay once regressed
   // from 140 to 66 fps while native stayed at cap; the native-scene perf
   // line only prints while the native renderer is active, so emulated

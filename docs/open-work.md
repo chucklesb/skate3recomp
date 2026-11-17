@@ -194,7 +194,14 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
   so input doesn't arrive too early. Done 2026-11-17: the boot-screen
   scenarios (158 s -> 58 s on both platforms; `input until_screen_changes`
   re-taps until the screen changes, `expect fe_screen`, demo boots end the
-  logo at once). Left:
+  logo at once). Measured 2026-11-17 (`tools/harness/step_times.py`, the
+  latest Windows run of all 58 scenarios, 3,330 s): `play_reel` 37.5% (per
+  reel ~20 s load and ~17 s exit around ~5 s of playback), `wait gameplay`
+  27% (17.6 s each), fixed `wait frames` settles ~15%, teleports ~7%. World
+  loads run at frame pace ([re/boot.md](re/boot.md)), so
+  `skate3_fast_loading` (on by default) lifts the frame cap while loading:
+  at a 30 fps cap, boot to gameplay 12.8 -> 8.7 s, teleport 15.4 -> 7.4 s,
+  replay load 13.2 -> 5.7 s, exit 9.3 -> 5.7 s. Left:
   - **Frame-count waits** (`wait frames = 120` after spawning, the 90-frame
     `start_spot` settle, `settle_frames`) are frames, not time: 120 frames
     is 4 s at a 30 fps cap and 1 s at 120 fps. Most of them stand in for a
@@ -206,8 +213,12 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
     as `play_reel` does for skate.Reel playback (the menu actions behind
     each button: career, free skate, options). That needs RE of the
     front-end screens' action handlers.
-  - Measure first: a per-step time table from `events.jsonl` across the
-    usual scenarios, to see where the time goes.
+  - **Menu settles** (presses 30-150 frames apart, ~4.7 min across the
+    menu scenarios): a press during a screen transition is dropped. An
+    "input accepted" signal from the FE (`StateManagerFrontEnd`'s input
+    lock or the ScreenManager's pending intro/outro callbacks; Skate 2
+    layouts, TU3 offsets unknown) would let `input` wait for it; RE-9
+    groundwork.
 - **Fly and noclip mode** to move the camera or skater through geometry, for
   looking at shadows and their casters.
 - **Scripted "backwards man" speed glitch** as a timed pad sequence (find the

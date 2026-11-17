@@ -95,6 +95,9 @@ struct Step {
   // input: repeat the tap until the top FE screen is no longer the one that
   // was up when the step began (a screen that ignores early input).
   bool until_screen_changes = false;
+  // Inserted by the harness, not written in the scenario ("start_spot": the
+  // settle and teleport after the first gameplay wait); events say so.
+  std::string implicit;
   int64_t every_ms = 300;
 
   // play / record

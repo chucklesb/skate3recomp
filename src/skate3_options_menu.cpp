@@ -463,6 +463,10 @@ Page BuildSystemPage(const RestartSettings& settings) {
   AddToggle(page, "Skippable Intros",
             "At startup, any button skips the Skate 3 logo and the intro movie.",
             {"skate3_intro_movie_skip"});
+  AddToggle(page, "Fast Loading",
+            "Loads run at full speed: the frame-rate cap is lifted while the game loads "
+            "(about twice as fast at a 30 fps cap).",
+            {"skate3_fast_loading"});
   AddToggle(page, "Quick Title Screen",
             "Any button shows the \"Press Start\" prompt at once, and A works like Start "
             "on it.",

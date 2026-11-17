@@ -262,7 +262,7 @@ struct Run {
     float dt = 0.0f, pace = 0.0f, native = 0.0f, swap = 0.0f, harness = 0.0f;  // ms
     int16_t fe_top = -1;
     uint8_t fe_depth = 0;
-    uint8_t flags = 0;  // 1 replay, 2 movie, 4 paused
+    uint8_t flags = 0;  // 1 replay, 2 movie, 4 paused, 8 out of gameplay (loading)
     int16_t step = 0;
   };
   std::vector<FrameRow> frame_rows;
@@ -590,7 +590,7 @@ std::string ResultJson(Run& r, int code, std::string_view status, std::string_vi
     std::vector<const Run::FrameRow*> all, ingame;
     for (const Run::FrameRow& f : r.frame_rows) {
       all.push_back(&f);
-      if (f.fe_depth == 1 && f.fe_top == 0 && !(f.flags & 2)) ingame.push_back(&f);
+      if (f.fe_depth == 1 && f.fe_top == 0 && !(f.flags & (2 | 8))) ingame.push_back(&f);
     }
     os << "  \"frametime\": " << FrameSummaryJson(all) << ",\n";
     os << "  \"frametime_ingame\": " << FrameSummaryJson(ingame) << ",\n";
@@ -2190,6 +2190,23 @@ std::string StepJson(const Step& st) {
   if (!st.text.empty()) {
     s += ",\"text\":\"" + JsonEscape(st.text) + "\"";
   }
+  if (!st.implicit.empty()) {
+    s += ",\"implicit\":\"" + JsonEscape(st.implicit) + "\"";
+  }
+  // What a wait waits for (step_times.py groups by it).
+  if (st.verb == Verb::kWait) {
+    std::string cond;
+    const auto add = [&](const std::string& c) { cond += (cond.empty() ? "" : " ") + c; };
+    if (st.gameplay) add("gameplay");
+    if (st.frames) add("frames=" + std::to_string(*st.frames));
+    if (st.ms) add("ms=" + std::to_string(*st.ms));
+    if (st.fe_screen) add("fe_screen=" + std::to_string(*st.fe_screen));
+    if (st.presence) add("presence=" + std::to_string(*st.presence));
+    if (!st.log.empty()) add("log");
+    if (st.speed_gt) add("speed_gt");
+    if (st.speed_lt) add("speed_lt");
+    s += ",\"cond\":\"" + JsonEscape(cond) + "\"";
+  }
   return s;
 }
 
@@ -2748,7 +2765,7 @@ void OnFrame(uint8_t* base) {
       row.fe_top = int16_t(std::clamp<int64_t>(s.fe_top, -1, 32767));
       row.fe_depth = uint8_t(std::min<uint32_t>(s.fe_depth, 255));
       row.flags = uint8_t((s.replay_active ? 1 : 0) | (s.movie_active ? 2 : 0) |
-                          (r->paused ? 4 : 0));
+                          (r->paused ? 4 : 0) | (s.presence != 1 ? 8 : 0));
       row.step = int16_t(r->step_now.load(std::memory_order_relaxed));
       r->frame_rows.push_back(row);
     }
