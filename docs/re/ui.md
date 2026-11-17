@@ -48,6 +48,15 @@ select ~0.2 s (why an early A was dropped), pause menu ~0.1 s,
 Create-a-Skater ~0.45 s. The harness exposes this as `fe_ready` (`fe_input`
 events, `wait fe_ready`, and `input` waits for it while a menu is up).
 
+## FE state methods (2026-11-17)
+
+Every FE state's OnEnter is vtable `+0x0C` and OnLeave `+0x18`; OpenScreen
+is `+56` (this, screen, 0) and CloseScreen `+60` (this, 0). Many enter /
+leave methods are a few instructions; 23 of them run as native code
+(`skate3_native_boot.cpp`, `skate3_native_fe.cpp`, catalogued in
+[replacements.md](replacements.md)). The harness `fe` step pushes or pops
+any state through the game's own calls, which is how they were exercised.
+
 ## What we already hook
 
 `src/skate3_options_menu.cpp` (the recomp settings inside the game's Options

@@ -33,6 +33,7 @@ constexpr VerbEntry kVerbs[] = {
     {"results", Verb::kResults},
     {"crash", Verb::kCrash},       {"teleport", Verb::kTeleport},
     {"play_reel", Verb::kPlayReel},  {"renderer", Verb::kRenderer},
+    {"fe", Verb::kFe},
     {"window", Verb::kWindow},     {"profile", Verb::kProfile},
 };
 
@@ -131,6 +132,7 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
   s.async = t["async"].value_or(false);
   s.until_screen_changes = t["until_screen_changes"].value_or(false);
   s.wait_ready = t["wait_ready"].value_or(true);
+  s.fe_state = Integer(t, "state");
   if (auto v = t["fe_ready"].value<bool>()) {
     s.fe_ready = *v;
   }
@@ -310,6 +312,13 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
 
   // Per-verb requirements.
   switch (s.verb) {
+    case Verb::kFe:
+      if (s.mem_op == "push" ? !s.fe_state || *s.fe_state < 0 || *s.fe_state > 255
+                             : s.mem_op != "pop") {
+        *error = "fe needs op = \"push\" with state = N (0..255), or op = \"pop\"";
+        return false;
+      }
+      break;
     case Verb::kRenderer:
       if (s.renderer != "native" && s.renderer != "emulated") {
         *error = "renderer needs renderer = \"native\" or \"emulated\"";

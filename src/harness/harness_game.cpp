@@ -535,6 +535,24 @@ bool RunOnGameThread(std::function<void(PPCContext&, uint8_t*)> fn, double timeo
   return r.ok;
 }
 
+bool FePush(uint32_t state, double timeout_s, std::string* error) {
+  return RunOnGameThread(
+      [state](PPCContext& ctx, uint8_t* base) {
+        const uint32_t mgr = CallGuest(ctx, base, sub_824AD240, {});
+        CallGuest(ctx, base, sub_82D0ABE0, {mgr, state});
+      },
+      timeout_s, error);
+}
+
+bool FePop(double timeout_s, std::string* error) {
+  return RunOnGameThread(
+      [](PPCContext& ctx, uint8_t* base) {
+        const uint32_t mgr = CallGuest(ctx, base, sub_824AD240, {});
+        CallGuest(ctx, base, sub_82D0AC88, {mgr});
+      },
+      timeout_s, error);
+}
+
 std::atomic<uint32_t> g_career_presenter{0};
 
 std::string CareerPresenterJson(uint8_t* base) {

@@ -1,0 +1,306 @@
+# Pushes FE states whose small OnEnter / OnLeave methods run as native code
+# (src/native/skate3_native_fe.cpp, skate3_native_boot.cpp fe_open), one at a
+# time from free skate: push, let it run, screenshot, pop. Run it with the
+# replacements on and off (--skate3_native_fe_replace=false
+# --skate3_native_boot_replace=false) and compare the shots and the replace
+# counters. A state pushed outside its usual flow may show nothing or
+# misbehave; both runs should agree. Left out: state 62 (it closes itself
+# behind a loading screen, so the pop would remove the root state) and 41
+# (crashes when pushed this way, with or without the replacements). Some
+# states stay on top (the pop doesn't take: 40, 43, 48 seen) and later pushes
+# then do nothing, so the comparison covers the states up to the first that
+# sticks; the earlier ones are what each run checks. 2026-11-17, Windows: on
+# and off gave the same FE stack and matching shots (23, 34, 40, 43, 46, 48
+# entered; 9, 11, 28, 32, 51 in an earlier variant).
+#
+#   tools/harness/run_scenario.py windows scenarios/fe_states_smoke.toml
+
+name = "fe_states_smoke"
+timeout_s = 600
+boot = "demo"
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 300
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "fe"
+op = "push"
+state = 23
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "screenshot"
+tag = "s23"
+
+[[step]]
+do = "fe"
+op = "pop"
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "fe"
+op = "push"
+state = 34
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "screenshot"
+tag = "s34"
+
+[[step]]
+do = "fe"
+op = "pop"
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "fe"
+op = "push"
+state = 46
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "screenshot"
+tag = "s46"
+
+[[step]]
+do = "fe"
+op = "pop"
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "fe"
+op = "push"
+state = 48
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "screenshot"
+tag = "s48"
+
+[[step]]
+do = "fe"
+op = "pop"
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "fe"
+op = "push"
+state = 51
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "screenshot"
+tag = "s51"
+
+[[step]]
+do = "fe"
+op = "pop"
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "fe"
+op = "push"
+state = 9
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "screenshot"
+tag = "s9"
+
+[[step]]
+do = "fe"
+op = "pop"
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "fe"
+op = "push"
+state = 11
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "screenshot"
+tag = "s11"
+
+[[step]]
+do = "fe"
+op = "pop"
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "fe"
+op = "push"
+state = 28
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "screenshot"
+tag = "s28"
+
+[[step]]
+do = "fe"
+op = "pop"
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "fe"
+op = "push"
+state = 32
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "screenshot"
+tag = "s32"
+
+[[step]]
+do = "fe"
+op = "pop"
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "fe"
+op = "push"
+state = 44
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "screenshot"
+tag = "s44"
+
+[[step]]
+do = "fe"
+op = "pop"
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "fe"
+op = "push"
+state = 70
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "screenshot"
+tag = "s70"
+
+[[step]]
+do = "fe"
+op = "pop"
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "fe"
+op = "push"
+state = 40
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "screenshot"
+tag = "s40"
+
+[[step]]
+do = "fe"
+op = "pop"
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "fe"
+op = "push"
+state = 43
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "screenshot"
+tag = "s43"
+
+[[step]]
+do = "fe"
+op = "pop"
+
+[[step]]
+do = "wait"
+frames = 45
+
+[[step]]
+do = "screenshot"
+tag = "end"

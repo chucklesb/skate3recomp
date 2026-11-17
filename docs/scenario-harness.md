@@ -216,6 +216,7 @@ Steps run in order. A failing step ends the run with code 1.
 | `mark` | `text`, written to the log. |
 | `snapshot` | `tag = "snapshot"`: a full guest-memory snapshot, `snapshots/<tag>.gsnap`, on any platform (the game is held at a frame boundary while it's read; about 1 GB). Read it with `tools/re/gsnap.py`, or import the image into Ghidra with `tools/re/ghidra/setup.py`. `native = true`: the native renderer's own capture instead (memory plus that frame's draw records, Windows only, through its trigger file). |
 | `pause` / `step` / `resume` | Hold the game at a frame boundary. `step frames = N` advances N frames while paused. |
+| `fe` | `op = "push"` with `state = N` pushes FE state N, `op = "pop"` pops the top one, through the game's own calls on the game thread (`sub_82D0ABE0` / `sub_82D0AC88`; [re/ui.md](re/ui.md)). Opens a menu without navigating to it. A state outside its usual flow may show nothing, stay on top or crash (41 does): for tests and RE (`scenarios/fe_states_smoke.toml`). |
 | `expect` | `log = "regex"` (seen in this run's log), `no_log = "regex"`, `speed_gt`, `speed_lt`, `presence`, `fe_screen` (the top FE screen now), `fe_ready`. |
 | `exit` | `code = 0`. |
 | `capture` | `tag`, `frames = 1`: RenderDoc capture of the next N frames (see below). |

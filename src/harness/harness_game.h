@@ -142,6 +142,13 @@ bool CareerCompletePaid(uint32_t challenge, bool killed, double timeout_s, std::
 std::string CareerPresenterJson(uint8_t* base);
 bool CareerShow(double timeout_s, std::string* error);
 
+// Pushes FE state `state` / pops the top FE state through the game's own
+// calls (sub_82D0ABE0 / sub_82D0AC88 on the state manager sub_824AD240
+// returns; docs/re/ui.md), on the game thread. A state out of its usual
+// context may misbehave: for tests and RE.
+bool FePush(uint32_t state, double timeout_s, std::string* error);
+bool FePop(double timeout_s, std::string* error);
+
 void OnGuestFrame(PPCContext& ctx, uint8_t* base);
 
 }  // namespace skate3::harness::game

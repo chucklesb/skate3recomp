@@ -1879,6 +1879,19 @@ Outcome Execute(Run& r, const Step& st) {
       return o;
     }
 
+    case Verb::kFe: {
+      std::string err;
+      const bool push = st.mem_op == "push";
+      const bool ok = push ? game::FePush(static_cast<uint32_t>(*st.fe_state), 10.0, &err)
+                           : game::FePop(10.0, &err);
+      if (!ok) {
+        return Fail("fe " + st.mem_op + ": " + err);
+      }
+      Event(r, "fe_" + st.mem_op,
+            push ? "\"state\":" + std::to_string(*st.fe_state) : std::string());
+      return {};
+    }
+
     case Verb::kRenderer: {
       const bool native = st.renderer == "native";
       if (!SetRenderer(native)) {

@@ -368,6 +368,7 @@ set(SKATE3_COMMON_SOURCES
     src/native/skate3_native_cull.cpp
     src/native/skate3_native_boot.cpp
     src/native/skate3_native_padring.cpp
+    src/native/skate3_native_fe.cpp
     src/skate3_native_debug_dialog.cpp
     src/skate3_native_render.cpp
     src/skate3_native_scene.cpp

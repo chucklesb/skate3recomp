@@ -55,6 +55,7 @@ enum class Verb {
   kTeleport,    // location="Z_UN_ClockTower" (a registry locator) tolerance=5 timeout_s=60
                 // settle=true (false: return on arrival, e.g. a floorless locator)
   kRenderer,    // renderer="native"|"emulated" frames=30: the F5 switch, then settle
+  kFe,          // op="push" state=N | op="pop": push / pop an FE state (game's own calls)
   kWindow,      // show=true|false: show or hide the game window (headless runs)
   kProfile,     // op="start" hz=1000 | op="stop": guest CPU profile (profile.txt)
   kVideo,       // frames=N tag="x": every rendered frame as video/<tag>/f<n>.png
@@ -99,6 +100,8 @@ struct Step {
   // until it accepts input (fe_ready: its state is active, not entering or
   // playing its intro) before pressing.
   bool wait_ready = true;
+  // fe: the FE state id to push.
+  std::optional<int64_t> fe_state;
   // wait / expect: fe_ready = true|false.
   std::optional<bool> fe_ready;
   // Inserted by the harness, not written in the scenario ("start_spot": the
