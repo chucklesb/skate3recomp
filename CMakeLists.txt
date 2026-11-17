@@ -33,6 +33,9 @@ add_compile_options("$<$<AND:$<CONFIG:RelWithDebInfo>,$<COMPILE_LANGUAGE:C,CXX>>
 # standard library. SKATE3_TESTS_ONLY configures nothing else, so the tests
 # build without the SDK submodule, game data, the title update or codegen
 # output (this is what CI uses).
+# Diagnostic: count every recompiled function's calls (harness `callcount`
+# step, tools/re/leaves.py rank). Slows the game; never for releases.
+option(SKATE3_COUNT_GUEST_CALLS "Count calls to every recompiled guest function (diagnostic)" OFF)
 option(SKATE3_BUILD_TESTS "Build the standalone C++ unit tests and register them with CTest" OFF)
 option(SKATE3_TESTS_ONLY
     "Configure only the standalone C++ unit tests (no SDK, game data or codegen needed)"
@@ -345,6 +348,7 @@ set(SKATE3_COMMON_SOURCES
     src/harness/harness_re_skeleton.cpp
     src/harness/harness_png.cpp
     src/harness/harness_profile.cpp
+    src/harness/harness_callcount.cpp
     src/harness/harness_re.cpp
     src/harness/harness_reels.cpp
     src/harness/harness_script.cpp
@@ -460,6 +464,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/generated/sources.cmake")
     include(generated/sources.cmake)
     target_sources(skate3 PRIVATE ${GENERATED_SOURCES})
     target_include_directories(skate3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/generated)
+    if(SKATE3_COUNT_GUEST_CALLS)
+        set_property(SOURCE ${GENERATED_SOURCES} APPEND PROPERTY COMPILE_OPTIONS
+            -include ${CMAKE_CURRENT_SOURCE_DIR}/src/harness/harness_callcount_hook.h)
+    endif()
 else()
     message(STATUS "generated/sources.cmake not found; run the generate-all target before building skate3")
 endif()
@@ -468,6 +476,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/generated/eawebkit/sources.cmake")
     set(_SKATE3_SAVED_GENERATED_SOURCES ${GENERATED_SOURCES})
     include(generated/eawebkit/sources.cmake)
     target_sources(skate3 PRIVATE ${GENERATED_SOURCES})
+    if(SKATE3_COUNT_GUEST_CALLS)
+        set_property(SOURCE ${GENERATED_SOURCES} APPEND PROPERTY COMPILE_OPTIONS
+            -include ${CMAKE_CURRENT_SOURCE_DIR}/src/harness/harness_callcount_hook.h)
+    endif()
     target_include_directories(skate3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/generated/eawebkit)
     set(GENERATED_SOURCES ${_SKATE3_SAVED_GENERATED_SOURCES})
     unset(_SKATE3_SAVED_GENERATED_SOURCES)
@@ -476,6 +488,10 @@ else()
 endif()
 
 target_link_libraries(skate3 PRIVATE rex::runtime)
+if(SKATE3_COUNT_GUEST_CALLS)
+    target_compile_definitions(skate3 PRIVATE SKATE3_COUNT_GUEST_CALLS=1)
+    message(STATUS "Counting guest calls (SKATE3_COUNT_GUEST_CALLS): diagnostic build")
+endif()
 rexglue_configure_target(skate3 GPU_PLUGINS xenos)
 
 if(UNIX AND NOT APPLE)

@@ -15,6 +15,11 @@ standard").
                                          point at it (vtable slots)
     leaves.py list [--kind K]           every leaf (kinds: empty const gaddr
                                          addthis load store jump thunk seq)
+    leaves.py rank RUN [--top N]        the hottest guest functions of a
+                                         call-count run (call_counts.tsv from a
+                                         SKATE3_COUNT_GUEST_CALLS build,
+                                         scenarios/callcount_plaza.toml), then
+                                         their classes: calls summed per vtable
 
 Reads the recompiled bodies in generated/ (local; nothing here is committed)
 and the TU3 image out/re/ghidra/skate3_tu3.bin.
@@ -172,16 +177,126 @@ def load_maps():
         return ({}, {}, {})
 
 
+FUNCS_CACHE = os.path.join(GEN, 'leaves.funcs.json')
+# A function in more vtables than this is shared code (the binary's one empty
+# function, return 0, ...): it says nothing about a class.
+SHARED_TABLES = 3
+
+
+def all_functions():
+    """Every recompiled function's address (cached like the scan)."""
+    paths = sorted(glob.glob(os.path.join(GEN, 'skate3_recomp.*.cpp')))
+    key = [[os.path.basename(p), os.path.getsize(p), int(os.path.getmtime(p))] for p in paths]
+    try:
+        with open(FUNCS_CACHE, encoding='utf-8') as f:
+            c = json.load(f)
+        if c['key'] == key:
+            return set(c['funcs'])
+    except (OSError, ValueError, KeyError):
+        pass
+    funcs = set()
+    for path in paths:
+        with open(path, encoding='utf-8', errors='replace') as f:
+            funcs.update(int(m, 16) for m in re.findall(r'DEFINE_REX_FUNC\(sub_([0-9A-F]{8})\)', f.read()))
+    try:
+        with open(FUNCS_CACHE, 'w', encoding='utf-8') as f:
+            json.dump({'key': key, 'funcs': sorted(funcs)}, f)
+    except OSError:
+        pass
+    return funcs
+
+
+def vtable_index(data, funcs):
+    """function -> the vtables (start addresses) holding it. A vtable is a
+    run of 2+ aligned words that are all function starts."""
+    words = struct.unpack(f'>{len(data) // 4}I', data[:len(data) // 4 * 4])
+    owners = {}
+    i, n = 0, len(words)
+    while i < n:
+        if words[i] not in funcs:
+            i += 1
+            continue
+        j = i
+        while j < n and words[j] in funcs:
+            j += 1
+        if j - i >= 2:
+            start = IMAGE_BASE + 4 * i
+            for k in range(i, j):
+                owners.setdefault(words[k], []).append(start)
+        i = j
+    return owners
+
+
+def rank(a, found, maps):
+    run = a.addr
+    path = run if run.endswith('.tsv') else os.path.join(run, 'call_counts.tsv')
+    counts = []
+    with open(path, encoding='utf-8') as f:
+        for line in f:
+            if line.startswith('#') or not line.strip():
+                continue
+            name, n = line.split('\t')
+            # Non-sub_ names are the register save/restore helpers.
+            counts.append((int(n), norm(name) if name.startswith('sub_') else name))
+    counts.sort(key=lambda c: -c[0])
+    total = sum(n for n, _ in counts) or 1
+    data = open(IMAGE, 'rb').read()
+    owners = vtable_index(data, all_functions())
+
+    def tables(fn):
+        t = sorted(set(owners.get(fn, [])))
+        if len(t) > SHARED_TABLES:
+            return f'shared ({len(t)} tables)'
+        return ' '.join(f'{v:08X}' for v in t) or '-'
+
+    print(f'{len(counts)} functions called, {total:,} calls ({path})')
+    helpers = sum(n for n, fn in counts if isinstance(fn, str))
+    print(f'register save/restore helpers: {helpers:,} calls ({100 * helpers / total:.1f}%; '
+          f'one pair per non-leaf call, listed with --helpers)\n')
+    if not a.helpers:
+        counts = [c for c in counts if not isinstance(c[1], str)]
+    print(f'{"calls":>12} {"%":>5}  function      {"vtables":24} what')
+    for n, fn in counts[:a.top]:
+        if isinstance(fn, str):
+            print(f'{n:>12,} {100 * n / total:5.2f}  {fn:12}  {"-":24} (register save/restore helper)')
+            continue
+        k, t = found.get(f'sub_{fn:08X}', ('', ''))
+        what = name_of(fn, maps) or ''
+        if k:
+            what = f'{what}  [{k}: {t}]' if what else f'[{k}: {t}]'
+        print(f'{n:>12,} {100 * n / total:5.2f}  sub_{fn:08X}  {tables(fn):24.24} {what[:110]}')
+
+    # Classes: each vtable's calls over the methods it doesn't share widely.
+    per = {}
+    for n, fn in counts:
+        if isinstance(fn, str):
+            continue
+        t = sorted(set(owners.get(fn, [])))
+        if not t or len(t) > SHARED_TABLES:
+            continue
+        for v in t:
+            e = per.setdefault(v, [0, []])
+            e[0] += n
+            e[1].append((n, fn))
+    print(f'\n{"calls":>12} {"%":>5}  vtable    methods called  hottest')
+    for v, (n, fns) in sorted(per.items(), key=lambda kv: -kv[1][0])[:a.top]:
+        hot = ', '.join(f'sub_{fn:08X} {c:,}' for c, fn in sorted(fns, reverse=True)[:3])
+        print(f'{n:>12,} {100 * n / total:5.2f}  {v:08X}  {len(fns):>14}  {hot}')
+    return 0
+
+
 def norm(a):
     return int(a.upper().removeprefix('SUB_').removeprefix('0X'), 16)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('cmd', choices=['vtable', 'lookup', 'list'])
+    ap.add_argument('cmd', choices=['vtable', 'lookup', 'list', 'rank'])
     ap.add_argument('addr', nargs='?')
     ap.add_argument('--slots', type=int, default=32)
     ap.add_argument('--kind', default=None)
+    ap.add_argument('--top', type=int, default=40)
+    ap.add_argument('--helpers', action='store_true', help='rank: list the save/restore helpers too')
     a = ap.parse_args()
     found = scan()
 
@@ -196,6 +311,8 @@ def main():
         return 0
 
     maps = load_maps()
+    if a.cmd == 'rank':
+        return rank(a, found, maps)
     data = open(IMAGE, 'rb').read()
     if a.cmd == 'lookup':
         addr = norm(a.addr)

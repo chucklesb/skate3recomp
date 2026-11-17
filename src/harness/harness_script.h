@@ -58,6 +58,8 @@ enum class Verb {
   kFe,          // op="push" state=N | op="pop": push / pop an FE state (game's own calls)
   kWindow,      // show=true|false: show or hide the game window (headless runs)
   kProfile,     // op="start" hz=1000 | op="stop": guest CPU profile (profile.txt)
+  kCallCount,   // op="reset" | op="dump": guest call counts (call_counts.tsv;
+                // a SKATE3_COUNT_GUEST_CALLS build only)
   kVideo,       // frames=N tag="x": every rendered frame as video/<tag>/f<n>.png
   kResults,     // walk the career results screens (FE 64/65/66) back to free skate
   kCareer,      // board_sales=N [notify]: set the career's total board sales (docs/re/career.md)

@@ -159,6 +159,15 @@
       }
     },
     {
+      "name": "windows-x64-callcount",
+      "displayName": "Windows x64 Release counting guest calls (diagnostic, tools/re/leaves.py rank)",
+      "inherits": "windows-x64-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "SKATE3_COUNT_GUEST_CALLS": "ON"
+      }
+    },
+    {
       "name": "macos-relwithdebinfo",
       "displayName": "macOS RelWithDebInfo",
       "inherits": "macos-base",
@@ -215,6 +224,10 @@
     {
       "name": "windows-x64-release",
       "configurePreset": "windows-x64-release"
+    },
+    {
+      "name": "windows-x64-callcount",
+      "configurePreset": "windows-x64-callcount"
     },
     {
       "name": "macos-relwithdebinfo",

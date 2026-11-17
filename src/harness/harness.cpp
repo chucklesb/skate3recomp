@@ -31,6 +31,7 @@
 #include "skate3_native_render.h"
 #include "skate3_native_scene.h"
 #include "harness/harness_profile.h"
+#include "harness/harness_callcount.h"
 #include <rex/kernel/guest_presence.h>
 #include <rex/logging.h>
 #include <rex/logging/api.h>
@@ -372,6 +373,7 @@ struct Run {
   std::ofstream video_meta;
   uint64_t video_frames = 0;
   std::string profile_json;    // the last profile stop ("profile":{...})
+  uint64_t callcount_frame0 = 0;  // frame of the last callcount reset
   uint64_t profile_frame0 = 0;  // frame at profile start
   uint64_t video_failed = 0;
   uint64_t video_waits = 0;  // frames that waited for a free encoder slot
@@ -1926,6 +1928,31 @@ Outcome Execute(Run& r, const Step& st) {
       Event(r, "profile_stop", r.profile_json);
       Outcome o;
       o.result_json = r.profile_json;
+      return o;
+    }
+
+    case Verb::kCallCount: {
+      // Guest call counts (harness_callcount.h): op = "reset" or "dump"
+      // (call_counts.tsv; tools/re/leaves.py rank).
+      if (!skate3::callcount::Enabled()) {
+        return Fail("callcount: this build doesn't count calls "
+                    "(configure with -DSKATE3_COUNT_GUEST_CALLS=ON)");
+      }
+      if (st.mem_op == "reset") {
+        skate3::callcount::Reset();
+        r.callcount_frame0 = r.state.frame;
+        Event(r, "callcount_reset", "\"frame\":" + std::to_string(r.state.frame));
+        return {};
+      }
+      std::string err;
+      std::string json = skate3::callcount::Dump(r.dir, &err);
+      if (json.empty()) {
+        return Fail("callcount: " + err);
+      }
+      json += ",\"frames\":" + std::to_string(r.state.frame - r.callcount_frame0);
+      Event(r, "callcount_dump", json);
+      Outcome o;
+      o.result_json = "\"callcount\":{" + json + "}";
       return o;
     }
 

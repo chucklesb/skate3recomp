@@ -35,6 +35,7 @@ constexpr VerbEntry kVerbs[] = {
     {"play_reel", Verb::kPlayReel},  {"renderer", Verb::kRenderer},
     {"fe", Verb::kFe},
     {"window", Verb::kWindow},     {"profile", Verb::kProfile},
+    {"callcount", Verb::kCallCount},
 };
 
 // TOML scalar -> the string form rex::cvar::SetFlagByName takes.
@@ -322,6 +323,12 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
     case Verb::kRenderer:
       if (s.renderer != "native" && s.renderer != "emulated") {
         *error = "renderer needs renderer = \"native\" or \"emulated\"";
+        return false;
+      }
+      break;
+    case Verb::kCallCount:
+      if (s.mem_op != "reset" && s.mem_op != "dump") {
+        *error = "callcount needs op = \"reset\" or \"dump\"";
         return false;
       }
       break;

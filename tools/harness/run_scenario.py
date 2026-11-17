@@ -233,7 +233,9 @@ class Device:
         return dst
 
 
-CONFIGS = ("release", "relwithdebinfo")
+# callcount: Windows only, a release build counting guest calls (the
+# `callcount` step; tools/re/leaves.py rank).
+CONFIGS = ("release", "relwithdebinfo", "callcount")
 DEPLOYED_CONFIG = REPO / "out/harness/deployed-config"
 
 

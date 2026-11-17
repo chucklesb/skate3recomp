@@ -34,7 +34,9 @@ cd "$repo"
 
 config=${1:-release}
 case "$config" in
-    release|relwithdebinfo) shift || true ;;
+    # callcount: a release build that counts guest calls (diagnostic;
+    # harness `callcount` step, tools/re/leaves.py rank).
+    release|relwithdebinfo|callcount) shift || true ;;
     winsdk|codegen|build|stage) config=release ;;
     *) echo "build.sh: unknown config '$config'" >&2; exit 2 ;;
 esac
