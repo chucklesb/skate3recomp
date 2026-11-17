@@ -2,12 +2,17 @@
 
 #include "native/skate3_native_jobs.h"
 
+#include <algorithm>
 #include <atomic>
+#include <map>
+#include <tuple>
+#include <vector>
 #include <chrono>
 #include <cstring>
 #include <mutex>
 #include <string>
 
+#include <fmt/format.h>
 #include <rex/cvar.h>
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
@@ -27,6 +32,10 @@ REXCVAR_DEFINE_BOOL(skate3_native_jobs_replace, true, "Skate 3",
                     "worker wait, the sleep-timeout getter/setter and the job spin-wait "
                     "(replace: j_* families); off = the recompiled functions. The worker "
                     "loop's mode is fixed when each job thread starts")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skate3_native_wait_probe, false, "Skate 3",
+                    "Probe: every 2 s, log the guest waits (WaitForSingleObjectEx) that took "
+                    "over 5 ms, by caller and thread (wait-probe: lines)")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_BOOL(skate3_native_job_stats, false, "Skate 3",
                     "EA::Jobs counters: RunSingleJob calls/hits (workers, other threads and "
@@ -437,9 +446,56 @@ extern "C" REX_FUNC(sub_82EE6260) {
   native_replace::Run(g_f_last_error, ctx, base, &__imp__sub_82EE6260);
 }
 
+// Probe (skate3_native_wait_probe): long waits by caller and thread.
+namespace {
+struct WaitKey {
+  uint32_t lr, thread, handle;
+  bool operator<(const WaitKey& o) const {
+    return std::tie(lr, thread, handle) < std::tie(o.lr, o.thread, o.handle);
+  }
+};
+struct WaitSum {
+  uint32_t count = 0;
+  double ms = 0;
+};
+std::mutex g_wait_mu;
+std::map<WaitKey, WaitSum> g_waits;
+std::chrono::steady_clock::time_point g_wait_last{};
+
+void NoteWait(uint32_t lr, uint32_t thread, uint32_t handle, double ms) {
+  const auto now = std::chrono::steady_clock::now();
+  std::lock_guard lk(g_wait_mu);
+  if (ms > 5.0) {
+    WaitSum& w = g_waits[{lr, thread, handle}];
+    ++w.count;
+    w.ms += ms;
+  }
+  if (now - g_wait_last < std::chrono::seconds(2)) return;
+  g_wait_last = now;
+  if (g_waits.empty()) return;
+  std::vector<std::pair<WaitKey, WaitSum>> v(g_waits.begin(), g_waits.end());
+  std::sort(v.begin(), v.end(), [](auto& a, auto& b) { return a.second.ms > b.second.ms; });
+  std::string line;
+  for (size_t i = 0; i < v.size() && i < 8; ++i) {
+    line += fmt::format(" | lr={:08X} thr={:08X} h={:08X} n={} {:.0f}ms", v[i].first.lr,
+                        v[i].first.thread, v[i].first.handle, v[i].second.count, v[i].second.ms);
+  }
+  REXLOG_INFO("wait-probe: last 2 s, waits over 5 ms:{}", line);
+  g_waits.clear();
+}
+}  // namespace
+
 // WaitForSingleObjectEx (callers: WaitForSingleObject sub_82EDFEC0 and one more).
 extern "C" REX_FUNC(sub_82EE7880) {
+  if (!REXCVAR_GET(skate3_native_wait_probe)) {
+    native_replace::Run(g_f_wait_ex, ctx, base, &__imp__sub_82EE7880);
+    return;
+  }
+  const uint32_t lr = ctx.lr, handle = ctx.r3.u32, thread = ctx.r13.u32;
+  const auto t0 = std::chrono::steady_clock::now();
   native_replace::Run(g_f_wait_ex, ctx, base, &__imp__sub_82EE7880);
+  NoteWait(lr, thread, handle,
+           std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
 }
 
 // EA::Jobs LocalBackend::WakeThreads(backend) (Skate 2 name, virtual).

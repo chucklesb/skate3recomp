@@ -423,6 +423,17 @@ extern "C" REX_FUNC(sub_82609050) {
   __imp__sub_82609050(ctx, base);
 }
 
+// Probe: every flow-state transition (sub_826DFB30(this, next_handler, ...),
+// the HSM's "go to"), with the caller, so the state the game sits in during
+// a wait can be found.
+extern "C" REX_FUNC(sub_826DFB30) {
+  if (ProbeEnabled()) {
+    REXLOG_INFO("Skate 3 flow: this=0x{:08X} -> handler 0x{:08X} (r5={} r6={}) lr=0x{:08X}",
+                ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, static_cast<uint32_t>(ctx.lr));
+  }
+  __imp__sub_826DFB30(ctx, base);
+}
+
 SKATE3_BOOT_HANDLER_PROBE(826FDE48, "logo (FE 5)")
 SKATE3_BOOT_HANDLER_PROBE(826FDEF0, "movie (FE 24)")
 SKATE3_BOOT_HANDLER_PROBE(826FE058, "wait for load")
