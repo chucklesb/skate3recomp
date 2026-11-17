@@ -121,6 +121,52 @@ Screen" in the options menu; `src/skate3_demo_path.cpp`):
   arm until every button is up again. A second press is needed.
 - A works like Start: its codes 2 / 46 are passed on as 0 / 44.
 
+## Before the boot flow: the game tick and its pad-sample rings
+The boot flow (handler 1 on) runs inside the game tick, and the game tick
+runs only when a pad sample is waiting. Found 2026-11-16 chasing a slow boot
+at a frame cap (below).
+
+**`Sk8::Sk8AppMan`** (vtable `0x8230C880`; Skate 2 names `Init` at +0x38):
+- slot +0x44 `sub_826D34B8`, the per-tick update (main thread, called from
+  the main loop `sub_82965C90`): pops a sample from ring 0
+  (`sub_82699230(appman+128, 0)` -> `sub_8296D1F0`); if there is none it
+  returns 0 and nothing else runs. With a sample it updates the game systems
+  and, while `appman+125` is set, the flow machine (`sub_826DF3B8(appman+156)`,
+  which makes the boot flow's first transition on its first tick). So game
+  logic runs once per pad sample, not once per frame.
+- slot +0x48 `sub_826D6098`, the pad sampler (its own thread, about 60 Hz;
+  probably Skate 2's `TimerCallback`): polls the pads (`sub_82698FA8`) and
+  pushes one sample into each ring (`sub_8296D0D0`).
+- **The rings** (`appman+128` -> `[6]`, `[7]`): 30 slots of 4 pad records
+  (100 bytes, at `q + 4 + (slot*4 + pad)*100`); read index `q+12004`, write
+  index `q+12008`, pad count `q+12012`, source buffer `q+12016` (its current
+  half at `+804`; pad i's record is `2*i + half`). Pop: `next = (read+1) % 30`,
+  empty when `next == write`. `sub_826991B8(holder, idx)` withdraws the last
+  push (`write = (write+29) % 30`). Native: `src/native/skate3_native_padring.cpp`.
+
+**The main loop and the render loop share a mutex.** The main loop
+(`sub_82965C90`) locks `EA::Thread::Mutex` `this+24` (`sub_82A40368`) around
+each tick. The render loop (`sub_829661F0`, render thread) reads its frame
+stopwatch (`Stopwatch::GetElapsedTimeFloat` `sub_82AEDA18`), locks the same
+mutex, renders and D3D-swaps through the presenter (vtable +32), unlocks and
+loops: it holds the mutex for nearly the whole frame and releases it for a
+few instructions.
+
+**The slow boot at a frame cap (fixed 2026-11-16, SDK).** On the Odin 2 the
+language select took 0.1-77 s at the 30 fps cap (0.5-4 s uncapped; Windows
+always ~1.2 s; upstream the same). A wall-clock profile (`profile` step
+`clock = "wall"`, `profile_report.py --waits`) put the main thread 83% in
+`EA::Thread::Mutex::Lock`: the render thread held the mutex through the cap
+wait (inside Swap) and took it straight back after each unlock. The mutex is
+an Xbox critical section whose waiters sleep on an auto-reset event; the
+SDK's POSIX auto-reset event was a flag that the first thread to look
+consumed, so the releasing render thread, re-entering at once, beat the
+woken main thread nearly every time. The Xbox 360 and Windows kernels hand a
+set event to a thread already waiting; the SDK now does the same on POSIX
+(FIFO hand-off; `REX_EVENT_HANDOFF=0` restores the old behaviour for A/B).
+Moving the cap wait outside the mutex also fixed the boot but cost gameplay
+1% lows (Windows 29 -> 25 fps), so it was dropped.
+
 ## The FE state objects (TU3)
 From the state-table dump (`skate3_demo_path_probe`, `FE state N obj=...
 vt=...` lines). Vtable slots: +0x0C enter, +0x10 `OnUpdate(this, dt_ms)`,

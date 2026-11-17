@@ -108,3 +108,44 @@ extern "C" REX_FUNC(sub_82B76080) {
   }
   __imp__sub_82B76080(ctx, base);
 }
+
+// Probe (skate3_native_wait_probe): time spent in D3D::CDevice::BlockOnFence
+// (sub_82B755C0) per thread, logged every 2 s ("fence-probe:"). Finds threads
+// that block on the GPU (e.g. the main thread while the boot loads).
+namespace {
+std::atomic<uint64_t> g_bof_us_main{0}, g_bof_n_main{0}, g_bof_us_other{0}, g_bof_n_other{0};
+std::atomic<uint32_t> g_bof_main_thread{0};
+std::atomic<int64_t> g_bof_last_ms{0};
+}  // namespace
+
+extern "C" REX_FUNC(sub_82B755C0) {
+  if (!rex::cvar::Query<bool>("skate3_native_wait_probe")) {
+    __imp__sub_82B755C0(ctx, base);
+    return;
+  }
+  const uint32_t thread = ctx.r13.u32;
+  const auto t0 = std::chrono::steady_clock::now();
+  __imp__sub_82B755C0(ctx, base);
+  const auto t1 = std::chrono::steady_clock::now();
+  const uint64_t us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+  uint32_t main = g_bof_main_thread.load();
+  if (main == 0) {
+    g_bof_main_thread.compare_exchange_strong(main, thread);
+    main = g_bof_main_thread.load();
+  }
+  if (thread == main) {
+    g_bof_us_main += us;
+    ++g_bof_n_main;
+  } else {
+    g_bof_us_other += us;
+    ++g_bof_n_other;
+  }
+  const int64_t now_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(t1.time_since_epoch()).count();
+  int64_t last = g_bof_last_ms.load();
+  if (now_ms - last >= 2000 && g_bof_last_ms.compare_exchange_strong(last, now_ms)) {
+    REXLOG_INFO("fence-probe: last 2 s BlockOnFence: thread {:08X} n={} {} ms; others n={} {} ms",
+                main, g_bof_n_main.exchange(0), g_bof_us_main.exchange(0) / 1000,
+                g_bof_n_other.exchange(0), g_bof_us_other.exchange(0) / 1000);
+  }
+}

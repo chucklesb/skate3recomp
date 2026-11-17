@@ -423,6 +423,44 @@ extern "C" REX_FUNC(sub_82609050) {
   __imp__sub_82609050(ctx, base);
 }
 
+// Probe: the boot gate. Sk8AppMan (vtable 0x8230C880) slot +0x44
+// sub_826D34B8 starts the flow once its pad-sample ring (appman+128 -> [6],
+// read +12004 / write +12008, 30 slots) has a sample; slot +0x48
+// sub_826D6098 (TimerCallback?) polls the pads and publishes one. Logs, every
+// 2 s, how often each ran, on which thread (r13), the gate's results and the
+// ring indices.
+struct GateCounters {
+  std::atomic<uint32_t> gate_calls{0}, gate_true{0}, produce_calls{0};
+  std::atomic<uint32_t> gate_thread{0}, produce_thread{0};
+};
+GateCounters g_gate;
+
+void GateProbeTick(uint8_t* base, uint32_t appman) {
+  static std::chrono::steady_clock::time_point s_last{};
+  const auto now = std::chrono::steady_clock::now();
+  if (now - s_last < std::chrono::seconds(2)) return;
+  s_last = now;
+  uint32_t holder = 0, ring = 0, rd = 0, wr = 0;
+  if (skate3::native_scene::GuestTryLoadU32(base, appman + 128, &holder) && holder &&
+      skate3::native_scene::GuestTryLoadU32(base, holder + 24, &ring) && ring) {
+    skate3::native_scene::GuestTryLoadU32(base, ring + 12004, &rd);
+    skate3::native_scene::GuestTryLoadU32(base, ring + 12008, &wr);
+  }
+  REXLOG_INFO(
+      "Skate 3 gate: last 2 s gate calls={} ready={} (thr {:08X}), pad samples={} (thr "
+      "{:08X}), ring 0x{:08X} read={} write={}",
+      g_gate.gate_calls.exchange(0), g_gate.gate_true.exchange(0), g_gate.gate_thread.load(),
+      g_gate.produce_calls.exchange(0), g_gate.produce_thread.load(), ring, rd, wr);
+}
+
+extern "C" REX_FUNC(sub_826D6098) {
+  if (ProbeEnabled()) {
+    g_gate.produce_calls.fetch_add(1);
+    g_gate.produce_thread.store(ctx.r13.u32);
+  }
+  __imp__sub_826D6098(ctx, base);
+}
+
 // Probe: every flow-state transition (sub_826DFB30(this, next_handler, ...),
 // the HSM's "go to"), with the caller, so the state the game sits in during
 // a wait can be found.
@@ -984,6 +1022,18 @@ void NoteGuestPad(uint8_t* base, uint32_t user, uint32_t state_addr, uint32_t re
       g_pending_presses.fetch_or(pressed, std::memory_order_relaxed);
     }
   }
+}
+
+void OnAppManUpdate(uint8_t* base, uint32_t appman, uint32_t thread, bool ticked) {
+  if (!ProbeEnabled()) {
+    return;
+  }
+  g_gate.gate_calls.fetch_add(1);
+  g_gate.gate_thread.store(thread);
+  if (ticked) {
+    g_gate.gate_true.fetch_add(1);
+  }
+  GateProbeTick(base, appman);
 }
 
 bool IntroSkipPressed() { return SkipEdge("intro screen", IntroSkipMask(), true); }

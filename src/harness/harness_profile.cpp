@@ -81,6 +81,7 @@ std::atomic<int> g_count{0};
 std::atomic<bool> g_active{false};
 std::atomic<bool> g_stop{false};
 int g_hz = 1000;
+bool g_wall = false;  // Linux: CLOCK_MONOTONIC timers instead of thread CPU clocks
 std::thread g_worker;
 std::chrono::steady_clock::time_point g_t0;
 // Aggregated stacks: key = thread index byte + raw PCs.
@@ -236,7 +237,7 @@ bool StartThread(int i, std::string* error) {
   sev.sigev_notify = SIGEV_THREAD_ID;
   sev.sigev_signo = SIGPROF;
   sev.sigev_notify_thread_id = t.tid;
-  if (timer_create(t.cpu_clock, &sev, &t.timer) != 0) {
+  if (timer_create(g_wall ? CLOCK_MONOTONIC : t.cpu_clock, &sev, &t.timer) != 0) {
     if (error) *error = std::string("timer_create: ") + std::strerror(errno);
     return false;
   }
@@ -363,13 +364,14 @@ bool Active() {
   return g_active.load(std::memory_order_relaxed);
 }
 
-bool Start(int hz, std::string* error) {
+bool Start(int hz, std::string* error, bool wall) {
   std::lock_guard lk(g_mu);
   if (g_active.load()) {
     *error = "the profiler is already running";
     return false;
   }
   g_hz = std::clamp(hz, 10, 10000);
+  g_wall = wall;
   g_stacks.clear();
   g_dropped = 0;
   for (int i = 0; i < g_count.load(); ++i) {

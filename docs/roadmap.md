@@ -117,6 +117,12 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   (`boot_logo`). The title: any button shows "Press Start" at once
   (ends its 1.5 s input delay and fast-forwards APT's animation) and A
   works like Start (`skate3_title_quick_start`, "Quick Title Screen").
+  The slow boot at a frame cap (Odin 2, 0.1-77 s to the language
+  select at 30 fps, upstream too) was the SDK's POSIX auto-reset event:
+  the render loop re-took the app mutex before the woken main thread ran;
+  events now hand off to a waiting thread (1.3 s, gameplay pacing equal or
+  better; [re/boot.md](re/boot.md)). Sk8AppMan's tick runs once per pad
+  sample from a 30-slot ring; its push/pop are native (`ring_*`).
   Next: a native handler chain that starts the load at
   once, and the movie handler's side effects (requirements in boot.md).
 

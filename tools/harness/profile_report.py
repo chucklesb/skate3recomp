@@ -115,7 +115,7 @@ def symbolize(run: Path, prof: dict) -> dict[tuple[int, int], str]:
     return names
 
 
-def rank(prof: dict, names: dict, thread: str | None) -> dict[str, dict]:
+def rank(prof: dict, names: dict, thread: str | None, waits: bool = False) -> dict[str, dict]:
     tids = {i for i, t in prof["threads"].items() if thread is None or t["name"] == thread}
     stats: dict[str, dict] = defaultdict(lambda: {"self": 0, "incl": 0,
                                                   "callers": defaultdict(int)})
@@ -127,9 +127,15 @@ def rank(prof: dict, names: dict, thread: str | None) -> dict[str, dict]:
         fns = [names.get(f, "?") for f in frames]
         # Blocked or sleeping (a wait with a timeout, the fps cap, a yield):
         # not CPU time, so not ranked.
-        if any(WAIT.search(fn) for fn in fns):
-            waiting += count
+        is_wait = any(WAIT.search(fn) for fn in fns)
+        if is_wait != waits:
+            if is_wait:
+                waiting += count
             continue
+        if waits:
+            # Rank by the innermost game function in the stack (who waits),
+            # not the libc/kernel frame the wait sits in.
+            fns = [f for f in fns if f.startswith("__imp__")] or fns
         total += count
         me = fns[0]
         stats[me]["self"] += count
@@ -158,11 +164,12 @@ def short(fn: str, n: int = 70) -> str:
     return fn if len(fn) <= n else fn[: n - 1] + "…"
 
 
-def report(run: Path, thread: str | None, top: int, out_json: Path | None) -> None:
+def report(run: Path, thread: str | None, top: int, out_json: Path | None,
+           waits: bool = False) -> None:
     prof = load(run)
     b = json.loads((run / "build.json").read_text())
     names = symbolize(run, prof)
-    stats = rank(prof, names, thread)
+    stats = rank(prof, names, thread, waits)
     total = next(iter(stats.values()))["total"] if stats else 0
     print(f"{run.name}: {b.get('version')} {b.get('platform')} {b.get('build_config')}")
     print(f"  {prof['hz']:.0f} Hz, {prof['seconds']:.1f} s, {prof['frames']:.0f} frames, "
@@ -222,10 +229,13 @@ def main() -> int:
     ap.add_argument("runs", nargs="+", type=Path, help="run folder, or base and new")
     ap.add_argument("--thread", help="main or render (default: all)")
     ap.add_argument("--top", type=int, default=40)
+    ap.add_argument("--waits", action="store_true",
+                    help="rank the waiting samples instead (by the innermost game function; "
+                         "needs a wall-clock profile: profile step clock = \"wall\")")
     ap.add_argument("--json", type=Path, help="write the full ranking as JSON")
     a = ap.parse_args()
     if len(a.runs) == 1:
-        report(a.runs[0], a.thread, a.top, a.json)
+        report(a.runs[0], a.thread, a.top, a.json, a.waits)
     elif len(a.runs) == 2:
         diff(a.runs[0], a.runs[1], a.thread, a.top)
     else:

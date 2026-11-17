@@ -198,6 +198,7 @@ bool ParseStepTable(const toml::table& t, Step* out, std::string* error) {
   s.career_show = t["show"].value_or(false);
   s.window_show = t["show"].value_or(true);
   s.profile_hz = Integer(t, "hz").value_or(1000);
+  s.profile_wall = t["clock"].value_or(std::string("cpu")) == "wall";
   s.career_complete = t["complete"].value_or(std::string());
   s.career_level = t["level"].value_or(std::string("owned"));
   s.career_pay = t["pay"].value_or(false);

@@ -28,5 +28,9 @@ void NoteGuestPad(uint8_t* base, uint32_t user, uint32_t state_addr, uint32_t re
 // any button before the title screen, A / Start after). One edge detector
 // shared with the movie skip, polled once per screen update.
 bool IntroSkipPressed();
+// Probe (skate3_demo_path_probe): Sk8AppMan's per-tick update (sub_826D34B8,
+// hooked by the harness) ran on `thread`; `ticked` = it found a pad sample and
+// ran the game tick.
+void OnAppManUpdate(uint8_t* base, uint32_t appman, uint32_t thread, bool ticked);
 
 }  // namespace skate3::demo_path

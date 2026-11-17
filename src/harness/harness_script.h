@@ -136,6 +136,7 @@ struct Step {
 
   bool window_show = true;  // window: show (true) or hide (false)
   int64_t profile_hz = 1000;  // profile: samples per second
+  bool profile_wall = false;  // profile: clock = "wall" (Linux: sample blocked threads too)
 
   // play_reel
   int64_t clip = 0;            // 1-based saved replay slot

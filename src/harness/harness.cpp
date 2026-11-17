@@ -1805,7 +1805,7 @@ Outcome Execute(Run& r, const Step& st) {
       // 1000) or "stop" (writes profile.txt; tools/harness/profile_report.py).
       if (st.mem_op == "start") {
         std::string err;
-        if (!profile::Start(static_cast<int>(st.profile_hz), &err)) {
+        if (!profile::Start(static_cast<int>(st.profile_hz), &err, st.profile_wall)) {
           return Fail("profile: " + err);
         }
         r.profile_frame0 = r.state.frame;

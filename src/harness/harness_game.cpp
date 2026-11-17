@@ -32,6 +32,7 @@ REXCVAR_DEFINE_STRING(skate3_harness_re_poke, "", "Skate 3",
 
 #include "native/skate3_native_guest_read.h"
 #include "harness/harness.h"
+#include "skate3_demo_path.h"
 #include "harness/harness_profile.h"
 
 // The guest functions called below (recompiled; TU3 image addresses).
@@ -1247,7 +1248,9 @@ void OnGuestFrame(PPCContext& ctx, uint8_t* base) {  // main (simulation) thread
 // allocators pick heaps per thread (a reel loaded from the render thread
 // allocated from RenderHeap and later hung or crashed on playback).
 extern "C" REX_FUNC(sub_826D34B8) {
+  const uint32_t appman = ctx.r3.u32, thread = ctx.r13.u32;
   __imp__sub_826D34B8(ctx, base);
+  skate3::demo_path::OnAppManUpdate(base, appman, thread, (ctx.r3.u32 & 0xFF) != 0);
   skate3::harness::game::OnGuestFrame(ctx, base);
 }
 

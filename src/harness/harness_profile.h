@@ -29,7 +29,9 @@ bool Active();
 // Starts sampling the registered threads (and any that register later) at
 // `hz` samples per second of the thread's CPU time (Linux) or wall time
 // (Windows, idle samples dropped).
-bool Start(int hz, std::string* error);
+// wall = true (Linux): sample on wall time, so a thread blocked in a
+// syscall (I/O, a futex) is sampled where it blocks (SA_RESTART restarts it).
+bool Start(int hz, std::string* error, bool wall = false);
 // Stops and writes <dir>/profile.txt. `frames` = game frames sampled over
 // (for ms-per-frame figures). Returns a JSON fragment for result.json
 // ("profile":{...}), empty if nothing was running.

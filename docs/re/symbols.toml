@@ -218,8 +218,8 @@ confidence = "likely"
 evidence = "src/harness/harness_re.cpp"
 
 [sub_82965C90]
-name = "game tick (harness request point)"
-role = "Harness game requests run after it returns: game logic is between ticks there."
+name = "main loop iteration (game tick)"
+role = "Locks the app mutex (EA::Thread::Mutex this+24, sub_82A40368) and runs Sk8AppMan's update (sub_826D34B8). Harness game requests run after it returns: game logic is between ticks there. docs/re/boot.md."
 confidence = "likely"
 evidence = "src/harness/"
 hooked = "src/harness/"
@@ -589,3 +589,77 @@ signature = "(frame stack)"
 role = "ActionScript getTimer(): pushes APT's clock 0x8307F3C8."
 confidence = "likely"
 evidence = "Skate 2 exact name; disassembly"
+
+[sub_826D34B8]
+name = "Sk8AppMan per-tick update (vtable 0x8230C880 +0x44)"
+signature = "(appman) -> bool ticked"
+role = "Pops a pad sample from ring 0 (sub_82699230); none -> returns 0 and nothing runs. Otherwise updates the game systems and, while appman+125, the flow machine (sub_826DF3B8(appman+156)). Game logic runs once per pad sample."
+confidence = "confirmed"
+evidence = "disassembly; gate probe (main thread 30036000; calls stop while the main thread starves)"
+hooked = "src/harness/harness_game.cpp (harness request point, gate probe)"
+
+[sub_826D6098]
+name = "Sk8AppMan pad sampler (vtable +0x48; Skate 2 TimerCallback?)"
+signature = "(appman)"
+role = "Polls the pads (sub_82698FA8) and pushes one sample into each ring (sub_8296D0D0). Runs on its own thread at ~60 Hz."
+confidence = "likely"
+evidence = "disassembly; gate probe (thread 30054000, ~60 calls/s)"
+hooked = "src/skate3_demo_path.cpp (probe)"
+
+[sub_82699230]
+name = "Sk8AppMan pad ring consume"
+signature = "(holder, ring_idx) -> bool"
+role = "If ring holder[6+idx] has a sample (sub_8296D1F0), drains all and copies the 4 pad records of each (sub_82966F30 per pad). Returns whether any was there."
+confidence = "confirmed"
+evidence = "disassembly"
+
+[sub_8296D1F0]
+name = "pad ring pop"
+signature = "(ring) -> bool"
+role = "next = (read@+12004 + 1) % 30; empty when next == write@+12008; else read = next, 1."
+confidence = "confirmed"
+evidence = "disassembly"
+hooked = "src/native/skate3_native_padring.cpp (native body ring_pop)"
+
+[sub_8296D0D0]
+name = "pad ring push"
+signature = "(ring)"
+role = "n = min(pad count@+12012, 4); pad i's record (2*i + source half@src+804) of the source buffer@+12016 -> slot write, pad i (100 bytes each, memcpy); write = (write+1) % 30."
+confidence = "confirmed"
+evidence = "disassembly"
+hooked = "src/native/skate3_native_padring.cpp (native body ring_push)"
+
+[sub_826991B8]
+name = "pad ring unpush"
+signature = "(holder, ring_idx)"
+role = "ring = holder[6+idx]; write = (write+29) % 30 (withdraws the last sample)."
+confidence = "confirmed"
+evidence = "disassembly"
+hooked = "src/native/skate3_native_padring.cpp (native body ring_unpush)"
+
+[sub_829661F0]
+name = "render loop (render thread)"
+signature = "(app)"
+role = "Per frame: frame stopwatch (sub_82AEDA18), lock the app mutex this+24, render + D3D Swap through the presenter (vtable +32), unlock, repeat. Holds the mutex for nearly the whole frame."
+confidence = "confirmed"
+evidence = "disassembly; wall-clock profile"
+
+[sub_82A40368]
+name = "EA::Thread::Mutex::Lock"
+signature = "(mutex, ?)"
+role = "An Xbox critical section underneath (RtlEnterCriticalSection); its waiters sleep on the CS's auto-reset event."
+confidence = "likely"
+evidence = "Skate 2 name; wall-clock profile (the main thread's wait at a frame cap)"
+
+[sub_82AEDA18]
+name = "rw::core::timer::Stopwatch::GetElapsedTimeFloat"
+signature = "(stopwatch) -> f1"
+confidence = "likely"
+evidence = "Skate 2 callgraph name; the render loop's frame dt"
+
+[sub_826DF3B8]
+name = "flow machine update"
+signature = "(flowman)"
+role = "Runs the current flow state's handler; its first call at boot makes the transition to LoadBootFlow (sub_826DFB30)."
+confidence = "likely"
+evidence = "flow probe (first transition from lr 0x826DF53C)"
