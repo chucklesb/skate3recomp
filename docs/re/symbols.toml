@@ -398,3 +398,45 @@ name = "Lua AwardCash"
 signature = "(lua_State* L) : stats+0x14 += n; stats+0x18 += n"
 confidence = "likely"
 evidence = "binding table 0x823116DC; decompile"
+
+[sub_8290AFA0]
+name = "EA::Jobs::LocalBackend::RunSingleJob"
+signature = "(backend, u8 thread mask) -> u8 ran a job"
+role = "Scans the backend's job slots (count at +16, 8-byte entries at +8) for one runnable by the mask, claims it with a 64-bit CAS and runs it. Workers call it with their own mask; waiting threads call it in loops (sub_824741F0: masks 1 and 4)."
+confidence = "likely"
+evidence = "Skate 2 strings match; disassembly; jobs: probe (Windows plaza: ~half of worker calls find a job, ~12% of other threads' calls)"
+hooked = "src/native/skate3_native_jobs.cpp (profiler thread registration, worker arming, stats)"
+
+[sub_8290B750]
+name = "EA::Jobs worker thread loop"
+signature = "(worker) : while !worker+9 { if !backend->RunSingleJob(worker+0x20 mask) WaitForSingleObjectEx(worker+0x2C event, backend->GetJobThreadSleepTimeoutMS()) }"
+confidence = "likely"
+evidence = "disassembly (backend = worker+4, vtable +0x60 / +0x64); one call per job thread at start (jobs: worker lines)"
+hooked = "src/native/skate3_native_jobs.cpp (registers the worker by its event)"
+
+[sub_8290B320]
+name = "EA::Jobs::LocalBackend::WakeThreads"
+role = "SetEvent on every active worker's event (32 slots, stride 48, event at backend+76, active byte 36 bytes before it); when backend+1597 is set, runs jobs on the caller (RunSingleJob mask 63) instead. Called ~33,000 times a second in the plaza (AddEvent, AddNotReady and others)."
+confidence = "likely"
+evidence = "Skate 2 vtable match; disassembly; jobs: probe wake_calls"
+hooked = "src/native/skate3_native_jobs.cpp (skate3_native_job_wake: signal armed workers only)"
+
+[sub_82909738]
+name = "EA::Jobs::LocalBackend::GetJobThreadSleepTimeoutMS"
+role = "returns backend+1592 (1 ms in TU3): the workers' wait timeout"
+confidence = "likely"
+evidence = "Skate 2 vtable name; the setter sub_82909740 writes the same field; jobs: probe saw timeout 1 on every worker wait"
+
+[sub_82EDFEC0]
+name = "WaitForSingleObject"
+signature = "(handle, timeout_ms) -> WaitForSingleObjectEx(handle, timeout, FALSE) (sub_82EE7880)"
+confidence = "likely"
+evidence = "disassembly (tail call with r5 = 0); 105 callers; results 0 / 0x102 seen in the jobs: probe"
+hooked = "src/native/skate3_native_jobs.cpp (worker wait stats only)"
+
+[sub_824741F0]
+name = "Spin-wait on a job (runs jobs while waiting)"
+signature = "(?, job handle, mode) : mode 0 loops RunSingleJob(mask 1), mode 2 mask 4, until the handle's IsDone (vtable +0x30)"
+role = "No sleep or yield (unlike JobInstanceHandle::WaitOn sub_82909510, which sleeps through sub_82909BD0). The main-thread caller of most RunSingleJob misses; costs ~0.10 ms/frame on the Odin 2 at 30 fps (incl. the jobs it runs)."
+confidence = "likely"
+evidence = "decompile; jobs: probe caller histogram (LR 0x8247433C)"

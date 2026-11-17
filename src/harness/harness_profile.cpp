@@ -88,6 +88,7 @@ std::unordered_map<std::string, uint32_t> g_stacks;
 uint64_t g_dropped = 0;
 
 thread_local bool t_noted = false;
+thread_local int t_slot = -1;
 
 void Add(int slot, const Sample& s) {
   if (s.n == 0) {
@@ -310,6 +311,14 @@ ModRef ModuleOf(uint64_t pc) {
 
 void NoteThread(const char* name) {
   if (t_noted) {
+    // The main thread also runs jobs (RunSingleJob), and may do so before
+    // its first game tick: "main" replaces an earlier "job" name.
+    if (t_slot >= 0 && std::strcmp(name, "main") == 0 &&
+        std::strcmp(g_slots[t_slot].name, "job") == 0) {
+      std::lock_guard lk(g_mu);
+      std::snprintf(g_slots[t_slot].name, sizeof(g_slots[t_slot].name), "%s", name);
+      REXLOG_INFO("harness: profile thread {} renamed '{}'", t_slot, name);
+    }
     return;
   }
   t_noted = true;
@@ -318,6 +327,7 @@ void NoteThread(const char* name) {
   if (i >= kMaxThreads) {
     return;
   }
+  t_slot = i;
   ThreadSlot& t = g_slots[i];
   std::snprintf(t.name, sizeof(t.name), "%s", name);
 #if defined(_WIN32)

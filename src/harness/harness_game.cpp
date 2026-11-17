@@ -1251,15 +1251,8 @@ extern "C" REX_FUNC(sub_826D34B8) {
   skate3::harness::game::OnGuestFrame(ctx, base);
 }
 
-// EA::Jobs LocalBackend::RunSingleJob (Skate 2 name; job worker threads and
-// the main thread run jobs through it): registers the job threads with the
-// profiler, where the simulation's work mostly runs.
-extern "C" REX_FUNC(sub_8290AFA0) {
-  if (skate3::harness::Enabled()) {
-    skate3::harness::profile::NoteThread("job");
-  }
-  __imp__sub_8290AFA0(ctx, base);
-}
+// The EA::Jobs hooks (RunSingleJob registers the job threads with the
+// profiler) are in src/native/skate3_native_jobs.cpp.
 
 // The career results presenter's update (virtual, vtable 0x82311800 slot;
 // main thread). It pushes FE 64 (MilestoneUnlock) when its flag this+0x30

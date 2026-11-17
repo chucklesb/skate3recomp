@@ -89,9 +89,12 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   whose capture fails (no stale caches; 96.8% bit-exact in shadow, the rest
   pedestrian fade opacity), and the D3D fence wait blocks instead of
   spinning (Odin 2 uncapped: render thread -20% CPU, better 1% lows;
-  [re/hot-functions.md](re/hot-functions.md)). Next: the job system's idle
-  spin, then cheap candidates from the ranking (DoFrustumCulling, the
-  vrsqrtefp helper).
+  [re/hot-functions.md](re/hot-functions.md)). The job system (2026-11-16):
+  the workers don't spin, they wake for nothing (two thirds of wakes find no
+  job); `WakeThreads` now signals only workers that may be waiting
+  (`skate3_native_job_wake`, on by default: job threads -6% CPU on the
+  Odin 2 at 30 fps, no lost wakes). Next: cheap candidates from the ranking
+  (DoFrustumCulling, the vrsqrtefp helper).
 
 **Parked** (the user's call; don't start without asking):
 - The photo challenge's jerky closing animation and snapping pose

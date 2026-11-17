@@ -49,6 +49,7 @@
 #include "native/skate3_native_pose.h"
 #include "native/skate3_native_replace.h"
 #include "native/skate3_native_fence.h"
+#include "native/skate3_native_jobs.h"
 // Offline-compiled SPIR-V for the native shaders (compiled from the HLSL
 // sources with DXC): the Vulkan RHI backend consumes these blobs; the D3D12
 // backend runtime-compiles the embedded HLSL as before.
@@ -12618,6 +12619,7 @@ void BuildFrameScene(uint8_t* base, const SubmitRecord* records, size_t count) {
     skate3::native_pose::OnFrameBuilt();
     skate3::native_replace::OnFrameBuilt();
     skate3::native_fence::OnFrameBuilt();
+    skate3::native_jobs::OnFrameBuilt();
     g_frame_pal_tail_ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                  PerfClock::now() - pal_tail_t0)
                                  .count());

@@ -31,7 +31,7 @@ An uncapped profile is the next measurement for 60 fps headroom.
 
 | ms/f | Function | Thread | Notes |
 |---|---|---|---|
-| 0.45 + 0.44 | `EA::Jobs::LocalBackend::RunSingleJob` (`sub_8290AFA0`) and `sub_82AE30F0` it calls | job | Time in the dispatcher itself; looks like spin/backoff while waiting for work, not work |
+| 0.45 + 0.44 | `EA::Jobs::LocalBackend::RunSingleJob` (`sub_8290AFA0`) and `sub_82AE30F0` it calls | job | RunSingleJob's self time is the slot scan, half of it finding nothing (see the job system below). `sub_82AE30F0` is a VMX job body (vector work with prefetches), not a spin |
 | 0.64 | libc (no caller frames: libc has no frame pointers) | job | Likely the same waiting (sched_yield / futex) |
 | 0.30 incl | `WakeThreads` → `SetEvent` → host `NtSetEvent` | job, main | Host event signaling per job wake (Windows: 0.85 ms/f on main through `XEvent::Set`). An SDK-side fix: skip the signal when nothing waits |
 | 0.33 incl | `sub_82E89B80` (+ `sub_82E88BA0`), under `sub_82D1DE08` (0.50 incl) | job | Unnamed; to identify |
@@ -55,7 +55,7 @@ and menus). CPU per frame (~8.5 ms frames):
 |---|---|---|
 | main | 0.78 | libc, job dispatch |
 | render | 2.06 | **`D3D::CDevice::BlockOnFence` (`sub_82B755C0`) 0.80 ms incl, 39% of the thread**: the guest spins on the GPU fence (`sub_82B76080` 0.34 ms self, calling `GetCurrentThreadId` each turn); the native renderer (`BuildFrameScene`) 0.26 ms |
-| jobs | 1.31 | `DoFrustumCulling` 0.23 ms; job dispatcher self + `sub_82AE30F0` 0.22 ms (spinning) |
+| jobs | 1.31 | `DoFrustumCulling` 0.23 ms; job dispatcher self + `sub_82AE30F0` (a VMX job body) 0.22 ms |
 
 Even at ~117 fps no thread is CPU-bound (the busiest uses ~25% of a frame),
 so the limit is the GPU or pacing. **Busy-waiting is the largest CPU cost**:
@@ -90,8 +90,49 @@ covers the fence writes).
 At the 30 fps cap the guest almost never waits on a fence (1-3 polls per
 run): the saving is above 30 fps.
 
+## The job system's wake-ups (2026-11-16, `src/native/skate3_native_jobs.cpp`)
+How the EA::Jobs workers find work (names in [symbols.toml](symbols.toml)):
+each worker loops on `RunSingleJob` (scan the job slots, claim one with a
+CAS); when nothing is runnable it waits on its own event with a 1 ms timeout
+(`GetJobThreadSleepTimeoutMS`). `WakeThreads` signals every active worker's
+event after work is added. There is no spin in the workers: the cost is
+wake-ups that find nothing.
+
+Measured with `skate3_native_job_stats` (`jobs:` lines; plaza scenario at
+the 30 fps cap, averaged over the whole run including boot and loads; the
+plaza itself runs about twice these rates):
+
+| Per second | Windows | Odin 2 |
+|---|---|---|
+| `WakeThreads` calls | ~17,500 | ~17,300 |
+| worker wakes by signal / by timeout | ~6,800 / ~1,470 | ~4,000 / ~1,120 |
+| signalled wakes that find a job | 31% | 32% |
+| timed-out wakes that find a job | ~1% | ~0.1% |
+| other threads' `RunSingleJob` calls that find a job | ~12% | |
+
+`skate3_native_job_wake = on` (the default since 2026-11-16): a worker is
+armed from just before each scan until a waker consumes it, and
+`WakeThreads` signals only armed workers, once per arming (ordering argument
+in `skate3_native_jobs.h`). It skips ~3.2 of every 4.1 million event
+signals. Timed-out wakes that then found a job (`late`, a lost wake would
+show here) stayed level: Odin 2 114-134 per run on, 123-168 off.
+
+| Plaza, medians of 3 alternating | Job threads CPU ms/frame | 1% low | busy p99 |
+|---|---|---|---|
+| Odin 2 30 fps, off | 4.40 | 27.1-28.0 | 11.7-13.2 ms |
+| Odin 2 30 fps, on | 4.14 (-6%) | 27.8-28.3 | 11.6-12.4 ms |
+| Odin 2 uncapped (2 runs), off / on | 1.40-1.45 / 1.40-1.42 | 66-74 / 69-70 | |
+| Windows 30 fps (4 runs), off / on | 9.95 / 9.2 (-7%) | 29.3 / 29.3 | |
+
+Left: two thirds of signalled wakes still find nothing, because every armed
+worker is signalled and one takes the job. Waking one worker at a time
+would need the jobs' thread masks to avoid stranding work on a worker that
+cannot run it. The waits that run jobs on other threads are small on the
+Odin 2: the spin-wait `sub_824741F0` (no sleep; masks 1 and 4) is 0.10
+ms/frame on the main thread including the jobs it runs, and
+`JobInstanceHandle::WaitOn` sleeps between tries.
+
 ## Next
-- The job system's idle spin (`RunSingleJob` self, `sub_82AE30F0`).
 - Identify `sub_82D1DE08` / `sub_82E89B80`.
 - Candidates by cost × specifiability: `DoFrustumCulling`, the
   `vrsqrtefp` helper (SDK), the job-wake signaling (SDK), RefPack
