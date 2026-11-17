@@ -16,32 +16,22 @@ what was done).
 | [KI-123](known-issues.md#ki-123-skatereel-playback-is-slow-and-uneven) | Reel playback runs slow and uneven on the Odin 2 |
 | [KI-125](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps) | For one frame after a replay jumps, the hair and shirt (cloth) sit beside the body. Next: a RenderDoc capture of that frame with the emulated renderer |
 
-## Next up (2026-11-16)
+## Next up (2026-11-17)
 
-In order; the roadmap has the context ([roadmap.md](roadmap.md), RE-5/RE-7):
-1. ~~**KI-125**~~: cause found 2026-11-16 (the game rewrites the on-screen
-   cloth buffer one frame after a seek; its GPU reads late and sees it).
-   Fix deferred by the user; options in [known-issues.md](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps).
-2. ~~**RE-5 step 4**~~: done 2026-11-16, the skeleton store is on by
-   default (no regression in stills, char_sync or frame times on either
-   platform; [re/characters.md](re/characters.md)).
-3. ~~**RE-5 step 5**~~: done 2026-11-16 (the player's content-matched
-   serve deleted; the remaining guesses wait for RE-5b).
-4. **RE-5b:** pedestrians. Found and built 2026-11-16: the LivingWorld
-   batch writer is the skater gather and pack fused, and the store rebuilds
-   every pedestrian piece exactly and serves them (`skeleton_lw = on` by
-   default, no frame-time cost). The remaining guesses were measured
-   (`skel-src:`, 2026-11-16): the post-draw fix-up is the main capture path
-   (~95%) and stays; rescue and gap fill are rare (0.2%, 48 pieces at the
-   plaza) and the store re-poses them. The few char_sync flags left at the
-   plaza are pedestrians in their first frames, before the store has a
-   tick for them.
-5. ~~**RE-7, first three**~~: done 2026-11-16. `UpdateBoneTransforms`,
-   `PackAndMultiplyMatricesForUpload` and the LivingWorld writer run
-   natively by default, bit-exact
-   ([re/characters.md](re/characters.md#native-replacements-re-7-candidates)).
-   Next: choose the next functions to replace.
-6. **Frame-time follow-ups** (below, under tooling).
+In order; the roadmap has the context ([roadmap.md](roadmap.md), Status):
+1. **Faster test runs** (below, under tooling): a per-step time table
+   across the usual scenarios, then condition waits instead of fixed
+   frame-count settles.
+2. **Codegen re-runs** only when the code generator's own sources change
+   (today any SDK change reruns its ~2.5 min analysis).
+3. **Frame-time follow-ups** (below, under tooling), the Odin 2 texture
+   re-decode hitch first.
+4. **Native-only phase 1** ([native-only.md](native-only.md)).
+5. **RE-7:** the next native replacements ([re/replacements.md](re/replacements.md)).
+
+Deferred by the user: the KI-125 cloth fix (options in
+[known-issues.md](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps)),
+the photo challenge's closing animation, glass haze, RE-9 and game-style UI.
 
 ## Rendering
 
@@ -195,12 +185,16 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
   image for every frame of a short capture (frame-exact, no screen
   recorder), on the desktop and the Odin 2; look at what limits today's
   `screenshot` bursts and recordings.
-- **Headless desktop runs**: done for Windows (2026-11-16): `windows`/`ab`
-  runs start windowed, hidden and muted; a `window` step shows the window
-  with audio ([scenario-harness.md](scenario-harness.md)). Left: check
-  Linux and macOS desktops (the same SDK cvars should apply).
+- **Desktop window modes**: done for Windows (2026-11-16/17): `windows`/`ab`
+  runs take `--display windowed` (default: minimized without focus, audio
+  on), `headless` (hidden, muted) or `fullscreen`; a `window` step shows the
+  window ([scenario-harness.md](scenario-harness.md)). Left: check Linux and
+  macOS desktops (the same SDK cvars should apply).
 - **Faster test runs** (2026-11-16). Much of a run is fixed delays put in
-  so input doesn't arrive too early:
+  so input doesn't arrive too early. Done 2026-11-17: the boot-screen
+  scenarios (158 s -> 58 s on both platforms; `input until_screen_changes`
+  re-taps until the screen changes, `expect fe_screen`, demo boots end the
+  logo at once). Left:
   - **Frame-count waits** (`wait frames = 120` after spawning, the 90-frame
     `start_spot` settle, `settle_frames`) are frames, not time: 120 frames
     is 4 s at a 30 fps cap and 1 s at 120 fps. Most of them stand in for a

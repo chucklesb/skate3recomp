@@ -4,18 +4,25 @@ Where this fork is going, in order. The smaller items, in no particular
 order, are in [open-work.md](open-work.md); bugs are in
 [known-issues.md](known-issues.md).
 
-## Status (updated 2026-11-15)
+## Status (updated 2026-11-17)
 
 The tracker: what's being worked on, in priority order, and what's done.
 Update it with every commit that finishes or starts an item. Details live in
 the linked pages; the backlog is [open-work.md](open-work.md).
 
-**Now** (finishing milestone 1, phase 0):
-1. [x] **Branches:** `native-only` here and in the SDK fork (`native-only`, from
+**Now** (2026-11-17):
+1. [~] **Faster test runs:** the boot-screen scenarios no longer idle
+   (158 s -> 58 s; `input until_screen_changes`, demo boots skip the logo).
+   Next: a per-step time table across the usual scenarios, then condition
+   waits instead of fixed frame-count settles
+   ([open-work.md](open-work.md), "Faster test runs").
+2. [ ] **Codegen re-runs only for codegen changes:** today any SDK change
+   reruns the ~2.5 min analysis (the rexglue binary hash decides).
+3. [x] **Branches:** `native-only` here and in the SDK fork (`native-only`, from
    `linux-aarch64-cross` 062fb8d and SDK `vulkan-debug-labels` 4ef36cf).
 
 **Next:**
-2. [ ] **Native-only phase 1** (offscreen 2D compose), then phases 2-5.
+4. [ ] **Native-only phase 1** (offscreen 2D compose), then phases 2-5.
    Row D, the offscreen skater pass in challenges (72-96 emulated draws a
    frame), is the biggest remaining cost; it's phase 4.
 
@@ -101,7 +108,8 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   bit-exact ([re/culling.md](re/culling.md); job threads -5% CPU on the
   Odin 2). Later the same day (Windows, then the Odin 2): `sub_827816C0` turned out to be a 160-byte row copy
   (`lwrows`, bit-exact), and `WaitForSingleObjectEx` with its timeout
-  and last-error helpers run as native bodies. Next: the vrsqrtefp helper
+  and last-error helpers run as native bodies; Sk8AppMan's pad-sample ring
+  push/pop/unpush too (`ring_*`, 2026-11-16). Next: the vrsqrtefp helper
   (SDK), RunSingleJob's slot layout, the BindConstants bodies
   ([re/replacements.md](re/replacements.md)).
 - RE-8 [~] **Boot flow** ([re/boot.md](re/boot.md)): the handler chain from
@@ -142,6 +150,16 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   passed on retry, no symbols); watch for a repeat.
 
 **Done recently:**
+- 2026-11-17: **testing builds** (`relwithdebinfo`: harness runs, testing
+  pre-releases) compile at -O3 like releases, and the harness defaults to
+  them; **controller free-fly** (sticks, triggers, Back exits); harness
+  `--display windowed|headless|fullscreen` (minimized by default, SDK
+  `window_minimized`); boot-screen scenarios 158 s -> 58 s; RE-9 written up.
+- 2026-11-16: **the slow boot at a frame cap fixed** (SDK auto-reset event
+  hand-off; Odin 2 language select 1.3 s instead of up to 77 s), the pad
+  ring native; RE-8 boot flow, skippable intros and the quick title;
+  the skeleton store on by default (RE-5) and the first RE-7 replacements;
+  v2.1.0-testing.8.
 - 2026-11-15: **Row A measured** (the "new team member" prompt, 36.4 draws a
   frame) through RE-4: board sales decoded and settable (`career` step).
 - 2026-11-15: **RE-1 toolkit** and **RE-2 first pass** (8,020 Skate 3
