@@ -137,6 +137,14 @@ ms/frame on the main thread including the jobs it runs, and
 (`skate3_native_cull_replace`, [culling.md](culling.md)): bit-exact in shadow,
 job threads -5% CPU on the Odin 2 and -8% on Windows at 30 fps.
 
+## The waits and the LivingWorld row copy (2026-11-16, Windows)
+`WaitForSingleObjectEx` (`sub_82EE7880`) and its two helpers run as native
+bodies (`j_waitex`, `k_timeout`, `k_lasterr`): ~836,000 waits in the plaza
+run, the same job counters (`late` 61-65 of ~7,000 timeouts), frame times
+level. `sub_827816C0` is a 160-byte copy (`lwrows`), bit-exact in shadow.
+Neither moves CPU measurably; they are RE-7 replacements, not
+optimizations. The Odin 2 check was skipped (the user's choice).
+
 ## Next
 - Identify `sub_82D1DE08` / `sub_82E89B80`.
 - Candidates by cost × specifiability: `DoFrustumCulling`, the

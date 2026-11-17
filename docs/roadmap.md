@@ -99,8 +99,12 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   waits and the spin-wait run as native bodies (the framework's Body
   families). Culling: `DoFrustumCulling` + its job wrappers native and
   bit-exact ([re/culling.md](re/culling.md); job threads -5% CPU on the
-  Odin 2). Next: the vrsqrtefp helper (SDK), RunSingleJob's slot layout,
-  the BindConstants bodies ([re/replacements.md](re/replacements.md)).
+  Odin 2). Later the same day (Windows; the Odin 2 check skipped by
+  choice): `sub_827816C0` turned out to be a 160-byte row copy
+  (`lwrows`, bit-exact), and `WaitForSingleObjectEx` with its timeout
+  and last-error helpers run as native bodies. Next: the vrsqrtefp helper
+  (SDK), RunSingleJob's slot layout, the BindConstants bodies
+  ([re/replacements.md](re/replacements.md)).
 
 **Parked** (the user's call; don't start without asking):
 - The photo challenge's jerky closing animation and snapping pose
