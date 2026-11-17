@@ -27,6 +27,7 @@
 #include <rex/cvar.h>
 #include <rex/graphics/native_guest_renderer.h>
 
+#include "skate3_demo_path.h"
 #include "skate3_native_scene.h"
 #include "harness/harness_profile.h"
 #include <rex/kernel/guest_presence.h>
@@ -2829,4 +2830,7 @@ extern "C" REX_FUNC(sub_82EE22C0) {
   const uint32_t state = ctx.r4.u32;
   __imp__sub_82EE22C0(ctx, base);
   skate3::harness::OnPadPoll(base, user, state, ctx.r3.u32);
+  // The buttons the game received (after any harness rewrite), for the
+  // intro skip (docs/re/boot.md).
+  skate3::demo_path::NoteGuestPad(base, user, state, ctx.r3.u32);
 }

@@ -1,0 +1,24 @@
+# A normal boot with no input, to the title screen ("Press Start"): how long
+# each boot screen lasts (docs/re/boot.md). Run at several frame-rate caps
+# and compare with tools/harness/boot_timing.py, e.g.
+#   rs.sh windows scenarios/boot_timing.toml --headless -- --skate3_guest_fps_cap=60
+# (the cap comes from the command line; scenario cvars would override it)
+# The probe also logs the FrontEndManager's state table once (FE state N
+# obj=... vt=... lines in log.txt).
+name = "boot_timing"
+timeout_s = 120
+boot = "none"
+state_every_frames = 10
+
+[cvars]
+skate3_demo_path_signed_in = true
+skate3_demo_path_probe = true
+skate3_guest_fps_cap_auto = false
+
+[[step]]
+do = "wait"
+ms = 45000
+
+[[step]]
+do = "screenshot"
+tag = "end"

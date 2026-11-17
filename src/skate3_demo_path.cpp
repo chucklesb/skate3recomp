@@ -12,6 +12,8 @@
 #include <thread>
 #include <vector>
 
+#include <fmt/format.h>
+
 #include <rex/cvar.h>
 #include <rex/kernel/guest_presence.h>
 #include <rex/input/input.h>
@@ -52,8 +54,11 @@ REXCVAR_DEFINE_STRING(skate3_demo_path_boot_screen_inputs, "", "Skate 3",
                       "in turn instead of the dialog A auto-tap. Takes precedence over the "
                       "built-in rule (screen 15, the new-profile skater editor: b|a)");
 REXCVAR_DEFINE_BOOL(skate3_intro_movie_skip, true, "Skate 3",
-                    "Skip the frontend intro movie when A or Start is pressed "
-                    "(the default keyboard bindings make that Space and Enter)");
+                    "Skippable intros: during the boot (before the title screen) any "
+                    "button skips the Skate 3 logo and the intro movie; later frontend "
+                    "movies skip on A or Start (the default keyboard bindings make that "
+                    "Space and Enter). The language screen and the title already take "
+                    "input (docs/re/boot.md)");
 
 namespace skate3::native_scene {
 // Fault-guarded guest read (defined in skate3_native_scene.cpp).
@@ -78,6 +83,14 @@ std::atomic<uint32_t> g_automation_stage{0};
 std::atomic<bool> g_skip_intro_movie{false};
 std::atomic<bool> g_logged_intro_movie_skip{false};
 std::atomic<bool> g_f10_poll_was_down{false};
+// The buttons player one's pad gave the game at its last poll (after any
+// harness rewrite: XInputGetState is the game's only pad path), so the skip
+// sees exactly what the game sees, scripted input included.
+std::atomic<uint32_t> g_guest_pad_buttons{0};
+// Set once the boot flow reaches the title screen (ShowPressStartMode):
+// from then on only A / Start skip (in-game frontend movies).
+std::atomic<bool> g_title_reached{false};
+
 
 bool ProbeEnabled() {
   return rex::cvar::Query<bool>("skate3_demo_path") ||
@@ -188,6 +201,93 @@ extern "C" REX_FUNC(Skate3DemoPath_SetFrontEndStateHook) {
   sub_82D0AFA0(ctx, base);
 }
 
+// Probe, once at the first FE push: the FrontEndManager's state table
+// (*(mgr+8): one object per FE state id, docs/re/boot.md), each object's
+// vtable and its first 24 slots, so each state's functions can be read.
+void DumpFrontEndStateTable(uint8_t* base, uint32_t mgr) {
+  static std::atomic<bool> s_dumped{false};
+  if (s_dumped.exchange(true)) {
+    return;
+  }
+  uint32_t table = 0;
+  if (!skate3::native_scene::GuestTryLoadU32(base, mgr + 8, &table) || table == 0) {
+    REXLOG_INFO("Skate 3 demo path: FE state table unreadable (mgr=0x{:08X})", mgr);
+    return;
+  }
+  REXLOG_INFO("Skate 3 demo path: FE state table mgr=0x{:08X} table=0x{:08X}", mgr, table);
+  for (uint32_t id = 0; id < 160; ++id) {
+    uint32_t obj = 0, vt = 0;
+    if (!skate3::native_scene::GuestTryLoadU32(base, table + 4 * id, &obj)) {
+      break;
+    }
+    if (obj == 0 || !skate3::native_scene::GuestTryLoadU32(base, obj, &vt)) {
+      continue;
+    }
+    std::string slots;
+    for (uint32_t k = 0; k < 24; ++k) {
+      uint32_t fn = 0;
+      if (!skate3::native_scene::GuestTryLoadU32(base, vt + 4 * k, &fn)) {
+        break;
+      }
+      slots += fmt::format(" {:08X}", fn);
+    }
+    REXLOG_INFO("Skate 3 demo path: FE state {} obj=0x{:08X} vt=0x{:08X}:{}", id, obj, vt,
+                slots);
+  }
+}
+
+// Probe: the boot flow's state handlers (Sk8::Flow::StateBootFlow, a chain
+// of (this, event) handlers: 0 enter, 1 update, 3 exit; docs/re/boot.md).
+// Logs each handler's enter/exit and, on every update, changes of the boot
+// game module's load phase (module+68; the module is *(*(0x83083BCC)+8)
+// when its vtable is 0x8230C748) and of the FE movie player's state
+// (*(*(fe+264)+12), fe = *(0x830CFE14); 4 = done).
+constexpr uint32_t kBootModuleHolder = 0x83083BCC;
+constexpr uint32_t kBootModuleVtable = 0x8230C748;
+constexpr uint32_t kFrontEndPtr = 0x830CFE14;
+
+void BootHandlerProbe(const char* name, uint8_t* base, uint32_t event) {
+  if (!ProbeEnabled()) {
+    return;
+  }
+  if (event != 1) {
+    REXLOG_INFO("Skate 3 boot: {} event={}", name, event);
+  }
+  static std::atomic<int64_t> s_phase{-2}, s_movie{-2}, s_failed{-2};
+  uint32_t holder = 0, module = 0, vt = 0, phase = 0, failed = 0;
+  int64_t p = -1, f = -1;
+  if (skate3::native_scene::GuestTryLoadU32(base, kBootModuleHolder, &holder) && holder &&
+      skate3::native_scene::GuestTryLoadU32(base, holder + 8, &module) && module &&
+      skate3::native_scene::GuestTryLoadU32(base, module, &vt) && vt == kBootModuleVtable &&
+      skate3::native_scene::GuestTryLoadU32(base, module + 68, &phase) &&
+      skate3::native_scene::GuestTryLoadU32(base, module + 32, &failed)) {
+    p = phase;
+    f = failed >> 24;  // the byte at +32
+  }
+  uint32_t fe = 0, player = 0, movie = 0;
+  int64_t m = -1;
+  if (skate3::native_scene::GuestTryLoadU32(base, kFrontEndPtr, &fe) && fe &&
+      skate3::native_scene::GuestTryLoadU32(base, fe + 264, &player) && player &&
+      skate3::native_scene::GuestTryLoadU32(base, player + 12, &movie)) {
+    m = movie;
+  }
+  const int64_t op = s_phase.exchange(p), om = s_movie.exchange(m), of = s_failed.exchange(f);
+  if (op != p || om != m || of != f) {
+    REXLOG_INFO("Skate 3 boot: [{}] module phase {} -> {} (+32 {}), movie state {} -> {}", name,
+                op, p, f, om, m);
+  }
+}
+
+#define SKATE3_BOOT_HANDLER_PROBE(addr, label)       \
+  extern "C" REX_FUNC(sub_##addr) {                  \
+    BootHandlerProbe(label, base, ctx.r4.u32);       \
+    __imp__sub_##addr(ctx, base);                    \
+  }
+SKATE3_BOOT_HANDLER_PROBE(826FDE48, "logo (FE 5)")
+SKATE3_BOOT_HANDLER_PROBE(826FDEF0, "movie (FE 24)")
+SKATE3_BOOT_HANDLER_PROBE(826FE058, "wait for load")
+SKATE3_BOOT_HANDLER_PROBE(826FE138, "title (FE 22)")
+
 // Probe: FE screen pushes (screen id in r4), logged with the caller so
 // unknown boot screens can be traced to the code that opens them.
 #define SKATE3_FE_PUSH_PROBE(addr)                                                    \
@@ -195,6 +295,7 @@ extern "C" REX_FUNC(Skate3DemoPath_SetFrontEndStateHook) {
     if (ProbeEnabled()) {                                                             \
       REXLOG_INFO("Skate 3 demo path: FE push via sub_" #addr " id={} lr=0x{:08X}",    \
                   ctx.r4.u32, static_cast<uint32_t>(ctx.lr));                         \
+      DumpFrontEndStateTable(base, ctx.r3.u32);                                       \
     }                                                                                 \
     __imp__sub_##addr(ctx, base);                                                     \
   }
@@ -219,6 +320,7 @@ extern "C" REX_FUNC(Skate3DemoPath_ShowPressStartModeHook) {
   PollF10Marker();
   LogBootFlowEventChange(g_last_press_start_event, "BootFlow ShowPressStartMode", ctx.r4.u32,
                          ctx.r3.u32);
+  g_title_reached.store(true, std::memory_order_relaxed);
   if (ctx.r4.u32 == 1) {
     g_skip_intro_movie.store(false, std::memory_order_relaxed);
     EnableTitleStartAutoTapIfNeeded("press-start state");
@@ -293,27 +395,40 @@ std::function<rex::input::InputSystem*()> g_ui_input_provider;
 // merged raw pad state is polled so the default keyboard bindings (Space = A,
 // Enter = Start) work identically on every backend; rising-edge only, so a
 // button held since before the movie doesn't blow straight through it.
-bool UserRequestedMovieSkip() {
+// One rising-edge detector shared by every skippable intro screen (the logo
+// update and the movie tick run on consecutive frames), so a button held
+// from one screen into the next doesn't skip both. Starts "down": a button
+// held since before the first intro screen does nothing.
+bool SkipEdge(const char* what) {
   static std::atomic<bool> s_was_down{true};
-  if (!REXCVAR_GET(skate3_intro_movie_skip) || !g_ui_input_provider) {
+  if (!REXCVAR_GET(skate3_intro_movie_skip)) {
     return false;
   }
-  rex::input::InputSystem* input = g_ui_input_provider();
-  if (input == nullptr) {
-    return false;
+  const bool boot = !g_title_reached.load(std::memory_order_relaxed);
+  // Any digital button during the boot (not Guide); A / Start afterwards.
+  const uint16_t mask =
+      boot ? static_cast<uint16_t>(0xF3FF)
+           : static_cast<uint16_t>(rex::input::X_INPUT_GAMEPAD_A |
+                                   rex::input::X_INPUT_GAMEPAD_START);
+  uint16_t buttons = static_cast<uint16_t>(g_guest_pad_buttons.load(std::memory_order_relaxed));
+  if (g_ui_input_provider) {
+    if (rex::input::InputSystem* input = g_ui_input_provider()) {
+      rex::input::X_INPUT_GAMEPAD pad;
+      if (input->GetUiGamepadState(&pad)) {
+        buttons = static_cast<uint16_t>(buttons | pad.buttons);
+      }
+    }
   }
-  constexpr uint16_t kSkipButtons =
-      rex::input::X_INPUT_GAMEPAD_A | rex::input::X_INPUT_GAMEPAD_START;
-  rex::input::X_INPUT_GAMEPAD pad;
-  const bool down =
-      input->GetUiGamepadState(&pad) && (pad.buttons & kSkipButtons) != 0;
+  const bool down = (buttons & mask) != 0;
   const bool was_down = s_was_down.exchange(down, std::memory_order_relaxed);
   if (down && !was_down) {
-    REXLOG_INFO("Skate 3: frontend movie skipped by user input");
+    REXLOG_INFO("Skate 3: {} skipped by user input (buttons 0x{:04X})", what, buttons);
     return true;
   }
   return false;
 }
+
+bool UserRequestedMovieSkip() { return SkipEdge("frontend movie"); }
 
 std::atomic<bool> g_input_worker_quit{false};
 std::thread g_input_worker;
@@ -684,6 +799,18 @@ rex::input::InputSystem* GetUiInputSystem() {
 void SetUiInputProvider(std::function<rex::input::InputSystem*()> provider) {
   g_ui_input_provider = std::move(provider);
 }
+
+void NoteGuestPad(uint8_t* base, uint32_t user, uint32_t state_addr, uint32_t result) {
+  if ((user & 0xFF) != 0 || result != 0 || state_addr == 0) {
+    return;
+  }
+  uint32_t word = 0;  // X_INPUT_STATE: packet (u32), then buttons (u16)
+  if (skate3::native_scene::GuestTryLoadU32(base, state_addr + 4, &word)) {
+    g_guest_pad_buttons.store(word >> 16, std::memory_order_relaxed);
+  }
+}
+
+bool IntroSkipPressed() { return SkipEdge("intro screen"); }
 
 bool ShouldForceIntroMovieComplete() {
   if (AutomationEnabled() && g_skip_intro_movie.load(std::memory_order_relaxed)) {

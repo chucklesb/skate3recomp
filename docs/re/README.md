@@ -62,6 +62,7 @@ The usual order: observe live, snapshot, read the code, name it, verify.
 | | `tools/re/gsnap.py` | Search a snapshot (`find-u32`, `find-f32`), diff two, read, find who points at an object (`refs`). Its RTTI commands (`classof`, `owner`) find nothing in this game: Skate 2 and Skate 3 were both built without MSVC RTTI (checked 2026-11-15) |
 | | `tools/re/registry.py`, `messages.py` | The game's object registry (names by hash) and the message id → `cMsg` class table, from a snapshot |
 | Read the code | `tools/re/xrefs.py` | From `generated/`: callers, callees, functions that build an address (`refs`), disassembly (`dis`) |
+| | `tools/re/vtable.py ADDR` | A vtable's slots from the TU3 image, with the names we know (hand map, bindings, Skate 2) |
 | | `tools/re/decomp.py ADDR` | Ghidra's decompiled C (one-time project: `tools/re/ghidra/setup.py SNAP.gsnap`; output cached in `out/re/decomp/`, never committed) |
 | Name it | [symbols.toml](symbols.toml), `tools/harness/re_symbols.py` | The map; `lookup`, `coverage`, `check`. `run_scenario.py symbolize` and crash summaries print map names next to `sub_` addresses |
 | Verify | scenarios, char_sync, the census | A probe or scenario that shows the role; `confidence = "confirmed"` only then |

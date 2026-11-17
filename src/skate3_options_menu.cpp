@@ -460,6 +460,9 @@ Page BuildControlsPage(const RestartSettings& settings) {
 Page BuildSystemPage(const RestartSettings& settings) {
   Page page{"System"};
   AddToggle(page, "Mute", "Silences all game audio.", {"audio_mute"});
+  AddToggle(page, "Skippable Intros",
+            "At startup, any button skips the Skate 3 logo and the intro movie.",
+            {"skate3_intro_movie_skip"});
   AddRestart(page, settings, "audio_buffer");
   AddRestart(page, settings, "language");
   return page;

@@ -105,6 +105,17 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   and last-error helpers run as native bodies. Next: the vrsqrtefp helper
   (SDK), RunSingleJob's slot layout, the BindConstants bodies
   ([re/replacements.md](re/replacements.md)).
+- RE-8 [~] **Boot flow** ([re/boot.md](re/boot.md)): the handler chain from
+  launch to the title is mapped (language select, logo, the EA / Black Box
+  FMV, a load wait, the title). No screen is frame-dependent (all time
+  `dt` in ms; same seconds at 30, 60 and ~500 fps). None blocks the main
+  loop, but the boot load only starts when the FMV plays, so the 10 s
+  language timeout and the 4 s logo delay it. Done (2026-11-16, Windows):
+  any button skips the logo and the FMV during the boot
+  (`skate3_intro_movie_skip`, "Skippable Intros" in the options menu;
+  title at 6.2 s instead of 25.8 s); the logo's update is native
+  (`boot_logo`). Next: a native handler chain that starts the load at
+  once, and the movie handler's side effects (requirements in boot.md).
 
 **Parked** (the user's call; don't start without asking):
 - The photo challenge's jerky closing animation and snapping pose

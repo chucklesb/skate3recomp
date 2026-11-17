@@ -176,11 +176,12 @@ confidence = "guess"
 evidence = "src/ comment"
 
 [sub_82D0ABE0]
-name = "FE screen push (variant A)"
-signature = "(manager, int screen_id /*r4*/)"
+name = "FE state push (variant A)"
+signature = "(manager, int state_id /*r4*/)"
+role = "Queues a push of an FE state (a 20-byte request). The id indexes the manager's state table (objects at *(*(mgr+8) + 4*id)), not the screen table of fe_screens.tsv (docs/re/boot.md)."
 confidence = "confirmed"
-evidence = "SKATE3_FE_PUSH_PROBE in src/skate3_demo_path.cpp logs every push"
-hooked = "src/skate3_demo_path.cpp"
+evidence = "SKATE3_FE_PUSH_PROBE in src/skate3_demo_path.cpp logs every push; sub_82D0B060 indexes the table"
+hooked = "src/skate3_demo_path.cpp (probe; dumps the state table once)"
 
 [sub_82D0AB30]
 name = "FE screen push (variant B)"
@@ -509,3 +510,51 @@ role = "RtlNtStatusToDosError, then stores the result at *(r13+256)+352 (the thr
 confidence = "likely"
 evidence = "disassembly (13 instructions); 32 callers"
 hooked = "src/native/skate3_native_jobs.cpp (native body k_lasterr)"
+
+[sub_826FDE48]
+name = "StateBootFlow logo handler"
+signature = "(this, event: 0 enter / 1 update / 4 leave)"
+role = "Enter: pushes FE state 5 (Skate 3 logo). Update: waits for the logo state's done byte (*(*(mgr+8)+20)+64), then moves to sub_826FDEF0."
+confidence = "confirmed"
+evidence = "disassembly; boot probe (docs/re/boot.md)"
+hooked = "src/skate3_demo_path.cpp (probe)"
+
+[sub_826FDEF0]
+name = "StateBootFlow movie handler"
+signature = "(this, event)"
+role = "Enter: SetFrontEndState(24) and starts the FE movie player (EA + Black Box FMV). Update: when the player is playing, sets the boot module's load phase (module+68) to 1; when the player reaches 4, moves to sub_826FE058."
+confidence = "confirmed"
+evidence = "disassembly; boot probe: load phase 0 -> 2 at the movie start"
+hooked = "src/skate3_demo_path.cpp (probe)"
+
+[sub_826FE058]
+name = "StateBootFlow wait-for-load handler"
+signature = "(this, event)"
+role = "Enter: shows the loading UI (sub_825DF470(fe, 1, 1)). Update: moves to sub_826FE138 once module+68 == 3 or the byte module+32 is set."
+confidence = "confirmed"
+evidence = "disassembly; boot probe"
+hooked = "src/skate3_demo_path.cpp (probe)"
+
+[sub_826FE138]
+name = "StateBootFlow title handler"
+signature = "(this, event)"
+role = "Hides the loading UI, pushes FE state 22 (title) through sub_82D0AEF0, moves to ShowPressStartMode sub_826FE1D8."
+confidence = "confirmed"
+evidence = "disassembly; boot probe"
+hooked = "src/skate3_demo_path.cpp (probe)"
+
+[sub_82608E38]
+name = "FrontEndState (id 5, boot logo)::OnUpdate"
+signature = "(this, dt_ms)"
+role = "this+60 += dt; at 4000 ms sets the done byte this+64. Vtable 0x82302D90 +0x10."
+confidence = "confirmed"
+evidence = "disassembly; same 4.70 s at 30/60/~500 fps"
+hooked = "src/native/skate3_native_boot.cpp (native body boot_logo)"
+
+[sub_82639400]
+name = "FrontEndState_LanguageSelect::OnUpdate"
+signature = "(this, dt_ms)"
+role = "this+60 += dt; at 10000 ms pops itself (sub_82D0AC88), keeping the current language."
+confidence = "confirmed"
+evidence = "disassembly; 10.60 s with no input at every frame rate"
+hooked = "src/skate3_demo_path.cpp (probe, first update)"

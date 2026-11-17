@@ -55,6 +55,9 @@ row here saying what's missing.
 | `sub_82EEEA98` | ms to a kernel timeout | control | native-on | `k_timeout`: -1 gives 0 (INFINITE), else stores u32(ms) * -10000 at r3 | - |
 | `sub_82EE6260` | set the last error from an NTSTATUS | control | native-on | `k_lasterr`: `RtlNtStatusToDosError`, stored at `*(r13+256)+352` unless `*(r13+336)` is set (32 callers) | - |
 | `sub_824741F0` | spin-wait on a job | control | native-on | `j_spin` | - |
+| `sub_82608E38` | boot logo `OnUpdate` (FE state 5) | control | native-on | `skate3_native_boot.cpp` `boot_logo` (`skate3_native_boot_replace`): `+60 += dt`, done byte `+64` at 4000 ms or on the intro skip; [boot.md](boot.md) | - |
+| `sub_82639400` | language select `OnUpdate` (FE 47) | control | specified | 10,000 ms timeout, then pops itself | Replace with the boot handler chain |
+| `sub_826FDC50`..`sub_826FE1D8` | `StateBootFlow` handlers (7) | control | specified | [boot.md](boot.md): events, transitions, the load phase | Native chain: needs the movie handler's side effects understood |
 | `sub_82816A40` | `DoFrustumCulling` | pure | native-on | `skate3_native_cull.cpp` `cull`; shadow bit-exact on both platforms; [culling.md](culling.md) | - |
 | `sub_82817138` | `Sk8::VectorizedCullingJob` | control | native (with `cull` on) | `cull_job` | - |
 | `sub_82812A20` | `BufferedIterativeJobEntryPoint<VectorizedCullingJob>` | control | native (with `cull` on) | `cull_ent` | - |
