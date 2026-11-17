@@ -493,3 +493,19 @@ role = "Copies 160 bytes: 9 vectors at +0..+128 (lvx/stvx, 16-byte aligned) and 
 confidence = "confirmed"
 evidence = "disassembly (38 instructions, no calls); replace: lwrows shadow"
 hooked = "src/native/skate3_native_pose.cpp (Compute family lwrows)"
+
+[sub_82EEEA98]
+name = "Win32 timeout to kernel timeout"
+signature = "(out, ms) -> out, or 0 for INFINITE"
+role = "ms == -1 returns 0; otherwise *(s64*)out = u32(ms) * -10000 (relative, 100 ns units) and returns out."
+confidence = "confirmed"
+evidence = "disassembly (8 instructions)"
+hooked = "src/native/skate3_native_jobs.cpp (native body k_timeout)"
+
+[sub_82EE6260]
+name = "SetLastError from NTSTATUS"
+signature = "(status) -> DOS error"
+role = "RtlNtStatusToDosError, then stores the result at *(r13+256)+352 (the thread's last error) unless the word at r13+336 is set."
+confidence = "likely"
+evidence = "disassembly (13 instructions); 32 callers"
+hooked = "src/native/skate3_native_jobs.cpp (native body k_lasterr)"

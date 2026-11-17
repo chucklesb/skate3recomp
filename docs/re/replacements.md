@@ -51,7 +51,9 @@ row here saying what's missing.
 | `sub_8290B320` | `WakeThreads` | control | native-on | `j_wake`: both paths native; signals only armed workers when `skate3_native_job_wake = on` | - |
 | `sub_82909738`, `sub_82909740` | `Get/SetJobThreadSleepTimeoutMS` | control | native-on | `j_gettmo`, `j_settmo` (backend+1592) | - |
 | `sub_82EDFEC0` | `WaitForSingleObject` | control | native-on | `j_wait` (all 105 callers) | - |
-| `sub_82EE7880` | `WaitForSingleObjectEx` | control | native-on | `j_waitex`: the timeout helper `sub_82EEEA98`, the `NtWaitForSingleObjectEx` import (retried on status 257 when alertable), `sub_82EE6260` on failure | Specify `sub_82EEEA98` (ms to a kernel timeout) and `sub_82EE6260` (NTSTATUS to last error) |
+| `sub_82EE7880` | `WaitForSingleObjectEx` | control | native-on | `j_waitex`: the timeout helper `sub_82EEEA98`, the `NtWaitForSingleObjectEx` import (retried on status 257 when alertable), `sub_82EE6260` on failure | - |
+| `sub_82EEEA98` | ms to a kernel timeout | control | native-on | `k_timeout`: -1 gives 0 (INFINITE), else stores u32(ms) * -10000 at r3 | - |
+| `sub_82EE6260` | set the last error from an NTSTATUS | control | native-on | `k_lasterr`: `RtlNtStatusToDosError`, stored at `*(r13+256)+352` unless `*(r13+336)` is set (32 callers) | - |
 | `sub_824741F0` | spin-wait on a job | control | native-on | `j_spin` | - |
 | `sub_82816A40` | `DoFrustumCulling` | pure | native-on | `skate3_native_cull.cpp` `cull`; shadow bit-exact on both platforms; [culling.md](culling.md) | - |
 | `sub_82817138` | `Sk8::VectorizedCullingJob` | control | native (with `cull` on) | `cull_job` | - |
