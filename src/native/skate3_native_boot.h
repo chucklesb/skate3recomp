@@ -12,5 +12,9 @@
 // (sub_82608E38) as a Body family `boot_logo`: the same 4000 ms timer on the
 // state's +60 accumulator, setting the done byte +64 that the boot flow
 // waits on; and, with skate3_intro_movie_skip, a fresh press of any button
-// ends it the same way.
+// ends it the same way. Also native (2026-11-17): the one-line OnEnter of 13
+// FE states (fe_open: OpenScreen(N, 0)), the OnLeave of states 5-8
+// (fe_close) and 10/11/13 (fe_closescreen), the title's OnEnter / OnLeave
+// (title_enter, title_leave) and the language select's 10 s timer
+// (lang_update).
 namespace skate3::native_boot {}

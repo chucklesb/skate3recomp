@@ -543,6 +543,38 @@ confidence = "confirmed"
 evidence = "disassembly; boot probe"
 hooked = "src/skate3_demo_path.cpp (probe)"
 
+[sub_82608E00]
+name = "FrontEndState (id 5)::OnEnter"
+signature = "(this)"
+role = "Tail call this->OpenScreen(5, 0) (vtable +56). States 6/7/8 have the same body with 6/7/8 (sub_82608E58/E70/E88)."
+confidence = "confirmed"
+evidence = "disassembly; the FE state table dump (vtable slot +0x0C)"
+hooked = "src/native/skate3_native_boot.cpp (native bodies fe_open5..8)"
+
+[sub_82608E18]
+name = "FrontEndState (ids 5-8)::OnLeave"
+signature = "(this)"
+role = "Done byte this+64 = 1, tail call this->CloseScreen(0) (vtable +60)."
+confidence = "confirmed"
+evidence = "disassembly; the FE state table dump (vtable slot +0x18)"
+hooked = "src/native/skate3_native_boot.cpp (native body fe_close)"
+
+[sub_82608F18]
+name = "FrontEndState (id 22, title)::OnEnter"
+signature = "(this)"
+role = "+76 = 0, +52 = 1, +64 = 0, byte +80 = 0; unless mode +68 is set, tail call this->OpenScreen(2, 0)."
+confidence = "confirmed"
+evidence = "disassembly"
+hooked = "src/native/skate3_native_boot.cpp (native body title_enter)"
+
+[sub_82608F58]
+name = "FrontEndState (id 22, title)::OnLeave"
+signature = "(this)"
+role = "Plays FE sound 0xE3071166217C9661 (sub_825DFB88), then this->CloseScreen(0)."
+confidence = "confirmed"
+evidence = "disassembly"
+hooked = "src/native/skate3_native_boot.cpp (native body title_leave)"
+
 [sub_82608E38]
 name = "FrontEndState (id 5, boot logo)::OnUpdate"
 signature = "(this, dt_ms)"
@@ -557,7 +589,7 @@ signature = "(this, dt_ms)"
 role = "this+60 += dt; at 10000 ms pops itself (sub_82D0AC88), keeping the current language."
 confidence = "confirmed"
 evidence = "disassembly; 10.60 s with no input at every frame rate"
-hooked = "src/skate3_demo_path.cpp (probe, first update)"
+hooked = "src/skate3_demo_path.cpp (probe, first update); src/native/skate3_native_boot.cpp (native body lang_update)"
 
 [sub_82609050]
 name = "FrontEndState (id 22, title)::OnUpdate"

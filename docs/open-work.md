@@ -229,6 +229,12 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
     "loading done" condition for those presses (presence back to gameplay,
     or the next screen's push), then shorter settles, checked with a
     contact sheet against a reference run.
+- **native_tour is flaky in its challenge segment** (2026-11-17, Windows):
+  one of four runs went off course after the challenge sign-up (the shots
+  showed other screens from there on) while still passing. The challenge
+  it signs up for depends on the career save, which every run changes.
+  Make the segment wait on conditions (the challenge intro's FE screen,
+  gameplay) instead of frame counts, and check shots against a reference.
 - **Fly and noclip mode** to move the camera or skater through geometry, for
   looking at shadows and their casters.
 - **Scripted "backwards man" speed glitch** as a timed pad sequence (find the
