@@ -1,0 +1,49 @@
+# Free-fly drone camera smoke test: engage it in free skate, hold it for a
+# few seconds, release it. log.txt has "native-scene freecam: ENGAGED" (with
+# the controller map) and "native-scene freecam: off". Harness pad input is
+# synthetic and the freecam reads the physical pad only, so the controller
+# flight itself is checked by hand (left stick fly, right stick look, RT/LT
+# up/down, RB fast, LB slow, d-pad zoom, Back exits).
+#
+#   tools/harness/run_scenario.py windows scenarios/freecam_smoke.toml
+
+name = "freecam_smoke"
+timeout_s = 600
+boot = "demo"
+
+[[step]]
+do = "wait"
+gameplay = true
+timeout_s = 400
+
+[[step]]
+do = "wait"
+frames = 90
+
+[[step]]
+do = "screenshot"
+tag = "before"
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_freecam = true }
+
+[[step]]
+do = "wait"
+frames = 90
+
+[[step]]
+do = "screenshot"
+tag = "flying"
+
+[[step]]
+do = "cvar"
+set = { skate3_native_render_scene_freecam = false }
+
+[[step]]
+do = "wait"
+frames = 60
+
+[[step]]
+do = "screenshot"
+tag = "after"

@@ -5,6 +5,7 @@
 // skate3_native_scene_state.h.
 
 #include "skate3_native_scene.h"
+#include "skate3_demo_path.h"
 #include "skate3_freecam_input.h"
 
 #include "generated/skate3_init.h"
@@ -37,6 +38,8 @@
 #include <rex/cvar.h>
 #include <rex/graphics/native_guest_renderer.h>
 #include <rex/kernel/guest_presence.h>
+#include <rex/input/input.h>
+#include <rex/input/input_system.h>
 #include <rex/logging.h>
 
 #include "native/skate3_native_diag.h"
@@ -451,7 +454,10 @@ REXCVAR_DEFINE_DOUBLE(skate3_native_render_scene_showcase_wipe, 3.0, "Skate 3",
 REXCVAR_DEFINE_BOOL(skate3_native_render_scene_freecam, false, "Skate 3",
                     "Detach the render camera from the game (drone / free-fly "
                     "cam): WASD fly, E/Space up, Q/C down, arrow keys or "
-                    "right-mouse drag look, Z/X zoom, Shift fast, Ctrl slow. "
+                    "right-mouse drag look, Z/X zoom, Shift fast, Ctrl slow; "
+                    "controller: left stick fly, right stick look, RT/LT "
+                    "up/down, RB fast, LB slow, d-pad up/down zoom, Back "
+                    "turns it off. "
                     "The game keeps simulating, but its main render camera is "
                     "taken over (ViewCamera::SetViewMatrix override), so the "
                     "game culls and submits the world around the flown pose "
@@ -7509,6 +7515,9 @@ std::atomic<uint32_t> g_freecam_guest_active{0};
 std::atomic<uint64_t> g_freecam_guest_rewrites{0};
 struct FreecamState {
   bool engaged = false;
+  // Controller Back, last frame (exit on a fresh press; starts "down" so a
+  // Back held while engaging does nothing).
+  bool pad_back_down = true;
   double yaw = 0.0, pitch = 0.0;  // radians: yaw about world Y, then pitch
   double pos[3] = {};
   double vel[3] = {};                     // smoothed world-space velocity
@@ -7595,11 +7604,13 @@ bool UpdateFreecam(FrameScene& scene, const float cam_view[16], double now) {
 #if defined(_WIN32)
     fc.mouse_anchored = false;
 #endif
+    fc.pad_back_down = true;
     fc.engaged = true;
     REXLOG_INFO(
         "native-scene freecam: ENGAGED at ({:.1f}, {:.1f}, {:.1f}); WASD fly, "
         "E/Space up, Q/C down, arrows/right-drag look, Z/X zoom, Shift fast, "
-        "Ctrl slow",
+        "Ctrl slow; pad: left stick fly, right stick look, RT/LT up/down, "
+        "RB fast, LB slow, d-pad zoom, Back exits",
         fc.pos[0], fc.pos[1], fc.pos[2]);
   }
   const double dt = std::clamp(now - fc.last_t, 0.0, 0.1);
@@ -7666,6 +7677,51 @@ bool UpdateFreecam(FrameScene& scene, const float cam_view[16], double now) {
   mouse_yaw = mdx * kRadPerPixel;
   mouse_pitch = -mdy * kRadPerPixel;
 #endif
+
+  // Controller, every platform (the Odin 2 has no keyboard). Read from the
+  // host pad directly: while the freecam captures input the game gets none.
+  // With capture off the pad stays the game's, so it isn't read here.
+  if (REXCVAR_GET(skate3_native_render_scene_freecam_capture_input)) {
+    rex::input::InputSystem* input = skate3::demo_path::GetUiInputSystem();
+    rex::input::X_INPUT_GAMEPAD pad;
+    if (input && input->GetUiGamepadState(&pad)) {
+      // Radial-free per-axis dead zone, rescaled so motion starts at 0.
+      const auto axis = [](int16_t v) {
+        constexpr double kDead = 7849.0;  // XInput's left-stick dead zone
+        const double a = std::abs(double(v));
+        if (a <= kDead) return 0.0;
+        return std::copysign(std::min((a - kDead) / (32767.0 - kDead), 1.0), double(v));
+      };
+      const auto trigger = [](uint8_t t) {
+        constexpr double kDead = 30.0;  // XInput's trigger threshold
+        return t <= kDead ? 0.0 : (t - kDead) / (255.0 - kDead);
+      };
+      const uint16_t b = pad.buttons;
+      using rex::input::X_INPUT_GAMEPAD_BACK;
+      mv_f += axis(int16_t(pad.thumb_ly));
+      mv_r += axis(int16_t(pad.thumb_lx));
+      mv_u += trigger(pad.right_trigger) - trigger(pad.left_trigger);
+      lk_yaw += axis(int16_t(pad.thumb_rx));
+      lk_pitch += axis(int16_t(pad.thumb_ry));
+      zoom_dir += ((b & rex::input::X_INPUT_GAMEPAD_DPAD_UP) ? 1.0 : 0.0) -
+                  ((b & rex::input::X_INPUT_GAMEPAD_DPAD_DOWN) ? 1.0 : 0.0);
+      if (b & rex::input::X_INPUT_GAMEPAD_RIGHT_SHOULDER) {
+        speed_mult = 4.0;
+      } else if (b & rex::input::X_INPUT_GAMEPAD_LEFT_SHOULDER) {
+        speed_mult = 0.2;
+      }
+      const bool back = (b & X_INPUT_GAMEPAD_BACK) != 0;
+      const bool exit_pressed = back && !fc.pad_back_down;
+      fc.pad_back_down = back;
+      if (exit_pressed) {
+        REXCVAR_SET(skate3_native_render_scene_freecam, false);
+        ReleaseFreecamIfOff();
+        return false;
+      }
+    } else {
+      fc.pad_back_down = false;
+    }
+  }
 
   // Look: arrow keys drive a smoothed angular velocity (cinematic ease-in/
   // out); mouse deltas apply directly. Pitch is clamped short of the poles.

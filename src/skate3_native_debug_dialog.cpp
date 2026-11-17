@@ -464,7 +464,9 @@ void DrawFreecamControls() {
              20.0f, 240.0f, "%.0f", "Arrow-key look rate");
   ImGui::TextDisabled(
       "WASD fly, E/Space up, Q/C down, arrows or right-mouse drag look,\n"
-      "Z/X zoom, Shift fast, Ctrl slow.");
+      "Z/X zoom, Shift fast, Ctrl slow.\n"
+      "Controller: left stick fly, right stick look, RT/LT up/down,\n"
+      "RB fast, LB slow, d-pad zoom, Back exits.");
 }
 
 void DrawShowcaseSetupWindow(bool* p_open) {
