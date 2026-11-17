@@ -29,7 +29,8 @@ void BodyLogoUpdate(PPCContext& ctx, uint8_t* base) {
   const uint32_t elapsed = REX_LOAD_U32(self + kLogoElapsedMs) + ctx.r4.u32;
   REX_STORE_U32(self + kLogoElapsedMs, elapsed);
   ctx.r11.u64 = elapsed;
-  if (elapsed >= kLogoDurationMs || skate3::demo_path::IntroSkipPressed()) {
+  if (elapsed >= kLogoDurationMs || skate3::demo_path::IntroSkipPressed() ||
+      skate3::demo_path::ShouldForceIntroLogoComplete()) {
     ctx.r11.u64 = 1;
     REX_STORE_U8(self + kLogoDone, 1);
   }

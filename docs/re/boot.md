@@ -78,6 +78,14 @@ With a press about a second into each screen, the screens before the title
 took 5.2 s instead of 24.5 s (`scenarios/boot_skip.toml`; Windows and the
 Odin 2 alike, a held X skipped only the logo).
 
+**Harness automation** (`boot = "demo"`, the `skate3_demo_path` cvar) skips
+without presses: the movie through `ShouldForceIntroMovieComplete` and, since
+2026-11-17, the logo through `ShouldForceIntroLogoComplete` (the logo ended
+after 0.57 s instead of 4.7 s). The language select and the title are passed
+with the demo path's A taps. Scenarios that test the boot screens themselves
+(`boot_timing`, `boot_skip`, `title_*`, `native_tour_boot`) use
+`boot = "none"` and keep the natural timings.
+
 ## The title screen (FE state 22)
 **Why the prompt comes late.** Two clocks, measured 2026-11-16:
 - The state's `OnUpdate` `sub_82609050` adds `dt` to a global millisecond

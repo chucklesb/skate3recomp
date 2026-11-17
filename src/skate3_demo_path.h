@@ -21,6 +21,8 @@ void SetUiInputProvider(std::function<rex::input::InputSystem*()> provider);
 // host features that poll the merged UI pad state.
 rex::input::InputSystem* GetUiInputSystem();
 bool ShouldForceIntroMovieComplete();
+// Automation only (skate3_demo_path): end the intro logo screen at once.
+bool ShouldForceIntroLogoComplete();
 // The game's XInputGetState hook reports what player one's pad gave the game
 // (after any harness rewrite), for the intro skip.
 void NoteGuestPad(uint8_t* base, uint32_t user, uint32_t state_addr, uint32_t result);

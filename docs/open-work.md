@@ -149,6 +149,15 @@ fly mode, recorders and toggles will live), so the overlays share one layout.
   images themselves (drawn after the grab, or skipped on capture frames).
 - **MangoHud support** alongside our performance HUD (feasibility first).
   MangoHud sits top-left, clear of our HUD and indicators.
+- **Performance drops while the F12 debug menu (ImGui) is open**
+  (reported 2026-11-17; not yet measured). Measure first: frame times and a
+  guest profile with the menu open vs closed (Windows and the Odin 2),
+  including the main and render threads. Suspects to check, not conclusions:
+  ImGui's own draw cost; per-frame cvar reads or string building in the
+  menu's sections; the menu's live graphs and stats (perf ring, RHI
+  diagnostics) doing work only while shown; a GPU sync or extra submit for
+  the overlay pass. The harness needs a way to open the menu (a cvar or a
+  `send` verb) so the A/B is scripted.
 - **Remove the recomp settings menu** if the in-game settings menu covers
   every option it offers. Check parity first; remove it only if nothing is
   lost and there are no major drawbacks.

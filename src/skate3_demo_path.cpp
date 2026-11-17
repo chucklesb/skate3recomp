@@ -1038,6 +1038,19 @@ void OnAppManUpdate(uint8_t* base, uint32_t appman, uint32_t thread, bool ticked
 
 bool IntroSkipPressed() { return SkipEdge("intro screen", IntroSkipMask(), true); }
 
+bool ShouldForceIntroLogoComplete() {
+  // Automation (harness `boot = "demo"`): the logo is a 4 s timer that holds
+  // nothing up (docs/re/boot.md), so end it at once, as the movie is.
+  if (!AutomationEnabled() || g_title_reached.load(std::memory_order_relaxed)) {
+    return false;
+  }
+  static std::atomic<bool> logged{false};
+  if (!logged.exchange(true, std::memory_order_relaxed)) {
+    REXLOG_INFO("Skate 3 demo path: forcing the intro logo complete");
+  }
+  return true;
+}
+
 bool ShouldForceIntroMovieComplete() {
   if (AutomationEnabled() && g_skip_intro_movie.load(std::memory_order_relaxed)) {
     bool expected = false;
