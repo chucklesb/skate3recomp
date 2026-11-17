@@ -44,6 +44,14 @@ the photo challenge's closing animation, glass haze, RE-9 and game-style UI.
   frames per shot, [native-only.md](native-only.md) row C) and the pose
   smoothing restarting around each shot. `skate3_native_render_scene_char_sync`
   shows the second.
+- **D3D12: the prewarm decode workers never start** (found 2026-11-17
+  through the harness's new `backlog` sample: on D3D12 the decode queue
+  grew to ~11,000 entries and never drained in all 27 recent D3D12 runs;
+  on Vulkan, Windows and the Odin 2, the workers start and the queue drains
+  about 0.5 s after a load). So D3D12 decodes everything on the draw path
+  (`EnsurePrewarmWorkers` needs `g_r.device`). D3D12 is compile-only and
+  goes in native-only phase 6, so this is recorded, not fixed; the harness
+  now defaults to Vulkan on Windows.
 - **Glass hazed as if it were the sky behind it.** The KI-126 class
   ([hair](known-issues.md#ki-126-the-skaters-hair-looks-transparent), fixed)
   also reaches glass: blended surfaces don't write depth, so our haze pass

@@ -130,6 +130,7 @@ struct GameState {
   float skater_pos[3] = {};
   float skater_yaw = 0.0f;      // heading, degrees (game::SkaterYawDeg; teleport yaw=)
   double skater_speed = 0.0;    // units/s, 3D
+  uint32_t backlog = 0;         // native renderer decode backlog (DecodeBacklog)
   double skater_hspeed = 0.0;   // units/s, horizontal (x/z)
   bool cam_valid = false;
   float cam_pos[3] = {};
@@ -205,11 +206,12 @@ std::string StateJson(const GameState& s, std::string_view tag = {}) {
   int n = std::snprintf(
       buf, sizeof(buf),
       "{\"frame\":%llu,\"t\":%.3f,\"fps\":%.1f,\"presence\":%u,\"fe_top\":%lld,"
-      "\"fe_depth\":%u,\"paused\":%s,\"skaters\":%u,\"replay\":%s,\"movie\":%s",
+      "\"fe_depth\":%u,\"paused\":%s,\"skaters\":%u,\"replay\":%s,\"movie\":%s,"
+      "\"backlog\":%u",
       static_cast<unsigned long long>(s.frame), s.t, s.fps, s.presence,
       static_cast<long long>(s.fe_top), s.fe_depth, s.paused ? "true" : "false",
       s.skater_candidates, s.replay_active ? "true" : "false",
-      s.movie_active ? "true" : "false");
+      s.movie_active ? "true" : "false", s.backlog);
   std::string out(buf, n > 0 ? static_cast<size_t>(n) : 0);
   out += ",\"fe\":" + FeStackJson(s.fe_stack);
   if (s.skater_valid) {
@@ -2622,6 +2624,7 @@ void OnFrame(uint8_t* base) {
   // Sample state outside the run lock (guest reads can be slow).
   GameState s;
   s.presence = rex::kernel::guest_presence::GameplayContextValue();
+  s.backlog = static_cast<uint32_t>(skate3::native_scene::DecodeBacklog());
   uint32_t mgr = 0, beg = 0, end = 0;
   if (ReadU32(base, kFrontEndManagerPtr, &mgr) && mgr && ReadU32(base, mgr + kFeStackBegin, &beg) &&
       ReadU32(base, mgr + kFeStackEnd, &end) && end > beg && (end - beg) % kFeRecordSize == 0 &&

@@ -102,7 +102,10 @@ the DroidDeck guest picks up a UHID pad still needs checking. Every run's `resul
 (`SKATE3_WINDOWS_STAGE_ROOT/<config>`, default `out/stage/windows-x64`) with
 the stage as the working directory and `--game_data_root=<stage root>/game`.
 It moves the run folder into `--out` like `fetch` does. `--backend` picks
-`d3d12` (default) or `vulkan`. `--timeout` overrides the deadline, after which
+`vulkan` (default since 2026-11-17, as on the Odin 2) or `d3d12`. D3D12 is
+compile-only by the fork's direction, and it differs: its prewarm decode
+workers never start (every mesh decodes on the draw path), so measure on
+Vulkan. `--timeout` overrides the deadline, after which
 the game is killed (`taskkill`). A second `skate3.exe` is refused.
 
 **A/B runs.** `ab` builds both targets through their `build.sh`, which

@@ -1326,7 +1326,8 @@ def main() -> int:
     p_win = sub.add_parser("windows", help="run a scenario on this PC (Windows x64 build)")
     p_win.add_argument("scenario", type=Path)
     p_win.add_argument("--config", choices=CONFIGS, default="relwithdebinfo")
-    p_win.add_argument("--backend", choices=BACKENDS, default="d3d12")
+    p_win.add_argument("--backend", choices=BACKENDS, default="vulkan",
+                       help="graphics backend (default vulkan, as on the Odin 2; d3d12 is compile-only)")
     p_win.add_argument("--no-build", action="store_true",
                        help="run the staged build as is (default: build.sh <config> build stage)")
     p_win.add_argument("--out", type=Path, default=REPO / "out/harness-runs")
@@ -1365,7 +1366,7 @@ def main() -> int:
     p_live.add_argument("--no-deploy", action="store_true",
                         help="odin2: reuse the deployed build; windows: skip the build")
     p_live.add_argument("--config", choices=CONFIGS, default="relwithdebinfo")
-    p_live.add_argument("--backend", choices=BACKENDS, default="d3d12", help="windows only")
+    p_live.add_argument("--backend", choices=BACKENDS, default="vulkan", help="windows only")
     p_live.add_argument("--env", action="append", default=[], metavar="KEY=VALUE")
     p_live.add_argument("--force-deploy", action="store_true",
                      help="package and deploy even if the device already runs this build")

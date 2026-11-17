@@ -855,4 +855,9 @@ void RequestSceneRingDump();
 // board data.
 void RecordBoneSignal(double seconds);
 
+// Mesh/texture decode work waiting for the native renderer's decode workers
+// (prewarm + draw-path misses + dynamic cloth jobs). The harness samples it
+// (state.jsonl "backlog") to see when a freshly loaded area is fully decoded.
+size_t DecodeBacklog();
+
 }  // namespace skate3::native_scene

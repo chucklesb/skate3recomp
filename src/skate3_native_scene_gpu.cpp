@@ -6056,6 +6056,11 @@ void RestoreAllYieldOverrides() {
 
 }  // namespace
 
+size_t DecodeBacklog() {
+  std::lock_guard<std::mutex> lock(g_prewarm_mutex);
+  return g_prewarm_queue.size() + g_miss_queue.size() + g_dyn_jobs.size();
+}
+
 bool SuppressEmulatedDrawsOverride(bool* user_value) {
   return g_ovr_suppress_draws.HeldView(user_value);
 }
