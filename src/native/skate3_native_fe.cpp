@@ -9,6 +9,8 @@
 // skate3_native_fe_replace (default on): one Body family per method, so the
 // replace counters show which ones a run reaches.
 
+#include <cstddef>
+
 #include <rex/cvar.h>
 #include <rex/ppc/context.h>
 
@@ -27,35 +29,136 @@ REXCVAR_DEFINE_BOOL(skate3_native_fe_replace, true, "Skate 3",
 namespace {
 
 using namespace skate3::fe;
+using skate3::native_guest::CallMethod;
 using skate3::native_guest::GuestFrame;
 
 uint32_t CallerLr(const PPCContext& ctx) { return static_cast<uint32_t>(ctx.lr); }
 
 // ---- FrontEndState (the base class) ----------------------------------------
 
-// The screen manager's callbacks into a state, installed by OpenScreen
-// (screen loaded / shown / closed; small functions next to the base class).
-constexpr uint32_t kScreenCallbacks[3] = {0x82D09368, 0x82D09380, 0x82D093A8};
+// The screen manager's callbacks into a state, installed by OpenScreen.
+constexpr uint32_t kOnScreenLoaded = 0x82D09368;
+constexpr uint32_t kOnScreenIntroDone = 0x82D09380;
+constexpr uint32_t kOnScreenOutroDone = 0x82D093A8;
 
-// sub_82D093D0, vtable +56: OpenScreen(screen_id, arg). Records the request
-// and its callbacks; the screen manager does the rest and the state moves
-// to Opening.
+// sub_82D093D0, vtable +56: OpenScreen(screen_type, screen_layer). Records
+// the request and the callbacks; the FE manager's next update hands it to
+// the screen manager (RequestScreen).
 void BodyOpenScreenBase(PPCContext& ctx, uint8_t* base) {
   auto& self = At<FrontEndState>(base, ctx.r3.u32);
-  self.open_arg = ctx.r5.u32;
-  self.callback_owner = ctx.r3.u32;
-  self.screen_id = ctx.r4.u32;
-  for (int i = 0; i < 3; ++i) {
-    self.callbacks[i] = kScreenCallbacks[i];
-  }
-  self.phase = static_cast<uint32_t>(Phase::kOpening);
+  self.screen_layer = ctx.r5.u32;
+  self.callback.object = ctx.r3.u32;
+  self.screen_type = ctx.r4.u32;
+  self.callback.on_loaded = kOnScreenLoaded;
+  self.callback.on_intro_done = kOnScreenIntroDone;
+  self.callback.on_outro_done = kOnScreenOutroDone;
+  self.screen_state = static_cast<uint32_t>(ScreenState::kOpenRequested);
 }
 
-// sub_82D09470, vtable +60: CloseScreen(arg). Starts the outro.
+// sub_82D09470, vtable +60: CloseScreen(destroy_screen). Starts the outro.
 void BodyCloseScreenBase(PPCContext& ctx, uint8_t* base) {
   auto& self = At<FrontEndState>(base, ctx.r3.u32);
-  self.close_arg = static_cast<uint8_t>(ctx.r4.u32);
-  self.phase = static_cast<uint32_t>(Phase::kClosing);
+  self.destroy_screen = static_cast<uint8_t>(ctx.r4.u32);
+  self.screen_state = static_cast<uint32_t>(ScreenState::kClosing);
+}
+
+// sub_82D09410: RequestScreen, from the FE manager's update before each
+// state's OnUpdate. A requested screen goes to the screen manager to load
+// (with our callbacks and layer); the state then waits for it.
+void BodyRequestScreen(PPCContext& ctx, uint8_t* base) {
+  const uint32_t self_addr = ctx.r3.u32;
+  auto& self = At<FrontEndState>(base, self_addr);
+  if (self.screen_state != static_cast<uint32_t>(ScreenState::kOpenRequested)) {
+    return;
+  }
+  {
+    GuestFrame frame(ctx, base, 96, /*save_r31=*/true);
+    ctx.r4.u64 = self.screen_type;
+    ctx.r5.u64 = self_addr + offsetof(FrontEndState, callback);
+    ctx.r6.u64 = self.screen_layer;
+    CallMethod(ctx, base, self.screen_manager, kScreenMgrLoadScreen, 0x82D09450);
+  }
+  At<FrontEndState>(base, self_addr).screen_state = static_cast<uint32_t>(ScreenState::kLoading);
+}
+
+// sub_82D09480, vtable +28: Show(show, silent). Showing allows input and
+// marks the screen up, then (unless silent) runs OnIntroDone as if the intro
+// had played; either way the screen manager shows or hides our screen. Once
+// shown, input is unblocked, OnShown runs and the manager is told.
+void BodyShow(PPCContext& ctx, uint8_t* base) {
+  const uint32_t self_addr = ctx.r3.u32;
+  const uint32_t show_arg = ctx.r4.u32;  // passed on whole, compared as a byte
+  const bool show = (show_arg & 0xFF) == 1;
+  const bool silent = (ctx.r5.u32 & 0xFF) != 0;
+  GuestFrame frame(ctx, base, 112, /*save_r31=*/true);
+  if (show) {
+    auto& self = At<FrontEndState>(base, self_addr);
+    self.allow_input = 1;
+    self.screen_state = static_cast<uint32_t>(ScreenState::kShown);
+    if (!silent) {
+      CallMethod(ctx, base, self_addr, kVtOnIntroDone, 0x82D094CC);
+    }
+  }
+  {
+    const auto& self = At<FrontEndState>(base, self_addr);
+    ctx.r4.u64 = self.screen_id;
+    ctx.r5.u64 = show_arg;
+    CallMethod(ctx, base, self.screen_manager, kScreenMgrShowScreen, 0x82D094E8);
+  }
+  if (show) {
+    At<FrontEndState>(base, self_addr).local_input_state = 0;
+    CallMethod(ctx, base, self_addr, kVtOnShown, 0x82D0950C);
+    ctx.r4.u64 = self_addr;
+    CallMethod(ctx, base, At<FrontEndState>(base, self_addr).screen_manager, kScreenMgrStateShown,
+               0x82D09524);
+  }
+}
+
+// The screen manager's callbacks (screen_id, state); each ends in the
+// state's own handler, as a tail call.
+// sub_82D09368: the screen has loaded: remember its id.
+void BodyOnScreenLoaded(PPCContext& ctx, uint8_t* base) {
+  const uint32_t self_addr = ctx.r4.u32;
+  At<FrontEndState>(base, self_addr).screen_id = ctx.r3.u32;
+  CallMethod(ctx, base, self_addr, kVtOnScreenLoaded, CallerLr(ctx));
+}
+// sub_82D09380: the intro has played: the screen is up and takes input.
+void BodyOnScreenIntroDone(PPCContext& ctx, uint8_t* base) {
+  const uint32_t self_addr = ctx.r4.u32;
+  auto& self = At<FrontEndState>(base, self_addr);
+  self.allow_input = 1;
+  self.screen_state = static_cast<uint32_t>(ScreenState::kShown);
+  CallMethod(ctx, base, self_addr, kVtOnIntroDone, CallerLr(ctx));
+}
+// sub_82D093A8: the outro has played: a closing screen is gone.
+void BodyOnScreenOutroDone(PPCContext& ctx, uint8_t* base) {
+  const uint32_t self_addr = ctx.r4.u32;
+  auto& self = At<FrontEndState>(base, self_addr);
+  if (self.screen_state == static_cast<uint32_t>(ScreenState::kClosing)) {
+    self.screen_state = static_cast<uint32_t>(ScreenState::kNone);
+  }
+  CallMethod(ctx, base, self_addr, kVtOnOutroDone, CallerLr(ctx));
+}
+
+// sub_82639388, vtable +0: the base destructor (this, flags). Derived
+// destructors end the same way (their own copies). flags & 1: free the
+// object through the default allocator (ICoreAllocator::Free, vtable +12).
+// Returns this.
+constexpr uint32_t kAllocatorFree = 0x0C;
+void BodyDestroy(PPCContext& ctx, uint8_t* base) {
+  const uint32_t self_addr = ctx.r3.u32;
+  const bool free_it = (ctx.r4.u32 & 1) != 0;
+  At<FrontEndState>(base, self_addr).vtable = kFrontEndStateVtable;
+  if (free_it) {
+    GuestFrame frame(ctx, base, 96, /*save_r31=*/true);
+    ctx.lr = 0x826393B8;
+    sub_828AAF88(ctx, base);  // EA::Allocator::ICoreAllocator::GetDefaultAllocator
+    const uint32_t allocator = ctx.r3.u32;
+    ctx.r4.u64 = self_addr;
+    ctx.r5.u64 = 0;
+    CallMethod(ctx, base, allocator, kAllocatorFree, 0x826393D0);
+  }
+  ctx.r3.u64 = self_addr;
 }
 
 // ---- Single states ----------------------------------------------------------
@@ -83,11 +186,11 @@ void BodyS40Enter(PPCContext& ctx, uint8_t* base) {
   OpenScreen(ctx, base, ctx.r3.u32, 82, CallerLr(ctx));
 }
 
-// State 48: the screen to open comes from a descriptor at +12 (its first
-// word is the screen id).
+// State 48: opens the screen its transition's sub-state names.
 void BodyS48Enter(PPCContext& ctx, uint8_t* base) {
-  const uint32_t descriptor = At<FrontEndState>(base, ctx.r3.u32).unknown_0c;
-  OpenScreen(ctx, base, ctx.r3.u32, At<be<uint32_t>>(base, descriptor), CallerLr(ctx));
+  const uint32_t transition = At<FrontEndState>(base, ctx.r3.u32).transition;
+  OpenScreen(ctx, base, ctx.r3.u32, At<StateTransition>(base, transition).sub_state,
+             CallerLr(ctx));
 }
 
 // State 46: has no screen of its own; it marks itself shown and active at
@@ -99,14 +202,14 @@ struct State46 : FrontEndState {
 static_assert(offsetof(State46, refresh_pending) == 1614);
 void BodyS46Enter(PPCContext& ctx, uint8_t* base) {
   auto& self = At<State46>(base, ctx.r3.u32);
-  self.shown = 1;
-  self.phase = static_cast<uint32_t>(Phase::kActive);
+  self.allow_input = 1;
+  self.screen_state = static_cast<uint32_t>(ScreenState::kShown);
   self.refresh_pending = 1;
 }
 
 // States 34 and 62 OnLeave: unblock input, close the screen.
 void BodyS34Leave(PPCContext& ctx, uint8_t* base) {
-  At<FrontEndState>(base, ctx.r3.u32).input_blocked = 0;
+  At<FrontEndState>(base, ctx.r3.u32).local_input_state = 0;
   CloseScreen(ctx, base, ctx.r3.u32, CallerLr(ctx));
 }
 
@@ -190,6 +293,12 @@ int Mode() { return REXCVAR_GET(skate3_native_fe_replace) ? 2 : 0; }
 using skate3::native_replace::Family;
 Family g_open_base{"fe_openscreen", &Mode, nullptr, &BodyOpenScreenBase};
 Family g_close_base{"fe_closescreen_base", &Mode, nullptr, &BodyCloseScreenBase};
+Family g_request{"fe_request_screen", &Mode, nullptr, &BodyRequestScreen};
+Family g_show{"fe_show", &Mode, nullptr, &BodyShow};
+Family g_cb_loaded{"fe_cb_loaded", &Mode, nullptr, &BodyOnScreenLoaded};
+Family g_cb_intro{"fe_cb_intro", &Mode, nullptr, &BodyOnScreenIntroDone};
+Family g_cb_outro{"fe_cb_outro", &Mode, nullptr, &BodyOnScreenOutroDone};
+Family g_destroy{"fe_destroy", &Mode, nullptr, &BodyDestroy};
 Family g_s51{"fe_s51_enter", &Mode, nullptr, &BodyS51Enter};
 Family g_s40{"fe_s40_enter", &Mode, nullptr, &BodyS40Enter};
 Family g_s48{"fe_s48_enter", &Mode, nullptr, &BodyS48Enter};
@@ -213,6 +322,12 @@ void OptionsItemEnabled(PPCContext& ctx, uint8_t* base) {
 using skate3::native_replace::Run;
 extern "C" REX_FUNC(sub_82D093D0) { Run(g_open_base, ctx, base, &__imp__sub_82D093D0); }
 extern "C" REX_FUNC(sub_82D09470) { Run(g_close_base, ctx, base, &__imp__sub_82D09470); }
+extern "C" REX_FUNC(sub_82D09410) { Run(g_request, ctx, base, &__imp__sub_82D09410); }
+extern "C" REX_FUNC(sub_82D09480) { Run(g_show, ctx, base, &__imp__sub_82D09480); }
+extern "C" REX_FUNC(sub_82D09368) { Run(g_cb_loaded, ctx, base, &__imp__sub_82D09368); }
+extern "C" REX_FUNC(sub_82D09380) { Run(g_cb_intro, ctx, base, &__imp__sub_82D09380); }
+extern "C" REX_FUNC(sub_82D093A8) { Run(g_cb_outro, ctx, base, &__imp__sub_82D093A8); }
+extern "C" REX_FUNC(sub_82639388) { Run(g_destroy, ctx, base, &__imp__sub_82639388); }
 extern "C" REX_FUNC(sub_8260E868) { Run(g_s51, ctx, base, &__imp__sub_8260E868); }
 extern "C" REX_FUNC(sub_82634A28) { Run(g_s40, ctx, base, &__imp__sub_82634A28); }
 extern "C" REX_FUNC(sub_825F20B0) { Run(g_s48, ctx, base, &__imp__sub_825F20B0); }

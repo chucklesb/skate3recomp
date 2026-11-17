@@ -16,25 +16,31 @@ to do.
   layout. List only the fields we use or have confirmed, and say how TU3 was
   checked.
 
-### `FrontEndState` (the FE state base class)
+### `FrontEndState` (`Sk8::FE::FrontEndStateBase`, the FE state base class)
 
-Source of truth: `src/native/skate3_fe_types.h` (`static_assert`ed). Read
-from the base methods (OpenScreen `sub_82D093D0`, CloseScreen `sub_82D09470`,
-the shown callback `sub_82D09480`) and the input dispatch `sub_825EC0E8`;
-verified by the native bodies (`options_menu_smoke`, `fe_states_smoke`).
+Source of truth: `src/native/skate3_fe_types.h` (`static_assert`ed). Names
+are Skate 2's: its PDB has this class (sizeof 56) and `sScreenCallBack` /
+`sFEStateTransition` with the same layout; TU3 adds +56. Each offset was
+read from TU3's base methods (OpenScreen `sub_82D093D0`, CloseScreen
+`sub_82D09470`, Show `sub_82D09480`, RequestScreen `sub_82D09410`, the
+three screen callbacks, the destructor `sub_82639388`) and the input
+dispatch `sub_825EC0E8`; the native bodies verify them (`census_menus`,
+`options_menu_smoke`, `fe_states_smoke`). Base vtable `0x82301CE0`, 34 slots.
 
 | Offset | Field | Status |
 |---|---|---|
-| +0 | vtable (OnEnter +0x0C, OnUpdate +0x10, OnLeave +0x18, shown +28, OpenScreen +56, CloseScreen +60) | confirmed |
-| +8 | the screen manager's handle for our screen | likely |
-| +16 | phase: 0 idle, 1 opening, 2 intro, 3 active (takes input), 4 closing | confirmed |
-| +24..+36 | callback owner (this) and three screen-manager callbacks (`0x82D09368`, `0x82D09380`, `0x82D093A8`) | confirmed (written by OpenScreen) |
-| +40 | OpenScreen's argument | confirmed |
-| +44 | screen id ([fe_screens.tsv](fe_screens.tsv)) | confirmed |
-| +48 | CloseScreen's argument (u8) | confirmed |
-| +49 | shown (u8), set by the shown callback | confirmed |
-| +52 | input blocked while non-zero (OnEnter sets it, the shown callback clears it) | confirmed |
-| +56 | the screen manager | likely |
+| +0 | vtable: +0x00 destructor(flags), +0x0C OnEnter, +0x10 OnUpdate(dt; the manager passes 16), +0x18 OnLeave, +0x1C Show(show, silent), +0x20 OnShown, +0x28 ReceiveInput(code), +0x30 SetTransition, +0x38 OpenScreen, +0x3C CloseScreen, +0x40 OnMenuSelect, +0x44 OnHighlight, +0x48 IsItemEnabled, +0x68 OnIntroDone, +0x6C OnScreenLoaded, +0x70 OnOutroDone. The base's other slots are the binary's shared empty / return-0 / return-1 functions | confirmed (callers) |
+| +4 | mCurrentTimer (Skate 2) | unused in what we read |
+| +8 | mScreenId: the loaded screen (the loaded callback stores it; Show passes it to the screen manager) | confirmed |
+| +12 | mpFEStateTransition (`StateTransition*`: +0 mSubState, +4 mbKeepPrevious, +5 mbKeepPreviousVisible, +8 mpUserData), set through vtable +0x30 | confirmed (+0: state 48 opens that screen) |
+| +16 | mScreenState: 0 none, 1 open requested, 2 loading (intro), 3 shown (OnUpdate runs, input taken), 4 closing | confirmed |
+| +20 | mScreenCallBack (20 bytes): +24 mpObject (this), +28 loaded `0x82D09368`, +32 intro `0x82D09380`, +36 outro `0x82D093A8` | confirmed (written by OpenScreen) |
+| +40 | mScreenLayer (const char*; OpenScreen's 2nd argument, 0 in every state we've read) | confirmed |
+| +44 | mScreenType: the Flash screen ([fe_screens.tsv](fe_screens.tsv)) | confirmed |
+| +48 | mbScreenDestroy (u8): CloseScreen's argument | confirmed |
+| +49 | mbAllowInput (u8): set by Show(true) and the intro callback | confirmed |
+| +52 | mLocalInputState: input is taken only at 0 (the title's OnEnter sets 1, Show(true) clears it) | confirmed |
+| +56 | the screen manager (TU3): +0x04 LoadScreen(type, callbacks, layer), +0x10 ShowScreen(id, show), +0x18 (state shown) | likely |
 
 Derived states start at +60: `TimedScreenState` (logo; +60 elapsed ms,
 +64 done), `TitleState`, `LanguageSelectState`, `OptionsState` (+68 page,

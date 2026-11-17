@@ -639,25 +639,73 @@ confidence = "confirmed"
 evidence = "disassembly; the Options hook reads +72 as the row"
 
 [sub_82D093D0]
-name = "FrontEndState::OpenScreen"
-signature = "(this, screen_id, arg)"
-role = "Vtable +56 (base). Records the screen id (+44), the argument (+40) and the screen manager's callbacks (+24 owner, +28..+36 0x82D09368/0x82D09380/0x82D093A8); phase (+16) = 1, opening."
+name = "Sk8::FE::FrontEndStateBase::OpenScreen"
+signature = "(this, screen_type, screen_layer)"
+role = "Vtable +56 (base). Records mScreenType (+44), mScreenLayer (+40) and mScreenCallBack (+20: object +24, the loaded/intro/outro callbacks 0x82D09368/0x82D09380/0x82D093A8); mScreenState (+16) = 1, open requested. The FE manager's update hands it to the screen manager (sub_82D09410)."
 confidence = "confirmed"
-evidence = "disassembly; native body fe_openscreen, options_menu_smoke and fe_states_smoke same on and off (2026-11-17)"
+evidence = "disassembly; Skate 2 PDB layout of FrontEndStateBase and sScreenCallBack matches field for field; native body fe_openscreen, options_menu_smoke and fe_states_smoke same on and off (2026-11-17)"
 hooked = "src/native/skate3_native_fe.cpp (native)"
 
 [sub_82D09470]
-name = "FrontEndState::CloseScreen"
-signature = "(this, arg)"
-role = "Vtable +60 (base). byte +48 = arg; phase (+16) = 4, closing (the outro)."
+name = "Sk8::FE::FrontEndStateBase::CloseScreen"
+signature = "(this, destroy_screen)"
+role = "Vtable +60 (base). mbScreenDestroy (+48) = arg; mScreenState (+16) = 4, closing (the outro)."
 confidence = "confirmed"
 evidence = "disassembly; native body fe_closescreen_base (2026-11-17)"
 hooked = "src/native/skate3_native_fe.cpp (native)"
 
 [sub_82D09480]
-name = "FrontEndState::OnScreenShown"
-signature = "(this, shown, skip_notify)"
-role = "Vtable +28, the screen manager's callback. shown == 1: byte +49 = 1, phase = 3 (active), unless skip_notify calls vtable +104; tells the manager (*(this+56) vtable +16); shown == 1: +52 = 0 (input unblocked), vtable +32, manager vtable +24."
+name = "Sk8::FE::FrontEndStateBase::Show"
+signature = "(this, show, silent)"
+role = "Vtable +28. show == 1: mbAllowInput (+49) = 1, state 3 (shown), and unless silent this->OnIntroDone (vtable +104). Always: screen_manager->ShowScreen(mScreenId, show) (its vtable +16). show == 1: mLocalInputState (+52) = 0, this->OnShown (vtable +32), screen_manager vtable +24 (this)."
+confidence = "likely"
+evidence = "disassembly; sits right after CloseScreen as Skate 2's FrontEndStateBase::Show does (sk2 0x82D661E8, CloseScreen 0x82D66158); native body fe_show (2026-11-17). Was named OnScreenShown."
+hooked = "src/native/skate3_native_fe.cpp (native)"
+
+[sub_82D09410]
+name = "Sk8::FE::FrontEndStateBase::RequestScreen"
+signature = "(this)"
+role = "Called by the FE manager's update (sub_82D0A158) for each live state before its OnUpdate. State 1 (open requested): screen_manager->LoadScreen(mScreenType, &mScreenCallBack, mScreenLayer) (its vtable +4); state = 2 (loading). Our name."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_request_screen (2026-11-17)"
+hooked = "src/native/skate3_native_fe.cpp (native)"
+
+[sub_82D09368]
+name = "Sk8::FE::FrontEndStateBase::OnScreenLoadedCallBack"
+signature = "(screen_id, state)"
+role = "sScreenCallBack::mLoadedCallBack. state->mScreenId (+8) = screen_id; tail call state->OnScreenLoaded (vtable +108)."
+confidence = "confirmed"
+evidence = "disassembly; installed by OpenScreen at +28; Skate 2 name by vt-instructions; native body fe_cb_loaded (2026-11-17)"
+hooked = "src/native/skate3_native_fe.cpp (native)"
+
+[sub_82D09380]
+name = "Sk8::FE::FrontEndStateBase::OnScreenIntroCallBack"
+signature = "(screen_id, state)"
+role = "sScreenCallBack::mIntroCallBack. mbAllowInput = 1, state 3 (shown); tail call state->OnIntroDone (vtable +104). Our name, after the Skate 2 field."
+confidence = "confirmed"
+evidence = "disassembly; installed by OpenScreen at +32; native body fe_cb_intro (2026-11-17)"
+hooked = "src/native/skate3_native_fe.cpp (native)"
+
+[sub_82D093A8]
+name = "Sk8::FE::FrontEndStateBase::OnScreenOutroCallBack"
+signature = "(screen_id, state)"
+role = "sScreenCallBack::mOutroCallBack. A closing state (4) goes to 0 (no screen); tail call state->OnOutroDone (vtable +112). Our name, after the Skate 2 field."
+confidence = "confirmed"
+evidence = "disassembly; installed by OpenScreen at +36; native body fe_cb_outro (2026-11-17)"
+hooked = "src/native/skate3_native_fe.cpp (native)"
+
+[sub_82639388]
+name = "Sk8::FE::FrontEndStateBase::~FrontEndStateBase"
+signature = "(this, flags) -> this"
+role = "Vtable +0, the scalar deleting destructor of the base (vtable 0x82301CE0). Resets the vtable to the base's; flags & 1: GetDefaultAllocator()->Free(this, 0) (vtable +12). Derived destructors end with their own copy."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_destroy (2026-11-17)"
+hooked = "src/native/skate3_native_fe.cpp (native)"
+
+[sub_82D0A158]
+name = "FrontEnd state manager: Update"
+signature = "(mgr)"
+role = "The top popup (list +112..116, index +144) gets OnUpdate(16). Each record of the state stack (+16..20, 20 bytes: +0 state id, +9 also-update byte) that is the top or has +9 set, then the overlay list (+80..84) top: RequestScreen (sub_82D09410) unless byte +156 is set, then OnUpdate(16) (vtable +16) when the state is shown (3). The FE runs on a fixed 16 ms step."
 confidence = "likely"
 evidence = "disassembly (2026-11-17)"
 

@@ -72,7 +72,7 @@ constexpr uint32_t kTitleScreen = 2;
 void BodyTitleEnter(PPCContext& ctx, uint8_t* base) {
   auto& self = At<TitleState>(base, ctx.r3.u32);
   self.idle_ms = 0;
-  self.input_blocked = 1;
+  self.local_input_state = 1;
   self.unknown_40 = 0;
   self.start_armed = 0;
   if (self.attract_mode != 0) {
