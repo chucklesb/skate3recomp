@@ -1823,8 +1823,12 @@ Outcome Execute(Run& r, const Step& st) {
     }
 
     case Verb::kWindow: {
-      // Headless runs start with window_hidden = true (run_scenario.py
-      // --headless); show the window when a step needs the user, hide it after.
+      // run_scenario.py --display headless starts hidden (muted), windowed
+      // starts minimized: show = true restores and shows the window (audio
+      // on) when a step needs the user; show = false hides and mutes it.
+      if (st.window_show && !rex::cvar::SetFlagByName("window_minimized", "false")) {
+        return Fail("window: the window_minimized cvar was rejected");
+      }
       if (!rex::cvar::SetFlagByName("window_hidden", st.window_show ? "false" : "true")) {
         return Fail("window: the window_hidden cvar was rejected");
       }

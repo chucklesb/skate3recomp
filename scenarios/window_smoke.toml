@@ -1,9 +1,10 @@
-# Headless window check (Windows): the run starts hidden, windowed and
-# muted; the window is shown (audio on) for a few seconds, then hidden
-# (muted) again. log.txt has "window shown (audio on)" and "window hidden
-# (audio muted)"; the screenshots are the same in both states.
+# Window check (Windows): run it with --display headless (starts hidden and
+# muted) or windowed (starts minimized, audio on). The window is shown and
+# restored (audio on) for a few seconds, then hidden (muted) again. log.txt
+# has "window shown (audio on)" and "window hidden (audio muted)"; the
+# screenshots are the same in every state.
 #
-#   tools/harness/run_scenario.py windows scenarios/window_smoke.toml
+#   tools/harness/run_scenario.py windows scenarios/window_smoke.toml --display windowed
 
 name = "window_smoke"
 timeout_s = 180

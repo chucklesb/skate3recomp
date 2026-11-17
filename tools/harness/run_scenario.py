@@ -746,20 +746,32 @@ def win_launch(config: str, backend: str, game_args: list[str],
                             start_new_session=True, env=env)
 
 
+# Windows game window per run_scenario --display.
+DISPLAY_FLAGS = {
+    "windowed": ["--fullscreen=false", "--window_hidden=false", "--window_minimized=true"],
+    "headless": ["--fullscreen=false", "--window_hidden=true"],
+    "fullscreen": ["--fullscreen=true", "--window_hidden=false", "--window_minimized=false"],
+}
+DISPLAY_HELP = ("Windows game window: windowed (default; minimized, no focus, audio on), "
+                "headless (hidden, muted) or fullscreen")
+
+
 def run_windows(scenario: Path, config: str, backend: str, extra: list[str],
                 out_root: Path, timeout_s: float | None = None,
-                renderdoc: Path | None = None, headless: bool = True) -> Path | None:
+                renderdoc: Path | None = None, display: str = "windowed") -> Path | None:
     """Run a scenario on this PC; return the run folder moved under out_root.
 
-    headless: the game starts windowed (not fullscreen) with the window hidden
-    (--window_hidden=true) and audio muted; the game renders as usual and the
-    harness screenshots, videos and captures work the same. A `window show =
-    true` step shows the window and turns audio on; `show = false` hides and
-    mutes it again.
+    display (DISPLAY_FLAGS):
+      windowed   (default) a window, minimized at start without taking focus;
+                 audio on.
+      headless   the window stays hidden and audio is muted.
+      fullscreen the game's normal fullscreen window; audio on.
+    The game renders the same in every mode, so screenshots, videos and
+    captures work alike. A `window show = true` step shows (restores) the
+    window with audio; `show = false` hides and mutes it.
     """
-    if headless:
-        # First, so an explicit flag after `--` wins.
-        extra = ["--fullscreen=false", "--window_hidden=true", *extra]
+    # First, so an explicit flag after `--` wins.
+    extra = [*DISPLAY_FLAGS[display], *extra]
     stage = win_stage(config)
     (stage / "scenarios").mkdir(parents=True, exist_ok=True)
     shutil.copy2(scenario, stage / "scenarios" / scenario.name)
@@ -1321,9 +1333,8 @@ def main() -> int:
     p_win.add_argument("--renderdoc", nargs="?", const="", metavar="DIR",
                        help="launch through RenderDoc (renderdoccmd capture) so `capture` steps "
                             "work; DIR is a RenderDoc folder (default: $SKATE3_WINDOWS_RENDERDOC)")
-    p_win.add_argument("--window", action="store_true",
-                       help="show the game window (default: headless, the window stays hidden "
-                            "while the game renders off-screen)")
+    p_win.add_argument("--display", choices=tuple(DISPLAY_FLAGS), default="windowed",
+                       help=DISPLAY_HELP)
     p_win.add_argument("--timeout", type=float,
                        help="kill the game after this many seconds "
                             "(default: the scenario's timeout_s + 120)")
@@ -1345,8 +1356,8 @@ def main() -> int:
     p_ab.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
                       help="Odin 2 session environment (repeatable)")
     p_ab.add_argument("--out", type=Path, default=REPO / "out/harness-runs")
-    p_ab.add_argument("--window", action="store_true",
-                      help="show the Windows game window (default: headless)")
+    p_ab.add_argument("--display", choices=tuple(DISPLAY_FLAGS), default="windowed",
+                      help=DISPLAY_HELP)
     p_live = sub.add_parser("live")
     p_live.add_argument("--target", choices=("odin2", "windows"), default="odin2")
     p_live.add_argument("--no-build", action="store_true",
@@ -1440,7 +1451,7 @@ def main() -> int:
                 die("--renderdoc needs a RenderDoc folder (or set SKATE3_WINDOWS_RENDERDOC)")
             renderdoc = Path(rd_dir)
         run = run_windows(a.scenario.resolve(), a.config, a.backend, extra, a.out.resolve(),
-                          timeout_s=a.timeout, renderdoc=renderdoc, headless=not a.window)
+                          timeout_s=a.timeout, renderdoc=renderdoc, display=a.display)
         if run is None:
             return 4
         log(f"run folder: {run}")
@@ -1502,7 +1513,7 @@ def main() -> int:
             runs.append(("odin2/vulkan", run_odin2(dev, scenario, extra, a.env, out)))
         for b in backends:
             runs.append((f"win/{b}", run_windows(scenario, a.config, b, extra, out,
-                                                 headless=not a.window)))
+                                                 display=a.display)))
         stamp = time.strftime("%Y%m%d-%H%M%S")
         return ab_compare(scenario, runs, out / f"ab-{stamp}_{scenario.stem}")
 
