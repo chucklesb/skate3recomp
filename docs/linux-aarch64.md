@@ -110,6 +110,31 @@ harness, which stays idle unless it is switched on from the command line.
    pre-release. It then starts the `prerelease-aarch64` workflow, which
    validates the image and publishes it as a pre-release, never as latest.
 
+**A local testing build, not published** (for the device only):
+
+```sh
+SKATE3_APPIMAGE_VARIANT=testing SKATE3_APPIMAGE_KEEP_DEBUG=1 \
+  nix develop .#cross --command \
+  tools/cross-aarch64/build.sh relwithdebinfo sysroot codegen build appimage
+```
+
+It writes `out/release/skate3recomp-testing-<version>-aarch64.AppImage`, with
+the `git describe` version (e.g. `2.1.0.4-dev.g9f8a303`). To replace the
+testing app on the device:
+1. In DroidDeck, with no session running: **Desktop**, open
+   **Skate3Recomp Testing**, **Remove**, and confirm **Remove**. That deletes
+   `/opt/appimages/user/<id>` and its menu entry. Game files, settings and
+   saves live elsewhere and stay.
+2. `adb push` the AppImage to `/storage/emulated/0/Download/`.
+3. **Desktop → Add → AppImage → Choose file**, pick it (the picker's
+   Search filters the folder), leave the name empty (it comes from the
+   AppImage) and press **Add**. Extraction takes a few seconds.
+4. Delete the copy in Download.
+
+`droiddeckctl ui click` drives the same buttons (`--match "Remove"`; the
+dialog's own button is a later `--index`), and `adb shell input text`
+types into the picker's filter after a click on "Filter this folder".
+
 ### Release notes
 
 Every release and pre-release has a curated **Notable Changes** section,

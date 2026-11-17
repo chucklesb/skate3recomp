@@ -53,8 +53,11 @@ and ~2,430 frames).
   the load.** Nothing loads behind them, and skipping them moves the load
   earlier. Skipping the movie is safe: handler 5 then shows the loading
   UI until the load is done (on Windows it already is).
-- **Not measured on the Odin 2** (unavailable). Its load will be slower,
-  but the order is the same.
+- **The Odin 2** (2026-11-16, 30 fps) is the same: language 10.63 s, logo
+  4.70 s, FMV 9.20 s; the load is done 0.48 s after the movie starts.
+  The time from launch to the first screen varies there (1.3 s in one
+  run, 10.9 s in two others), so scenarios wait for each screen
+  (`wait fe_screen = N`), not a fixed time.
 
 ## Input today
 | Screen | The game's own input | Our skip (`skate3_intro_movie_skip`, default on) |
@@ -71,8 +74,9 @@ before. The skip reads the buttons the game itself received
 (`XInputGetState` `sub_82EE22C0`, after any harness rewrite) and the host
 UI pad.
 
-With every press as early as possible, the title came up 6.2 s after
-launch instead of 25.8 s (`scenarios/boot_skip.toml`).
+With a press about a second into each screen, the screens before the title
+took 5.2 s instead of 24.5 s (`scenarios/boot_skip.toml`; Windows and the
+Odin 2 alike, a held X skipped only the logo).
 
 ## The FE state objects (TU3)
 From the state-table dump (`skate3_demo_path_probe`, `FE state N obj=...

@@ -1,10 +1,12 @@
 # The intro skip (docs/re/boot.md): a normal boot, pressing a different
-# button on each screen. A picks the language (the game's own input), X
-# (held 1.5 s, into the movie) skips only the Skate 3 logo, LB skips the Black Box movie; the title must then
-# stay up (no press carried into it). Read the per-screen times with
-# tools/harness/boot_timing.py RUN; compare with scenarios/boot_timing.toml.
+# button on each screen once it is up (the time to the first screen varies:
+# 1-11 s on the Odin 2). A picks the language (the game's own input), X
+# (held 1.5 s, into the movie) skips only the Skate 3 logo, LB skips the
+# EA / Black Box movie; the title must then stay up (no press carried into
+# it). Read the per-screen times with tools/harness/boot_timing.py RUN;
+# compare with scenarios/boot_timing.toml.
 name = "boot_skip"
-timeout_s = 90
+timeout_s = 120
 boot = "none"
 state_every_frames = 10
 
@@ -16,7 +18,12 @@ skate3_intro_movie_skip = true
 
 [[step]]
 do = "wait"
-ms = 2500
+fe_screen = 47
+timeout_s = 60
+
+[[step]]
+do = "wait"
+ms = 1000
 
 [[step]]
 do = "screenshot"
@@ -29,7 +36,12 @@ frames = 3
 
 [[step]]
 do = "wait"
-ms = 1800
+fe_screen = 5
+timeout_s = 10
+
+[[step]]
+do = "wait"
+ms = 1000
 
 [[step]]
 do = "screenshot"
@@ -39,6 +51,11 @@ tag = "logo"
 do = "input"
 buttons = "x"
 frames = 45   # held into the movie: must skip only the logo
+
+[[step]]
+do = "wait"
+fe_screen = 24
+timeout_s = 10
 
 [[step]]
 do = "wait"
@@ -55,7 +72,12 @@ frames = 3
 
 [[step]]
 do = "wait"
-ms = 2500
+fe_screen = 22
+timeout_s = 10
+
+[[step]]
+do = "wait"
+ms = 1500
 
 [[step]]
 do = "screenshot"

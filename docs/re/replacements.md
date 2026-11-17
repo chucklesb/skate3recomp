@@ -42,7 +42,7 @@ row here saying what's missing.
 | `sub_82783D68` | `Sk8::SkaterPresEntity::BindConstants` | control | specified | register map in [characters.md](characters.md); the renderer reads the rows from the entity (`char_rows_entity`) | Replace: it calls `SetParameter` with entity pointers (the map), then the parent |
 | `sub_827C1720` | `cLivingWorldPresEntity::BindConstants` | control | specified | as above | as above |
 | `sub_827C25D8` | LivingWorld-derived BindConstants | control | specified | as above; `sub_827816C0` copies the 9 rows | Replace: parent BindConstants, the row copy, then `SetParameter` |
-| `sub_827816C0` | LivingWorld lighting row copy | pure | native-on | `skate3_native_pose.cpp` `lwrows` (`skate3_native_lw_rows_replace`); a 160-byte copy (9 vectors, 4 words); shadow bit-exact on Windows (plaza 4,839 calls, forearm reel 621); Odin 2 check skipped | - |
+| `sub_827816C0` | LivingWorld lighting row copy | pure | native-on | `skate3_native_pose.cpp` `lwrows` (`skate3_native_lw_rows_replace`); a 160-byte copy (9 vectors, 4 words); shadow bit-exact on Windows (plaza 4,839 calls, forearm reel 621); on, Odin 2: plaza 4,894 and reel 825 calls, reel char_sync 0 | - |
 | `sub_82785260`, `sub_82793F70`, `sub_82785528` | Colorized / CAC / skater-layout BindConstants | control | hooked-only | class tags only | Specify (paint/colorize rows) |
 | `sub_82B76080` | D3D wait poll (one turn of `BlockOnFence`) | control | hooked-only | `skate3_native_fence.cpp`: blocks on the GPU write-back signal before the guest poll | Replace the poll body (spin hints, fence compare, deadlock check) |
 | `sub_82B755C0` | `D3D::CDevice::BlockOnFence` | control | specified | loops on `sub_82B76080` | Replace with the poll |
@@ -51,7 +51,7 @@ row here saying what's missing.
 | `sub_8290B320` | `WakeThreads` | control | native-on | `j_wake`: both paths native; signals only armed workers when `skate3_native_job_wake = on` | - |
 | `sub_82909738`, `sub_82909740` | `Get/SetJobThreadSleepTimeoutMS` | control | native-on | `j_gettmo`, `j_settmo` (backend+1592) | - |
 | `sub_82EDFEC0` | `WaitForSingleObject` | control | native-on | `j_wait` (all 105 callers) | - |
-| `sub_82EE7880` | `WaitForSingleObjectEx` | control | native-on | `j_waitex`: the timeout helper `sub_82EEEA98`, the `NtWaitForSingleObjectEx` import (retried on status 257 when alertable), `sub_82EE6260` on failure; Windows runs (Odin 2 check skipped) | - |
+| `sub_82EE7880` | `WaitForSingleObjectEx` | control | native-on | `j_waitex`: the timeout helper `sub_82EEEA98`, the `NtWaitForSingleObjectEx` import (retried on status 257 when alertable), `sub_82EE6260` on failure; Windows and Odin 2 runs (Odin 2 plaza: 790,594 waits native, jobs late 7 of 5,921) | - |
 | `sub_82EEEA98` | ms to a kernel timeout | control | native-on | `k_timeout`: -1 gives 0 (INFINITE), else stores u32(ms) * -10000 at r3 | - |
 | `sub_82EE6260` | set the last error from an NTSTATUS | control | native-on | `k_lasterr`: `RtlNtStatusToDosError`, stored at `*(r13+256)+352` unless `*(r13+336)` is set (32 callers) | - |
 | `sub_824741F0` | spin-wait on a job | control | native-on | `j_spin` | - |

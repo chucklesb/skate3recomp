@@ -143,7 +143,8 @@ bodies (`j_waitex`, `k_timeout`, `k_lasterr`): ~836,000 waits in the plaza
 run, the same job counters (`late` 61-65 of ~7,000 timeouts), frame times
 level. `sub_827816C0` is a 160-byte copy (`lwrows`), bit-exact in shadow.
 Neither moves CPU measurably; they are RE-7 replacements, not
-optimizations. The Odin 2 check was skipped (the user's choice).
+optimizations. Odin 2 (2026-11-16): the same, 790,594 waits native in the
+plaza run, jobs `late` 7 of 5,921 timeouts, reel char_sync 0.
 
 ## Next
 - Identify `sub_82D1DE08` / `sub_82E89B80`.

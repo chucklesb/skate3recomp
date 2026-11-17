@@ -99,8 +99,7 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   waits and the spin-wait run as native bodies (the framework's Body
   families). Culling: `DoFrustumCulling` + its job wrappers native and
   bit-exact ([re/culling.md](re/culling.md); job threads -5% CPU on the
-  Odin 2). Later the same day (Windows; the Odin 2 check skipped by
-  choice): `sub_827816C0` turned out to be a 160-byte row copy
+  Odin 2). Later the same day (Windows, then the Odin 2): `sub_827816C0` turned out to be a 160-byte row copy
   (`lwrows`, bit-exact), and `WaitForSingleObjectEx` with its timeout
   and last-error helpers run as native bodies. Next: the vrsqrtefp helper
   (SDK), RunSingleJob's slot layout, the BindConstants bodies
@@ -110,7 +109,8 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   FMV, a load wait, the title). No screen is frame-dependent (all time
   `dt` in ms; same seconds at 30, 60 and ~500 fps). None blocks the main
   loop, but the boot load only starts when the FMV plays, so the 10 s
-  language timeout and the 4 s logo delay it. Done (2026-11-16, Windows):
+  language timeout and the 4 s logo delay it. Done (2026-11-16, Windows and
+  the Odin 2):
   any button skips the logo and the FMV during the boot
   (`skate3_intro_movie_skip`, "Skippable Intros" in the options menu;
   title at 6.2 s instead of 25.8 s); the logo's update is native
