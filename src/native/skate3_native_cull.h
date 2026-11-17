@@ -8,8 +8,8 @@
 // the occluders and a projected-size threshold and writes a u16 visibility
 // mask per item.
 //
-// skate3_native_cull_replace = off | shadow | on (default off until shadow
-// is exact everywhere): DoFrustumCulling as a Compute family `cull`
+// skate3_native_cull_replace = off | shadow | on (default on since
+// 2026-11-16; shadow bit-exact on both platforms): DoFrustumCulling as a Compute family `cull`
 // (bit-exact by following the guest's float op order with the recompiler's
 // primitives); the job and the entry point as Body families `cull_job`,
 // `cull_entry` (on whenever the family is on).

@@ -95,8 +95,12 @@ the linked pages; the backlog is [open-work.md](open-work.md).
   the workers don't spin, they wake for nothing (two thirds of wakes find no
   job); `WakeThreads` now signals only workers that may be waiting
   (`skate3_native_job_wake`, on by default: job threads -6% CPU on the
-  Odin 2 at 30 fps, no lost wakes). Next: cheap candidates from the ranking
-  (DoFrustumCulling, the vrsqrtefp helper).
+  Odin 2 at 30 fps, no lost wakes); the worker loop, WakeThreads, the
+  waits and the spin-wait run as native bodies (the framework's Body
+  families). Culling: `DoFrustumCulling` + its job wrappers native and
+  bit-exact ([re/culling.md](re/culling.md); job threads -5% CPU on the
+  Odin 2). Next: the vrsqrtefp helper (SDK), RunSingleJob's slot layout,
+  the BindConstants bodies ([re/replacements.md](re/replacements.md)).
 
 **Parked** (the user's call; don't start without asking):
 - The photo challenge's jerky closing animation and snapping pose

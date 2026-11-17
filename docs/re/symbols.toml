@@ -454,3 +454,26 @@ name = "D3D::CDevice::BlockOnFence"
 role = "loops on sub_82B76080 until the fence passes; 39% of the render thread's CPU on the Odin 2 uncapped before the fence wait"
 confidence = "likely"
 evidence = "Skate 2 name; profiler stacks; disassembly"
+
+[sub_82816A40]
+name = "DoFrustumCulling"
+signature = "(desc, params, occluder planes (splatted), occluder count, change counter)"
+role = "Groups of 4 AABBs against 6 frustum planes, occluders (all 8 corners behind all 5 planes) and a projected-size test; a u16 mask per item at desc+12. Layout in docs/re/culling.md."
+confidence = "likely"
+evidence = "Skate 2 callgraph name; disassembly; native port bit-exact in shadow (Windows 428k calls, Odin 2 268k)"
+replaced = "src/native/skate3_native_cull.cpp (cull, skate3_native_cull_replace)"
+
+[sub_82817138]
+name = "Sk8::VectorizedCullingJob"
+signature = "(?, desc, ?, ?)"
+role = "params = desc+8; splats the occluder planes (params+0, 32 bytes each, 5 per occluder, params+5260 occluders) onto a 15 KB stack frame and calls DoFrustumCulling"
+confidence = "likely"
+evidence = "Skate 2 callgraph name; disassembly"
+replaced = "src/native/skate3_native_cull.cpp (cull_job)"
+
+[sub_82812A20]
+name = "Sk8::BufferedIterativeJobEntryPoint<&Sk8::VectorizedCullingJob>"
+signature = "(records, n) : VectorizedCullingJob(record[0..3]) per 16-byte record"
+confidence = "likely"
+evidence = "Skate 2 exact name; disassembly"
+replaced = "src/native/skate3_native_cull.cpp (cull_ent)"

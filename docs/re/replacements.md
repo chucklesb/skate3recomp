@@ -51,9 +51,9 @@ row here saying what's missing.
 | `sub_82909738`, `sub_82909740` | `Get/SetJobThreadSleepTimeoutMS` | control | native-on | `j_gettmo`, `j_settmo` (backend+1592) | - |
 | `sub_82EDFEC0` | `WaitForSingleObject` | control | native-on | `j_wait` (all 105 callers) | Replace `WaitForSingleObjectEx` `sub_82EE7880` (calls the kernel import) |
 | `sub_824741F0` | spin-wait on a job | control | native-on | `j_spin` | - |
-| `sub_82816A40` | `DoFrustumCulling` | pure | specified (in progress) | 0.24 ms/frame on the Odin 2 job threads | Compute family, shadow then on |
-| `sub_82817138` | `Sk8::VectorizedCullingJob` | control | specified (in progress) | calls `DoFrustumCulling` | Native body |
-| `sub_82812A20` | `BufferedIterativeJobEntryPoint<VectorizedCullingJob>` | control | specified (in progress) | calls the job | Native body |
+| `sub_82816A40` | `DoFrustumCulling` | pure | native-on | `skate3_native_cull.cpp` `cull`; shadow bit-exact on both platforms; [culling.md](culling.md) | - |
+| `sub_82817138` | `Sk8::VectorizedCullingJob` | control | native (with `cull` on) | `cull_job` | - |
+| `sub_82812A20` | `BufferedIterativeJobEntryPoint<VectorizedCullingJob>` | control | native (with `cull` on) | `cull_ent` | - |
 
 Hooks that exist for the harness, the native renderer or the demo path
 (about 115 `REX_FUNC` overrides in `src/`; list them with

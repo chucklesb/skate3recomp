@@ -23,7 +23,7 @@
 #include "generated/skate3_init.h"
 #include "native/skate3_native_replace.h"
 
-REXCVAR_DEFINE_STRING(skate3_native_cull_replace, "off", "Skate 3",
+REXCVAR_DEFINE_STRING(skate3_native_cull_replace, "on", "Skate 3",
                       "RE-7: Sk8 frustum culling (DoFrustumCulling sub_82816A40 and its job "
                       "wrappers): off | shadow (native computes, compared with the recompiled "
                       "code; replace: cull) | on")

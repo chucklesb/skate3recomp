@@ -132,6 +132,11 @@ Odin 2: the spin-wait `sub_824741F0` (no sleep; masks 1 and 4) is 0.10
 ms/frame on the main thread including the jobs it runs, and
 `JobInstanceHandle::WaitOn` sleeps between tries.
 
+## Culling (2026-11-16)
+`DoFrustumCulling` and its two job wrappers run natively by default
+(`skate3_native_cull_replace`, [culling.md](culling.md)): bit-exact in shadow,
+job threads -5% CPU on the Odin 2 and -8% on Windows at 30 fps.
+
 ## Next
 - Identify `sub_82D1DE08` / `sub_82E89B80`.
 - Candidates by cost × specifiability: `DoFrustumCulling`, the
