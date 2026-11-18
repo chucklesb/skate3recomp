@@ -45,7 +45,7 @@ the linked pages; the backlog is [open-work.md](open-work.md).
 - RE-4 [~] **Career and progression:** mostly done: board sales, challenges, milestones, the save; completion through the game. Next: what [re/career.md](re/career.md) lists as not known yet, as fixes reach it.
 - RE-5 [~] **The character skeleton:** in progress: the store serves skaters and pedestrians, on by default. Next: KI-125 (deferred by the user); delete the remaining guesses.
 - RE-6 [ ] **Who issues the emulated passes:** not started. Next: with native-only phase 1.
-- RE-7 [~] **Native replacements (G2):** in progress: about 60 functions native (skinning, culling, jobs, the FE base class, boot pieces); coverage in [re/coverage.md](re/coverage.md). Next: the code each fix touches; the hot direct functions ([re/hot-functions.md](re/hot-functions.md#call-counts)).
+- RE-7 [~] **Native replacements (G2):** in progress: 41 functions native (0.1%) (skinning, culling, jobs, the FE base class, boot pieces); coverage in [re/coverage.md](re/coverage.md). Next: the code each fix touches; the hot direct functions ([re/hot-functions.md](re/hot-functions.md#call-counts)).
 - RE-8 [~] **Boot flow:** mapped; skippable intros, the quick title and the logo update native. Next: a native handler chain; the movie handler's side effects (requirements in [re/boot.md](re/boot.md)).
 - RE-9 [~] **Frontend and HUD:** in progress: `FrontEndStateBase` and 23 small state methods native. Next: `FrontEndState_Options`, then the FE manager.
 

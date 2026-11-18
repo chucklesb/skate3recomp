@@ -1,0 +1,84 @@
+# The game's subsystems, for the coverage report (tools/re/coverage.py,
+# docs/re/coverage.md; docs/plan.md, P1).
+#
+# A function belongs to the first subsystem whose `names` regex matches its
+# name (the hand map, then Skate 3's bindings, then the Skate 2 transfer).
+# Unnamed functions are inferred from their neighbours: when the nearest
+# named functions before and after it are in the same subsystem, so is it
+# (object files are laid out contiguously). Order matters: specific first.
+
+[frontend]
+title = "Frontend and HUD: APT movies, FE states, text"
+page = "ui.md"
+names = ['^Sk8::FE\b', '^Sk8::FE::', '^FrontEnd', '^Apt', '^Sk8::HUD', '^FontFace', '^Font', '^rw::movie', 'Localiz', 'GetLocaleText']
+
+[boot]
+title = "Boot flow and the app tick"
+page = "boot.md"
+names = ['^Sk8::Flow', '^Sk8AppMan', 'StateBootFlow']
+
+[characters]
+title = "Characters: skeleton, skinning, create-a-character, animation"
+page = "characters.md"
+names = ['^Character', '^Sk8::CAC', '^AnimCmdSys', 'UpdateBoneTransforms', 'PackAndMultiply', '^Sk8::Render::cModelInstance', '^Sk8::Anim', '^Anim']
+
+[livingworld]
+title = "LivingWorld: pedestrians and ambient characters"
+page = "characters.md"
+names = ['^Sk8::LivingWorld', '^Sk8::LW', '^Sk8::Pedestrian', '^Path\b', '^Path::', 'cLivingWorld']
+
+[culling]
+title = "Culling"
+page = "culling.md"
+names = ['Cull', 'Frustum']
+
+[render]
+title = "Game-side rendering: scene, render engine, D3D"
+page = "../native-only.md"
+names = ['^Sk8::Render', '^Sk8::Scene', '^rw::graphics', '^renderengine', '^XGRAPHICS', '^D3D', '^pegasus', '^Xe', '^XG']
+
+[jobs]
+title = "EA::Jobs and threads"
+page = "jobs.md"
+names = ['^EA::Jobs', '^EA::Thread', 'RunSingleJob', 'WakeThreads']
+
+[physics]
+title = "Physics and collision"
+names = ['^Sk8::Physics', '^rw::collision', '^rw::physics', '^AABBox', '^ClusteredMesh', 'Sk8ComputeContactPoints']
+
+[audio]
+title = "Audio"
+names = ['^Sk8::Audio', '^rw::audio', '^RealmcIface', '^Audio', '^snd', '^Snd']
+
+[gameplay]
+title = "Gameplay: skater behaviours, conditions, score, camera, input, AI"
+names = ['^Sk8::Behaviours', '^Sk8::Conditions', '^Sk8::TransferableConditions', '^Sk8::Skater', '^Sk8::BE\b', '^Sk8::BE::', '^BehaviourGraph', '^StateGraph', '^Sk8::Score', '^Sk8::Chasee', '^Sk8::AI', '^Sk8::Camera', '^Sk8::CameraCore', '^Sk8::Input']
+
+[career]
+title = "Career and challenges"
+page = "career.md"
+names = ['^Sk8::Challenge', '^ChallengeRuntime', 'Career', 'BoardSales']
+
+[reels]
+title = "skate.Reel replays"
+names = ['Replay', 'Reel']
+
+[data]
+title = "Game data: Attrib vaults, asset manager, XML"
+names = ['^Attrib', '^DataSystem', '^assman', '^Sk8::Xml', '^Iris']
+
+[scripting]
+title = "Lua scripting"
+names = ['^Lua', '^lua', '^Sk8::Lua']
+
+[online]
+title = "Online: networking, sockets, EA services"
+names = ['^Sk8::Net', '^EA::Sockets', '^EA::Internet', '^Fesl', '^Dirty', '^Proto', '^Net']
+
+[storage]
+title = "Saves and files"
+names = ['^EA::Memcard', '^EA::IO', '^Memcard']
+
+[library]
+title = "Library code: C runtime, EASTL, strings, allocators, math (P3)"
+names = ['^eastl', '^EAStringC', '^EA::Allocator', '^EA::StdC', '^rw::core', '^rw::SList', '^rw::math', '^Util::', '^xcore', '^XM', '^XMem', '^mem', '^str', '^wcs', '^_', '^sprintf', '^vsnprintf', '^snprintf', '^qsort', '^malloc', '^free', '^Query', 'operator new', 'operator delete']

@@ -3,7 +3,7 @@
 - **Item:** RE-7, Native replacements (G2) ([all items](README.md#the-re-items))
 - **Goal:** Our own implementation in place of every recompiled function ([plan.md](../plan.md), G2).
 - **Done when:** No recompiled function is left in the build (realistically the long tail of P2-P3).
-- **Status:** in progress: about 60 functions native (skinning, culling, jobs, the FE base class, boot pieces); coverage in [coverage.md](coverage.md) (2026-11-18)
+- **Status:** in progress: 41 functions native (0.1%) (skinning, culling, jobs, the FE base class, boot pieces); coverage in [coverage.md](coverage.md) (2026-11-18)
 - **Next:** the code each fix touches; the hot direct functions ([hot-functions.md](hot-functions.md#call-counts))
 
 Every guest function we have specified, and whether native code runs in
