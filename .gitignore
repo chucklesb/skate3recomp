@@ -25,6 +25,9 @@
 *:Zone.Identifier
 
 # Local runtime/config overrides
+.claude/settings.local.json
+.claude/local.env
+.claude/hooks/
 skate3.toml
 skate3_ultrawide_targets*.toml
 CMakeUserPresets.json

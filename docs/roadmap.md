@@ -18,19 +18,16 @@ the unordered backlog is [open-work.md](open-work.md); bugs are in
 2. [~] **Faster test runs** ([open-work.md](open-work.md), tooling):
    condition waits instead of fixed settles; `census_menus` should wait for
    `fe_ready` before its menu presses.
-3. [~] **Skills review** ([plan.md](plan.md)): audit the project skills for
-   this PC's paths and the Odin 2/root assumptions, generalize them to
-   DroidDeck devices, then commit them.
 
 **Next:**
-4. [ ] **A scenario that reaches `FrontEndStateBase::Show` and the
+3. [ ] **A scenario that reaches `FrontEndStateBase::Show` and the
    destructor** (native, not yet run by any scenario).
-5. [ ] **Frame-time follow-ups** ([open-work.md](open-work.md)), the Odin 2
+4. [ ] **Frame-time follow-ups** ([open-work.md](open-work.md)), the Odin 2
    texture re-decode hitch first.
-6. [ ] **Native-only phase 1** ([native-only.md](native-only.md)), then
+5. [ ] **Native-only phase 1** ([native-only.md](native-only.md)), then
    phases 2-5. Row D (the offscreen skater pass in challenges) is the
    biggest remaining cost; it's phase 4.
-7. [ ] **RE-7 speed candidates:** the hot direct functions from the call
+6. [ ] **RE-7 speed candidates:** the hot direct functions from the call
    counts ([re/hot-functions.md](re/hot-functions.md#call-counts)).
 
 **Reverse engineering items** (one line each; each is defined, with its "done when", in [re/README.md](re/README.md#the-re-items)):
