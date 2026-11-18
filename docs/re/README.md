@@ -17,8 +17,56 @@ implementation and then deleted.
 | [replacements.md](replacements.md) | RE-7 catalog: every specified function, whether native code replaces it, and what's left |
 | [workarounds.md](workarounds.md) | Every host-side layer that guesses instead of knowing, and what would replace it |
 | [types.md](types.md) | Structure layouts, from the Skate 2 PDB, with what TU3 is known to keep or change |
+| [jobs.md](jobs.md) | EA::Jobs: workers, backend, job handles, the wake fix |
+| [boot.md](boot.md) | RE-8: the boot flow from launch to the title |
+| [career.md](career.md) | RE-4: career progress, challenges, milestones, the save |
+| [hot-functions.md](hot-functions.md) | Where CPU time goes, and call counts |
 | [ui.md](ui.md) | RE-9: the frontend and HUD (APT movies, FE states, natives, popups, text) and the plan to replace them |
 | [characters.md](characters.md) | Characters: skeleton, parts, palettes, the pack and bone-transform functions |
+
+## The RE items
+
+Every reverse-engineering item, defined here once. The goals and phases they
+serve are in [plan.md](../plan.md); the order we work in is the roadmap's
+Status ([roadmap.md](../roadmap.md)). Each item's page opens with the same
+block (Item, Goal, Done when, Status, Next); dated progress follows on the
+page. `tools/re/check_docs.py` checks that every `RE-n` used in the docs is
+in this table.
+
+| ID | Item | Done when | Status (2026-11-18) | Page |
+|---|---|---|---|---|
+| RE-1 | Toolkit | The core set exists (done 2026-11-15); extended whenever a task needs a tool, never duplicated. | done (extended as needed: `leaves.py`, call counts, 2026-11-17) | [README.md](README.md#toolkit) |
+| RE-2 | Names from the Skate 2 debug build | Every function with a Skate 2 counterpart is matched (BSim pass done), and every layout we use is checked against TU3 in [types.md](types.md). | in progress: 9,326 functions (19.5%); layouts as the work reaches them | [README.md](README.md#names-from-skate-2-roadmap-re-2) |
+| RE-3 | Skate 3's own names | Bindings, messages and debug strings are all mapped to functions. | in progress: 856 functions from the bindings, the message table | [README.md](README.md#skate-3s-own-names-roadmap-re-3) |
+| RE-4 | Career and progression | Everything the career screens show is understood and settable from the harness, through the game's own code. | mostly done: board sales, challenges, milestones, the save; completion through the game | [career.md](career.md) |
+| RE-5 | The character skeleton | Every character piece (skaters and pedestrians) is served from the skeleton store, the character guesses in [workarounds.md](workarounds.md) are deleted, and KI-125 is fixed. | in progress: the store serves skaters and pedestrians, on by default (2026-11-16) | [characters.md](characters.md) |
+| RE-6 | Who issues the emulated passes | Each pass is named in [symbols.toml](symbols.toml) and has its native replacement in [native-only.md](../native-only.md). | not started | [native-only.md](../native-only.md) |
+| RE-7 | Native replacements (G2) | No recompiled function is left in the build (realistically the long tail of P2-P3). | in progress: about 60 functions native (skinning, culling, jobs, the FE base class, boot pieces); coverage in [coverage.md](coverage.md) | [replacements.md](replacements.md) |
+| RE-8 | Boot flow | The boot handler chain runs as native code that starts the load at once. | mapped; skippable intros, the quick title and the logo update native | [boot.md](boot.md) |
+| RE-9 | Frontend and HUD | The FE states, the FE manager, the popups and the HUD natives are native; game-style UI features are built on that layer. | in progress: `FrontEndStateBase` and 23 small state methods native | [ui.md](ui.md) |
+
+**Pages without an item:** [culling.md](culling.md) (the culling job, part
+of RE-7), [jobs.md](jobs.md) (EA::Jobs), [hot-functions.md](hot-functions.md)
+(cost and call counts), [types.md](types.md), [workarounds.md](workarounds.md).
+
+### RE-1 to RE-3: progress (moved from the roadmap, 2026-11-18)
+
+- **RE-1:** **Toolkit:** `mem` search (unknown values included), portable
+  snapshots, names in symbolize, the Toolkit section.
+- **RE-2:** **Names from the Skate 2 debug build:** 9,326 functions (19.5%)
+  from `sk2_match.py` plus Ghidra Version Tracking, cross-checked; class
+  layouts with `sk2_types.py` and [re/types.md](types.md) (four
+  structures, every offset we use confirmed). Left: more coverage via BSim,
+  more layouts as the work reaches them.
+- **RE-3:** **Skate 3's own code:** 856 functions named by the Lua bindings and
+  the message table published ([re/README.md](README.md)); they also
+  showed layout-align names to be unreliable (no longer exported). Left:
+  debug strings; handlers for the messages.
+
+### RE-6: progress
+
+**Who issues the emulated passes** native-only must replace
+(pitches 160 and 1200).
 
 ## Conventions
 
@@ -37,17 +85,9 @@ implementation and then deleted.
 
 ## Workflow
 
-1. **Learn while debugging.** A probe or hook shows what a function does or
-   what a structure holds.
-2. **Write it down the same day:** an entry in `symbols.toml`, and a note on
-   the system's page (create one per system: characters, front end, reels,
-   camera, ...). Code comments may point here instead of repeating it.
-3. **Replace when it pays.** A native replacement goes in `src/re/` (planned),
-   behind a cvar, and is verified in **shadow mode** first: run the original
-   and the replacement on the same inputs over a scenario and compare every
-   output. Default-on only after zero divergences on Windows and the Odin 2.
-4. **Delete the guess** it makes unnecessary
-   ([workarounds.md](workarounds.md)); no permanent fallback.
+Every investigation, fix, change or feature follows
+[workflow.md](../workflow.md): reproduce, understand, record the same day,
+fix natively, verify, check the subsystem's coverage, update the trackers.
 
 ## Toolkit
 

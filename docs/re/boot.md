@@ -1,5 +1,11 @@
 # Boot flow (power-on to the title screen)
 
+- **Item:** RE-8, Boot flow ([all items](README.md#the-re-items))
+- **Goal:** Understand and own the boot from launch to "Press Start".
+- **Done when:** The boot handler chain runs as native code that starts the load at once.
+- **Status:** mapped; skippable intros, the quick title and the logo update native (2026-11-18)
+- **Next:** a native handler chain; the movie handler's side effects (requirements below)
+
 What Skate 3 (TU3) runs between launch and "Press Start", what each
 screen waits for, and what a native replacement has to keep. Roadmap
 RE-8; native code in `src/native/skate3_native_boot.cpp`, the skip in
@@ -244,3 +250,27 @@ the handler chain itself. The logo `OnUpdate` is the first native piece
   and movie state changes (`Skate 3 boot:` lines), FE pushes, and the FE
   state table once.
 - `tools/re/vtable.py ADDR`: a vtable's slots with names.
+
+## Progress (moved from the roadmap, 2026-11-18)
+
+**Boot flow** ([re/boot.md](boot.md)): the handler chain from
+launch to the title is mapped (language select, logo, the EA / Black Box
+FMV, a load wait, the title). No screen is frame-dependent (all time
+`dt` in ms; same seconds at 30, 60 and ~500 fps). None blocks the main
+loop, but the boot load only starts when the FMV plays, so the 10 s
+language timeout and the 4 s logo delay it. Done (2026-11-16, Windows and
+the Odin 2):
+any button skips the logo and the FMV during the boot
+(`skate3_intro_movie_skip`, "Skippable Intros" in the options menu;
+title at 6.2 s instead of 25.8 s); the logo's update is native
+(`boot_logo`). The title: any button shows "Press Start" at once
+(ends its 1.5 s input delay and fast-forwards APT's animation) and A
+works like Start (`skate3_title_quick_start`, "Quick Title Screen").
+The slow boot at a frame cap (Odin 2, 0.1-77 s to the language
+select at 30 fps, upstream too) was the SDK's POSIX auto-reset event:
+the render loop re-took the app mutex before the woken main thread ran;
+events now hand off to a waiting thread (1.3 s, gameplay pacing equal or
+better; [re/boot.md](boot.md)). Sk8AppMan's tick runs once per pad
+sample from a 30-slot ring; its push/pop are native (`ring_*`).
+Next: a native handler chain that starts the load at
+once, and the movie handler's side effects (requirements in boot.md).

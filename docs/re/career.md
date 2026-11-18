@@ -1,5 +1,11 @@
 # Career and progression
 
+- **Item:** RE-4, Career and progression ([all items](README.md#the-re-items))
+- **Goal:** Understand how the career keeps progress (board sales, challenges, milestones, the save) and set it from the harness.
+- **Done when:** Everything the career screens show is understood and settable from the harness, through the game's own code.
+- **Status:** mostly done: board sales, challenges, milestones, the save; completion through the game (2026-11-18)
+- **Next:** what's listed under "Not known yet" below, as fixes reach it
+
 How Skate 3 keeps career progress (board sales, cash, milestones), as far as
 known, and how the harness sets it. Functions: [symbols.toml](symbols.toml)
 ("Career and progression"). Roadmap RE-4.
@@ -226,3 +232,21 @@ without a challenge (`scenarios/career_milestone.toml`, above). Live:
 - The FE stack's third entry: `[0,66,15]` was Customize Teammate, but table
   id 15 is MessengerScreen, so later entries may not be screen ids.
 - How the save's record is found and checked (header hash, checksum).
+
+## Progress (moved from the roadmap, 2026-11-18)
+
+**Career pilot:** board sales understood (four counters, summed;
+[re/career.md](career.md)), the harness `career` step sets them, and the
+"new team member" prompt is measured (row A). The milestone screens now
+show without a challenge (`career` `notify` + `show`,
+`career_milestone.toml`), and every FE screen id has its name
+([re/fe_screens.tsv](fe_screens.tsv)). The counters are Owned /
+Killed / online board sales (the challenge payout), challenge progress is
+read (Owned and Killed lists), and the save layout is known. Challenges can be
+completed from the harness (`complete = "name"`; names from the game's
+lookup8 hash; every data key named from the game's vaults,
+[re/attrib_names.tsv](attrib_names.tsv)). With `pay = true`
+the game's own completion pays the reward and shows the results; the
+`results` step walks them and waits for the save. The `.big` archives
+are readable (`tools/re/big.py`). All four counters are
+identified (`+0x10`: board sales the online service awarded).

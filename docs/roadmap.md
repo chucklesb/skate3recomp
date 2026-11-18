@@ -38,131 +38,16 @@ the linked pages; the backlog is [open-work.md](open-work.md).
    Row D, the offscreen skater pass in challenges (72-96 emulated draws a
    frame), is the biggest remaining cost; it's phase 4.
 
-**Reverse engineering** (a primary goal; plan approved 2026-11-15, [re/README.md](re/README.md)):
-- RE-1 [x] **Toolkit:** `mem` search (unknown values included), portable
-  snapshots, names in symbolize, the Toolkit section.
-- RE-2 [~] **Names from the Skate 2 debug build:** 9,326 functions (19.5%)
-  from `sk2_match.py` plus Ghidra Version Tracking, cross-checked; class
-  layouts with `sk2_types.py` and [re/types.md](re/types.md) (four
-  structures, every offset we use confirmed). Left: more coverage via BSim,
-  more layouts as the work reaches them.
-- RE-3 [~] **Skate 3's own code:** 856 functions named by the Lua bindings and
-  the message table published ([re/README.md](re/README.md)); they also
-  showed layout-align names to be unreliable (no longer exported). Left:
-  debug strings; handlers for the messages.
-- RE-4 [~] **Career pilot:** board sales understood (four counters, summed;
-  [re/career.md](re/career.md)), the harness `career` step sets them, and the
-  "new team member" prompt is measured (row A). The milestone screens now
-  show without a challenge (`career` `notify` + `show`,
-  `career_milestone.toml`), and every FE screen id has its name
-  ([re/fe_screens.tsv](re/fe_screens.tsv)). The counters are Owned /
-  Killed / online board sales (the challenge payout), challenge progress is
-  read (Owned and Killed lists), and the save layout is known. Challenges can be
-  completed from the harness (`complete = "name"`; names from the game's
-  lookup8 hash; every data key named from the game's vaults,
-  [re/attrib_names.tsv](re/attrib_names.tsv)). With `pay = true`
-  the game's own completion pays the reward and shows the results; the
-  `results` step walks them and waits for the save. The `.big` archives
-  are readable (`tools/re/big.py`). All four counters are
-  identified (`+0x10`: board sales the online service awarded).
-- RE-5 [~] **The character skeleton** ([re/characters.md](re/characters.md)):
-  one pose per character per tick; the likely fix for
-  [KI-125](known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps).
-  Done: UBT is a pure gather from one pose array (`srcPalette`), and UBT
-  part `k` is the entity's LOD instance `k` (the part ↔ draw link,
-  checked over a reel). The pack is `transpose(gather × m_MatLtoW)`, exact.
-  Steps 1-2 (the store, shadow mode): every skater piece exact against the
-  game's upload on Windows and the Odin 2. Step 3 (serve, one reset per
-  character), verified on both (char_sync clean). Step 4: stills, fps and
-  char_sync show no regression on either platform; **`on` is the default**
-  (2026-11-16).
-  Step 5: the player's content-matched serve is deleted; the other guesses
-  only decide which skater pieces are drawn now, and stay for pedestrians.
-  RE-5b (pedestrians): the LivingWorld batch writer is the same gather and
-  pack fused; the store rebuilds every pedestrian piece exactly (shadow,
-  both platforms) and serves them (`skeleton_lw = on`, the default since
-  2026-11-16; no frame-time cost on either platform).
-  Next: the remaining char_sync flags at busy spots (visible gap fills,
-  mode switches), then delete the remaining per-piece guesses
-  ([re/workarounds.md](re/workarounds.md)).
-  KI-125 turned out to be the cloth, not the skeleton: a buffer-read timing
-  race after a seek, documented, fix deferred.
-- RE-6 [ ] **Who issues the emulated passes** native-only must replace
-  (pitches 160 and 1200).
-- RE-7 [~] **Shadow-mode replacements:** native code in place of
-  recompiled functions, verified in shadow mode first. Catalog of what is
-  specified vs replaced: [re/replacements.md](re/replacements.md); replace
-  trivial specified functions at once, cycles or not. Done (2026-11-16, on
-  by default): `UpdateBoneTransforms`, `PackAndMultiplyMatricesForUpload`
-  and the LivingWorld batch pack writer, bit-exact on both platforms, no
-  frame-time cost (`src/native/skate3_native_pose.cpp`,
-  [re/characters.md](re/characters.md#native-replacements-re-7-candidates)).
-  Profiler (2026-11-16): `profile` verb + `profile_report.py`; first
-  ranking in [re/hot-functions.md](re/hot-functions.md): at the 30 fps cap
-  the Odin 2 uses ~9.7 ms of CPU per frame over all game threads, flat (no
-  function over ~0.5 ms), so replacements are for understanding and
-  correctness more than frame time (and CPU, i.e. battery and heat).
-  Replacement framework (2026-11-16): `native_replace::Run` +
-  `replace_report.py`; the pose functions run on it. Character path:
-  BindConstants specified and its register map measured (the lighting rows
-  come from entity fields through a pointer, [re/characters.md](re/characters.md)).
-  Done and on by default: `char_rows` rebuilt from the entity for pieces
-  whose capture fails (no stale caches; 96.8% bit-exact in shadow, the rest
-  pedestrian fade opacity), and the D3D fence wait blocks instead of
-  spinning (Odin 2 uncapped: render thread -20% CPU, better 1% lows;
-  [re/hot-functions.md](re/hot-functions.md)). The job system (2026-11-16):
-  the workers don't spin, they wake for nothing (two thirds of wakes find no
-  job); `WakeThreads` now signals only workers that may be waiting
-  (`skate3_native_job_wake`, on by default: job threads -6% CPU on the
-  Odin 2 at 30 fps, no lost wakes); the worker loop, WakeThreads, the
-  waits and the spin-wait run as native bodies (the framework's Body
-  families). Culling: `DoFrustumCulling` + its job wrappers native and
-  bit-exact ([re/culling.md](re/culling.md); job threads -5% CPU on the
-  Odin 2). Later the same day (Windows, then the Odin 2): `sub_827816C0` turned out to be a 160-byte row copy
-  (`lwrows`, bit-exact), and `WaitForSingleObjectEx` with its timeout
-  and last-error helpers run as native bodies; Sk8AppMan's pad-sample ring
-  push/pop/unpush too (`ring_*`, 2026-11-16). Next: the vrsqrtefp helper
-  (SDK), RunSingleJob's slot layout, the BindConstants bodies
-  ([re/replacements.md](re/replacements.md)). 2026-11-17: the standard
-  (our own code over named structs, class by class) and every existing body
-  rewritten to it; the typed walk found the renderer's palette readers
-  stepping the mesh table by 4 instead of 8 (latent). Call counts
-  ([re/hot-functions.md](re/hot-functions.md#call-counts)): no class
-  dominates; the hot functions are direct calls.
-- RE-8 [~] **Boot flow** ([re/boot.md](re/boot.md)): the handler chain from
-  launch to the title is mapped (language select, logo, the EA / Black Box
-  FMV, a load wait, the title). No screen is frame-dependent (all time
-  `dt` in ms; same seconds at 30, 60 and ~500 fps). None blocks the main
-  loop, but the boot load only starts when the FMV plays, so the 10 s
-  language timeout and the 4 s logo delay it. Done (2026-11-16, Windows and
-  the Odin 2):
-  any button skips the logo and the FMV during the boot
-  (`skate3_intro_movie_skip`, "Skippable Intros" in the options menu;
-  title at 6.2 s instead of 25.8 s); the logo's update is native
-  (`boot_logo`). The title: any button shows "Press Start" at once
-  (ends its 1.5 s input delay and fast-forwards APT's animation) and A
-  works like Start (`skate3_title_quick_start`, "Quick Title Screen").
-  The slow boot at a frame cap (Odin 2, 0.1-77 s to the language
-  select at 30 fps, upstream too) was the SDK's POSIX auto-reset event:
-  the render loop re-took the app mutex before the woken main thread ran;
-  events now hand off to a waiting thread (1.3 s, gameplay pacing equal or
-  better; [re/boot.md](re/boot.md)). Sk8AppMan's tick runs once per pad
-  sample from a 30-slot ring; its push/pop are native (`ring_*`).
-  Next: a native handler chain that starts the load at
-  once, and the movie handler's side effects (requirements in boot.md).
-- RE-9 [~] **Frontend and HUD UI** ([re/ui.md](re/ui.md)): reverse the APT
-  menus and HUD (FE states, the natives the movies call, popups, text, the
-  tutorial panel, the button-help bar) and replace them with native code.
-  Started 2026-11-17 (the user asked for the FE states class by class).
-  Done: `FrontEndStateBase` (vtable `0x82301CE0`): fields and slots named,
-  OpenScreen / CloseScreen / RequestScreen / Show / the three screen
-  callbacks / the destructor native; 23 states' small enter/leave methods
-  and the Options screen's IsItemEnabled / OnHighlight native. Next:
-  `FrontEndState_Options`' own seven methods, then the FE manager (push,
-  pop, update, input dispatch). Once it's done, game-style UI is ordinary
-  native code: a reusable library out of `skate3_options_menu.cpp`, the
-  free-fly controls in the tutorial panel, the button-help bar on our
-  pages, new menus on a reused menu movie.
+**Reverse engineering** ([plan.md](plan.md) G2; every item defined in [re/README.md](re/README.md#the-re-items)):
+- RE-1 [x] **Toolkit:** done (extended as needed: `leaves.py`, call counts, 2026-11-17). Next: -.
+- RE-2 [~] **Names from the Skate 2 debug build:** in progress: 9,326 functions (19.5%); layouts as the work reaches them. Next: BSim for more coverage.
+- RE-3 [~] **Skate 3's own names:** in progress: 856 functions from the bindings, the message table. Next: debug strings; the message handlers.
+- RE-4 [~] **Career and progression:** mostly done: board sales, challenges, milestones, the save; completion through the game. Next: what [re/career.md](re/career.md) lists as not known yet, as fixes reach it.
+- RE-5 [~] **The character skeleton:** in progress: the store serves skaters and pedestrians, on by default. Next: KI-125 (deferred by the user); delete the remaining guesses.
+- RE-6 [ ] **Who issues the emulated passes:** not started. Next: with native-only phase 1.
+- RE-7 [~] **Native replacements (G2):** in progress: about 60 functions native (skinning, culling, jobs, the FE base class, boot pieces); coverage in [re/coverage.md](re/coverage.md). Next: the code each fix touches; the hot direct functions ([re/hot-functions.md](re/hot-functions.md#call-counts)).
+- RE-8 [~] **Boot flow:** mapped; skippable intros, the quick title and the logo update native. Next: a native handler chain; the movie handler's side effects (requirements in [re/boot.md](re/boot.md)).
+- RE-9 [~] **Frontend and HUD:** in progress: `FrontEndStateBase` and 23 small state methods native. Next: `FrontEndState_Options`, then the FE manager.
 
 **Parked** (the user's call; don't start without asking):
 - The photo challenge's jerky closing animation and snapping pose

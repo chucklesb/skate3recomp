@@ -1,5 +1,11 @@
 # Characters: skeleton, parts, palettes
 
+- **Item:** RE-5, The character skeleton ([all items](README.md#the-re-items))
+- **Goal:** Draw every character from the game's own pose (one per character per tick), not from guesses about uploaded constants.
+- **Done when:** Every character piece (skaters and pedestrians) is served from the skeleton store, the character guesses in [workarounds.md](workarounds.md) are deleted, and KI-125 is fixed.
+- **Status:** in progress: the store serves skaters and pedestrians, on by default since 2026-11-16 (2026-11-18)
+- **Next:** KI-125 (deferred by the user); delete the remaining guesses
+
 What we know about how Skate 3 poses and draws characters (the player,
 pedestrians, NPC skaters), and the redesign it points to. Functions:
 [symbols.toml](symbols.toml).
@@ -367,3 +373,28 @@ keep their bank capture; the store covers them too.
 4. **Verify in shadow mode** against today's per-piece palettes (reel
    scenarios, char_sync), then delete the per-piece guesses.
 5. **Then** pedestrians and NPC skaters, through the pack and LW paths.
+
+## Progress (moved from the roadmap, 2026-11-18)
+
+**The character skeleton** ([re/characters.md](characters.md)):
+one pose per character per tick; the likely fix for
+[KI-125](../known-issues.md#ki-125-the-skater-comes-apart-for-a-frame-or-two-after-a-replay-jumps).
+Done: UBT is a pure gather from one pose array (`srcPalette`), and UBT
+part `k` is the entity's LOD instance `k` (the part ↔ draw link,
+checked over a reel). The pack is `transpose(gather × m_MatLtoW)`, exact.
+Steps 1-2 (the store, shadow mode): every skater piece exact against the
+game's upload on Windows and the Odin 2. Step 3 (serve, one reset per
+character), verified on both (char_sync clean). Step 4: stills, fps and
+char_sync show no regression on either platform; **`on` is the default**
+(2026-11-16).
+Step 5: the player's content-matched serve is deleted; the other guesses
+only decide which skater pieces are drawn now, and stay for pedestrians.
+RE-5b (pedestrians): the LivingWorld batch writer is the same gather and
+pack fused; the store rebuilds every pedestrian piece exactly (shadow,
+both platforms) and serves them (`skeleton_lw = on`, the default since
+2026-11-16; no frame-time cost on either platform).
+Next: the remaining char_sync flags at busy spots (visible gap fills,
+mode switches), then delete the remaining per-piece guesses
+([re/workarounds.md](workarounds.md)).
+KI-125 turned out to be the cloth, not the skeleton: a buffer-read timing
+race after a seek, documented, fix deferred.

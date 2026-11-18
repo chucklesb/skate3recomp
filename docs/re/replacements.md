@@ -1,5 +1,11 @@
 # Native replacements (RE-7 catalog)
 
+- **Item:** RE-7, Native replacements (G2) ([all items](README.md#the-re-items))
+- **Goal:** Our own implementation in place of every recompiled function ([plan.md](../plan.md), G2).
+- **Done when:** No recompiled function is left in the build (realistically the long tail of P2-P3).
+- **Status:** in progress: about 60 functions native (skinning, culling, jobs, the FE base class, boot pieces); coverage in [coverage.md](coverage.md) (2026-11-18)
+- **Next:** the code each fix touches; the hot direct functions ([hot-functions.md](hot-functions.md#call-counts))
+
 Every guest function we have specified, and whether native code runs in
 its place. RE-7's goal is native code we understand in place of rexglue's
 recompiled code, whether or not it saves cycles
@@ -122,3 +128,45 @@ Hooks that exist for the harness, the native renderer or the demo path
 not replacement candidates until their function is specified; the ones in
 `symbols.toml` have a `hooked` field.
 
+## Progress (moved from the roadmap, 2026-11-18)
+
+**Shadow-mode replacements:** native code in place of
+recompiled functions, verified in shadow mode first. Catalog of what is
+specified vs replaced: [re/replacements.md](replacements.md); replace
+trivial specified functions at once, cycles or not. Done (2026-11-16, on
+by default): `UpdateBoneTransforms`, `PackAndMultiplyMatricesForUpload`
+and the LivingWorld batch pack writer, bit-exact on both platforms, no
+frame-time cost (`src/native/skate3_native_pose.cpp`,
+[re/characters.md](characters.md#native-replacements-re-7-candidates)).
+Profiler (2026-11-16): `profile` verb + `profile_report.py`; first
+ranking in [re/hot-functions.md](hot-functions.md): at the 30 fps cap
+the Odin 2 uses ~9.7 ms of CPU per frame over all game threads, flat (no
+function over ~0.5 ms), so replacements are for understanding and
+correctness more than frame time (and CPU, i.e. battery and heat).
+Replacement framework (2026-11-16): `native_replace::Run` +
+`replace_report.py`; the pose functions run on it. Character path:
+BindConstants specified and its register map measured (the lighting rows
+come from entity fields through a pointer, [re/characters.md](characters.md)).
+Done and on by default: `char_rows` rebuilt from the entity for pieces
+whose capture fails (no stale caches; 96.8% bit-exact in shadow, the rest
+pedestrian fade opacity), and the D3D fence wait blocks instead of
+spinning (Odin 2 uncapped: render thread -20% CPU, better 1% lows;
+[re/hot-functions.md](hot-functions.md)). The job system (2026-11-16):
+the workers don't spin, they wake for nothing (two thirds of wakes find no
+job); `WakeThreads` now signals only workers that may be waiting
+(`skate3_native_job_wake`, on by default: job threads -6% CPU on the
+Odin 2 at 30 fps, no lost wakes); the worker loop, WakeThreads, the
+waits and the spin-wait run as native bodies (the framework's Body
+families). Culling: `DoFrustumCulling` + its job wrappers native and
+bit-exact ([re/culling.md](culling.md); job threads -5% CPU on the
+Odin 2). Later the same day (Windows, then the Odin 2): `sub_827816C0` turned out to be a 160-byte row copy
+(`lwrows`, bit-exact), and `WaitForSingleObjectEx` with its timeout
+and last-error helpers run as native bodies; Sk8AppMan's pad-sample ring
+push/pop/unpush too (`ring_*`, 2026-11-16). Next: the vrsqrtefp helper
+(SDK), RunSingleJob's slot layout, the BindConstants bodies
+([re/replacements.md](replacements.md)). 2026-11-17: the standard
+(our own code over named structs, class by class) and every existing body
+rewritten to it; the typed walk found the renderer's palette readers
+stepping the mesh table by 4 instead of 8 (latent). Call counts
+([re/hot-functions.md](hot-functions.md#call-counts)): no class
+dominates; the hot functions are direct calls.

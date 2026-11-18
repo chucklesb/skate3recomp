@@ -1,5 +1,11 @@
 # Culling (Sk8 vectorized frustum culling)
 
+- **Item:** part of RE-7 ([all items](README.md#the-re-items))
+- **Goal:** the vectorized culling job as our own code.
+- **Done when:** the culling job chain is native and bit-exact on both platforms.
+- **Status:** `DoFrustumCulling` and its job wrappers native over typed structs, bit-exact in shadow mode (2026-11-18)
+- **Next:** the occluder setup that fills `CullingParams`
+
 How Skate 3 decides which objects are visible, as far as the culling job
 goes. Native implementation: `src/native/skate3_native_cull.cpp`
 (`skate3_native_cull_replace`, RE-7; [replacements.md](replacements.md)).

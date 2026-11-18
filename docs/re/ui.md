@@ -1,5 +1,11 @@
 # The frontend and HUD (RE-9)
 
+- **Item:** RE-9, Frontend and HUD ([all items](README.md#the-re-items))
+- **Goal:** The APT menus and HUD as native code: FE states, the FE manager, the natives the movies call, popups, text, the tutorial panel, the button-help bar.
+- **Done when:** The FE states, the FE manager, the popups and the HUD natives are native; game-style UI features are built on that layer.
+- **Status:** in progress: `FrontEndStateBase` and 23 small state methods native (2026-11-18)
+- **Next:** `FrontEndState_Options`, then the FE manager
+
 The game's menus and HUD: what drives them, what we already hook, and the plan
 to replace them with native code. Active since 2026-11-17, class by class
 (status in [roadmap.md](../roadmap.md), RE-9). The goal is
@@ -145,3 +151,19 @@ These are hooks for one screen each, not a reusable layer.
    (rows, pages, popups, text, sounds) out of `skate3_options_menu.cpp`; the
    free-fly hint in the tutorial panel; the button-help bar on our pages;
    new standalone menus on a reused menu movie.
+
+## Progress (moved from the roadmap, 2026-11-18)
+
+**Frontend and HUD UI** ([re/ui.md](ui.md)): reverse the APT
+menus and HUD (FE states, the natives the movies call, popups, text, the
+tutorial panel, the button-help bar) and replace them with native code.
+Started 2026-11-17 (the user asked for the FE states class by class).
+Done: `FrontEndStateBase` (vtable `0x82301CE0`): fields and slots named,
+OpenScreen / CloseScreen / RequestScreen / Show / the three screen
+callbacks / the destructor native; 23 states' small enter/leave methods
+and the Options screen's IsItemEnabled / OnHighlight native. Next:
+`FrontEndState_Options`' own seven methods, then the FE manager (push,
+pop, update, input dispatch). Once it's done, game-style UI is ordinary
+native code: a reusable library out of `skate3_options_menu.cpp`, the
+free-fly controls in the tutorial panel, the button-help bar on our
+pages, new menus on a reused menu movie.
