@@ -6,13 +6,20 @@ The top-level [README](../README.md), [KNOWN_ISSUES.md](../KNOWN_ISSUES.md) and
 [CONTRIBUTING.md](../CONTRIBUTING.md) are upstream's and are kept as close to
 upstream as possible.
 
+**Reading order:** [plan.md](plan.md) (why, the goals and phases), then
+[workflow.md](workflow.md) (how every fix is done), [roadmap.md](roadmap.md)
+(what's being worked on), [re/](re/README.md) (what we know about the game),
+[known-issues.md](known-issues.md).
+
 | Page | What it covers |
 |---|---|
+| [plan.md](plan.md) | The goals (fix properly, own the game code, own the runtime), the phases, the target platform, how progress is measured |
+| [workflow.md](workflow.md) | The steps for every investigation, fix, change or feature, and the doc check that enforces them |
 | [known-issues.md](known-issues.md) | Issues found in this fork, each starting with what you see on screen |
-| [roadmap.md](roadmap.md) | The tracker (now / next / done), the fork's direction and milestones |
+| [roadmap.md](roadmap.md) | The tracker: now and next, in order; the RE items in one line each; direction and milestones |
 | [native-only.md](native-only.md) | The plan to stop, then remove, the emulated renderer and D3D12 |
-| [re/](re/README.md) | Reverse engineering: the function map, per-system notes (characters), and the guesses still to replace |
-| [open-work.md](open-work.md) | What's planned or waiting: open issues at a glance, rendering, harness and tooling, investigations |
+| [re/](re/README.md) | Reverse engineering: the RE items, the function map, subsystem pages, coverage, and the guesses still to replace |
+| [open-work.md](open-work.md) | The backlog (unordered): open issues at a glance, rendering, harness and tooling, investigations |
 | [linux-aarch64.md](linux-aarch64.md) | Cross-compiling for linux-aarch64, the DroidDeck AppImage, releases and testing pre-releases |
 | [windows-cross-build.md](windows-cross-build.md) | Building the Windows x64 version from Linux/WSL (for testing and A/B comparisons) |
 | [scenario-harness.md](scenario-harness.md) | The scenario test harness: scenario format, verbs, live mode, run folders, A/B runs, replay playback, helper tools |
