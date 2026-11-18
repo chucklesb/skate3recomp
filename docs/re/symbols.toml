@@ -811,3 +811,171 @@ signature = "(flowman)"
 role = "Runs the current flow state's handler; its first call at boot makes the transition to LoadBootFlow (sub_826DFB30)."
 confidence = "likely"
 evidence = "flow probe (first transition from lr 0x826DF53C)"
+
+[sub_82608E58]
+name = "FrontEndState (id 6)::OnEnter"
+signature = "(this)"
+role = "Vtable +0x0C. Tail call this->OpenScreen(6, 0) (vtable +0x38): opens FE screen 6."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_open (skate3_native_boot.cpp); fe_states_smoke / boot scenarios on and off (2026-11-16/17)"
+hooked = "src/native/skate3_native_boot.cpp (native, fe_open)"
+
+[sub_82608E70]
+name = "FrontEndState (id 7)::OnEnter"
+signature = "(this)"
+role = "Vtable +0x0C. Tail call this->OpenScreen(7, 0) (vtable +0x38): opens FE screen 7."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_open (skate3_native_boot.cpp); fe_states_smoke / boot scenarios on and off (2026-11-16/17)"
+hooked = "src/native/skate3_native_boot.cpp (native, fe_open)"
+
+[sub_82608E88]
+name = "FrontEndState (id 8)::OnEnter"
+signature = "(this)"
+role = "Vtable +0x0C. Tail call this->OpenScreen(8, 0) (vtable +0x38): opens FE screen 8."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_open (skate3_native_boot.cpp); fe_states_smoke / boot scenarios on and off (2026-11-16/17)"
+hooked = "src/native/skate3_native_boot.cpp (native, fe_open)"
+
+[sub_826098B0]
+name = "FrontEndState (id 9)::OnEnter"
+signature = "(this)"
+role = "Vtable +0x0C. Tail call this->OpenScreen(9, 0) (vtable +0x38): opens FE screen 9."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_open (skate3_native_boot.cpp); fe_states_smoke / boot scenarios on and off (2026-11-16/17)"
+hooked = "src/native/skate3_native_boot.cpp (native, fe_open)"
+
+[sub_8260A270]
+name = "FrontEndState (id 11)::OnEnter"
+signature = "(this)"
+role = "Vtable +0x0C. Tail call this->OpenScreen(10, 0) (vtable +0x38): opens FE screen 10."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_open (skate3_native_boot.cpp); fe_states_smoke / boot scenarios on and off (2026-11-16/17)"
+hooked = "src/native/skate3_native_boot.cpp (native, fe_open)"
+
+[sub_82634BB0]
+name = "FrontEndState (id 41)::OnEnter"
+signature = "(this)"
+role = "Vtable +0x0C. Tail call this->OpenScreen(23, 0) (vtable +0x38): opens FE screen 23."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_open (skate3_native_boot.cpp); fe_states_smoke / boot scenarios on and off (2026-11-16/17)"
+hooked = "src/native/skate3_native_boot.cpp (native, fe_open)"
+
+[sub_825EF0F8]
+name = "FrontEndState (id 28)::OnEnter"
+signature = "(this)"
+role = "Vtable +0x0C. Tail call this->OpenScreen(60, 0) (vtable +0x38): opens FE screen 60."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_open (skate3_native_boot.cpp); fe_states_smoke / boot scenarios on and off (2026-11-16/17)"
+hooked = "src/native/skate3_native_boot.cpp (native, fe_open)"
+
+[sub_825EC7E8]
+name = "FrontEndState (id 70)::OnEnter"
+signature = "(this)"
+role = "Vtable +0x0C. Tail call this->OpenScreen(61, 0) (vtable +0x38): opens FE screen 61."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_open (skate3_native_boot.cpp); fe_states_smoke / boot scenarios on and off (2026-11-16/17)"
+hooked = "src/native/skate3_native_boot.cpp (native, fe_open)"
+
+[sub_8260FD88]
+name = "FrontEndState (id 32)::OnEnter"
+signature = "(this)"
+role = "Vtable +0x0C. Tail call this->OpenScreen(68, 0) (vtable +0x38): opens FE screen 68."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_open (skate3_native_boot.cpp); fe_states_smoke / boot scenarios on and off (2026-11-16/17)"
+hooked = "src/native/skate3_native_boot.cpp (native, fe_open)"
+
+[sub_82638608]
+name = "FrontEndState (id 43, Marketing)::OnEnter"
+signature = "(this)"
+role = "Vtable +0x0C. Tail call this->OpenScreen(85, 0) (vtable +0x38): opens FE screen 85."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_open (skate3_native_boot.cpp); fe_states_smoke / boot scenarios on and off (2026-11-16/17)"
+hooked = "src/native/skate3_native_boot.cpp (native, fe_open)"
+
+[sub_82638E00]
+name = "FrontEndState (id 44)::OnEnter"
+signature = "(this)"
+role = "Vtable +0x0C. Tail call this->OpenScreen(86, 0) (vtable +0x38): opens FE screen 86."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_open (skate3_native_boot.cpp); fe_states_smoke / boot scenarios on and off (2026-11-16/17)"
+hooked = "src/native/skate3_native_boot.cpp (native, fe_open)"
+
+[sub_826393E8]
+name = "FrontEndState (id 47, the language select)::OnEnter"
+signature = "(this)"
+role = "Vtable +0x0C. Tail call this->OpenScreen(94, 0) (vtable +0x38): opens FE screen 94."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_open (skate3_native_boot.cpp); fe_states_smoke / boot scenarios on and off (2026-11-16/17)"
+hooked = "src/native/skate3_native_boot.cpp (native, fe_open)"
+
+[sub_826504C8]
+name = "FrontEndState (ids 10, 11, 13)::OnLeave"
+signature = "(this)"
+role = "Vtable +0x18, shared by several states. Tail call this->CloseScreen(0) (vtable +0x3C)."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_closescreen (2026-11-16)"
+hooked = "src/native/skate3_native_boot.cpp (native, fe_closescreen)"
+
+[sub_8260E868]
+name = "FrontEndState (id 51)::OnEnter"
+signature = "(this)"
+role = "Vtable +0x0C. +60 = 0 (not yet named), then this->OpenScreen(91, 0)."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_s51_enter; fe_states_smoke on and off: same shots (2026-11-17)"
+hooked = "src/native/skate3_native_fe.cpp (native, fe_s51_enter)"
+
+[sub_82634A28]
+name = "FrontEndState_Billboard5 (id 40)::OnEnter"
+signature = "(this)"
+role = "Vtable +0x0C. The countdown: timer_ms (+64) = 10000, countdown_s (+60) = the float at 0x821161A0; then this->OpenScreen(82, 0)."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_s40_enter; fe_states_smoke on and off: same shots (2026-11-17)"
+hooked = "src/native/skate3_native_fe.cpp (native, fe_s40_enter)"
+
+[sub_825F20B0]
+name = "FrontEndState (id 48)::OnEnter"
+signature = "(this)"
+role = "Vtable +0x0C. Opens the screen its transition names: this->OpenScreen(mpFEStateTransition->mSubState, 0)."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_s48_enter; fe_states_smoke on and off: same shots (2026-11-17)"
+hooked = "src/native/skate3_native_fe.cpp (native, fe_s48_enter)"
+
+[sub_82639690]
+name = "FrontEndState (id 46)::OnEnter"
+signature = "(this)"
+role = "Vtable +0x0C. No screen of its own: mbAllowInput = 1, mScreenState = 3 (shown), and byte +1614 = 1 (a refresh request its update sub_82639710 serves)."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_s46_enter; fe_states_smoke on and off: same shots (2026-11-17)"
+hooked = "src/native/skate3_native_fe.cpp (native, fe_s46_enter)"
+
+[sub_8260A4B8]
+name = "FrontEndState (ids 34, 62)::OnLeave"
+signature = "(this)"
+role = "Vtable +0x18. mLocalInputState (+52) = 0, then this->CloseScreen(0)."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_s34_leave; fe_states_smoke on and off: same shots (2026-11-17)"
+hooked = "src/native/skate3_native_fe.cpp (native, fe_s34_leave)"
+
+[sub_825EC980]
+name = "FrontEndState_ChallengeMap (id 23)::OnLeave"
+signature = "(this)"
+role = "Vtable +0x18. Rewinds its list (cursor +60 = this + 5048, its inline buffer; count +68 = 0), then this->CloseScreen(0)."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_s23_leave; fe_states_smoke on and off: same shots (2026-11-17)"
+hooked = "src/native/skate3_native_fe.cpp (native, fe_s23_leave)"
+
+[sub_82638620]
+name = "FrontEndState_Marketing (id 43)::OnLeave"
+signature = "(this)"
+role = "Vtable +0x18. Clears the byte 0x83083566 its update (sub_826386A0) watches, then this->CloseScreen(0)."
+confidence = "confirmed"
+evidence = "disassembly; native body fe_s43_leave; fe_states_smoke on and off: same shots (2026-11-17)"
+hooked = "src/native/skate3_native_fe.cpp (native, fe_s43_leave)"
+
+[sub_82909740]
+name = "EA::Jobs::LocalBackend::SetJobThreadSleepTimeoutMS"
+signature = "(backend, ms)"
+role = "backend+1592 = ms: the workers' wait timeout (read by sub_82909738)."
+confidence = "likely"
+evidence = "Skate 2 vtable name; pairs with the getter; native body j_settmo (2026-11-16)"
+hooked = "src/native/skate3_native_jobs.cpp (native, j_settmo)"

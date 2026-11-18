@@ -36,20 +36,41 @@ OUT = os.path.join(ROOT, 'docs', 're', 'coverage.md')
 REX_DEF = re.compile(r'REX_FUNC\((sub_[0-9A-F]{8})\)\s*\{')
 
 
-def rex_bodies():
-    """(hooked, native): functions with a REX_FUNC body in src/, and those
-    in src/native/ (our replacements)."""
-    hooked, native = set(), set()
+MACRO_DEF = re.compile(r'#define (\w+)\((\w+)[^)]*\).*?REX_FUNC\(sub_##\2\)', re.S)
+
+
+def rex_body_defs():
+    """(path relative to the repo, 'sub_XXXXXXXX') for every body of ours:
+    REX_FUNC(sub_X) definitions, and calls of macros that paste one
+    (`#define M(addr, ...) ... REX_FUNC(sub_##addr)`, then `M(82608E00, 5)`)."""
+    out = []
     for dirpath, _dirs, files in os.walk(os.path.join(ROOT, 'src')):
         for fn in files:
             if not fn.endswith(('.cpp', '.h')):
                 continue
             p = os.path.join(dirpath, fn)
+            rel = os.path.relpath(p, ROOT)
             text = open(p, encoding='utf-8', errors='replace').read()
-            found = {int(m[4:], 16) for m in REX_DEF.findall(text)}
-            hooked |= found
-            if os.sep + 'native' + os.sep in p:
-                native |= found
+            out += [(rel, n) for n in REX_DEF.findall(text)]
+            for macro, _arg in MACRO_DEF.findall(text.replace('\\\n', ' ')):
+                for addr in re.findall(r'^\s*' + macro + r'\(([0-9A-F]{8})\b', text, re.M):
+                    out.append((rel, f'sub_{addr}'))
+    return out
+
+
+def is_native_path(rel):
+    return rel.replace('\\', '/').startswith('src/native/')
+
+
+def rex_bodies():
+    """(hooked, native): functions with a body of ours in src/, and those in
+    src/native/ (our replacements)."""
+    hooked, native = set(), set()
+    for rel, name in rex_body_defs():
+        f = int(name[4:], 16)
+        hooked.add(f)
+        if is_native_path(rel):
+            native.add(f)
     return hooked, native
 
 
