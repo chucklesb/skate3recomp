@@ -7,10 +7,10 @@
 #   tools/harness/live_cvar_ab.sh <cvar> <value_a> <value_b> [period_s=15] [duration_s=240] [tag=ab]
 #
 # The cvar is left at value_a at the end. Run from the repo root inside WSL;
-# uses .claude/skills/harness/rs.sh for `send` (the adb setup lives there).
+# uses tools/harness/rs.sh for `send` (settings from .claude/local.env).
 set -u
 cvar=$1 va=$2 vb=$3 period=${4:-15} duration=${5:-240} tag=${6:-ab}
-RS=${SKATE3_RS:-$(dirname "$0")/../../.claude/skills/harness/rs.sh}
+RS=${SKATE3_RS:-$(dirname "$0")/rs.sh}
 send() { timeout 30 bash "$RS" send "$@" 2>/dev/null; }
 state() { send query what=state | grep -o '"fps":[0-9.]*,"presence":[0-9]*,"fe_top":[0-9-]*'; }
 start=$(date +%s)

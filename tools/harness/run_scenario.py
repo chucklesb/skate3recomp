@@ -36,6 +36,7 @@ ended" dialog is dismissed with Back. Run folders live in the guest under
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import hashlib
 import json
@@ -699,7 +700,11 @@ def cdb_triage(run: Path, stage: Path) -> Path | None:
 
 
 def win_launch(config: str, backend: str, game_args: list[str],
-               renderdoc: Path | None = None) -> subprocess.Popen:
+               renderdoc: Path | None = None, detach: bool = False) -> subprocess.Popen | None:
+    """Start the staged Windows build. detach: through PowerShell's
+    Start-Process, so the game outlives this script (live mode). A process
+    WSL starts directly is killed once the WSL command that started it
+    returns; that's fine for scenario runs, which wait for the game."""
     stage = win_stage(config)
     exe = stage / "skate3.exe"
     if not exe.exists():
@@ -725,6 +730,20 @@ def win_launch(config: str, backend: str, game_args: list[str],
     if WIN_USER_DATA:
         game_argv.insert(2, f"--user_data_root={win_path(Path(WIN_USER_DATA))}")
     log(f"windows {config}/{backend}: " + " ".join(shlex.quote(x) for x in game_argv))
+    if detach:
+        if renderdoc is not None:
+            die("live mode can't run under RenderDoc")
+
+        def ps(s: str) -> str:
+            return "'" + s.replace("'", "''") + "'"
+        script = (f"Start-Process -FilePath {ps(win_path(exe))} -WorkingDirectory {ps(win_path(stage))} "
+                  f"-ArgumentList {','.join(ps(x) for x in game_argv)}")
+        # -EncodedCommand (UTF-16LE base64): no quoting layer can touch it.
+        enc = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+        subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", enc],
+                       check=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)  # PowerShell's progress records (CLIXML)
+        return None
     args = [str(exe), *game_argv]
     env = dict(os.environ)
     if renderdoc is not None:
@@ -1312,7 +1331,7 @@ def main() -> int:
     p_local.add_argument("scenario", type=Path)
     p_local.add_argument("--exe", required=True, type=Path)
     p_local.add_argument("--out", type=Path, default=REPO / "out/harness-runs")
-    p_odin = sub.add_parser("odin2")
+    p_odin = sub.add_parser("odin2", help="a DroidDeck device (also: device)")
     p_odin.add_argument("scenario", type=Path)
     p_odin.add_argument("--no-deploy", action="store_true")
     p_odin.add_argument("--no-build", action="store_true",
@@ -1412,7 +1431,14 @@ def main() -> int:
     p_perf = sub.add_parser("perf", help="compare two runs' perf.json (CPU stages, GPU passes)")
     p_perf.add_argument("base", type=Path)
     p_perf.add_argument("new", type=Path)
-    a, unknown = ap.parse_known_args()
+    # `device` names the DroidDeck device target in general; `odin2` (the
+    # reference device) is the historical name, and both work.
+    argv = sys.argv[1:]
+    if argv and argv[0] == "device":
+        argv[0] = "odin2"
+    argv = ["odin2" if x == "device" and i > 0 and argv[i - 1] == "--target" else x
+            for i, x in enumerate(argv)]
+    a, unknown = ap.parse_known_args(argv)
     extra = [x for x in unknown if x != "--"]
     if extra and a.cmd not in ("local", "odin2", "live", "windows", "ab"):
         ap.error(f"unrecognized arguments: {' '.join(extra)}")
@@ -1465,7 +1491,7 @@ def main() -> int:
             build_windows(a.config)
         WIN_LIVE_CONFIG.parent.mkdir(parents=True, exist_ok=True)
         WIN_LIVE_CONFIG.write_text(a.config + "\n")
-        win_launch(a.config, a.backend, ["--skate3_harness=true", *extra])
+        win_launch(a.config, a.backend, ["--skate3_harness=true", *extra], detach=True)
         log("live mode running on Windows; use `send --target windows`, Ctrl+Shift+R to record")
         return 0
 

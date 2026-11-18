@@ -10,7 +10,7 @@
 #
 # The first run builds (Windows) or deploys (Odin 2); the rest reuse it. On
 # the Odin 2 each run is fetched before the next. Run from the repo root in
-# WSL; uses .claude/skills/harness/rs.sh. Medians: compare the printed rows.
+# WSL; uses tools/harness/rs.sh. Medians: compare the printed rows.
 set -u
 target=$1 scen=$2 cvar=$3 va=$4 vb=$5
 shift 5
@@ -19,7 +19,7 @@ if [ $# -gt 0 ] && [ "$1" != "--" ]; then runs=$1; shift; fi
 if [ $# -gt 0 ] && [ "$1" != "--" ]; then prefix=$1; shift; fi
 [ $# -gt 0 ] && [ "$1" = "--" ] && shift
 extra=("$@")
-RS=${SKATE3_RS:-$(dirname "$0")/../../.claude/skills/harness/rs.sh}
+RS=${SKATE3_RS:-$(dirname "$0")/rs.sh}
 name=$(basename "$scen" .toml)
 order=()
 for ((i = 0; i < runs; ++i)); do

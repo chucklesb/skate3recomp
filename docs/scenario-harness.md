@@ -7,6 +7,11 @@ compare builds. The code is in `src/harness/`.
 
 ## Quick start
 
+`tools/harness/rs.sh <args>` runs `run_scenario.py <args>` with your machine's
+settings (`.claude/local.env`: adb, DroidDeck, the Windows stage paths) and
+nix loaded; hosts and setup are in [dev-setup.md](dev-setup.md). The
+device target is `device` (or `odin2`, the reference device's name).
+
 For reproducing bugs and checking fixes, the game can run a scripted
 scenario unattended. It boots to gameplay, drives the controller, takes
 screenshots, traces the skater and camera, and exits with a pass/fail code:
@@ -347,7 +352,6 @@ the next investigation can reuse them.
 | `census_report.py` | Emulated draws per screen from `census` events (`native_render_pass_census`): which passes still run under the native renderer, per frontend stack | - |
 | `gen_native_tour.py` | Writes `scenarios/native_tour.toml` (every context where the emulated renderer may still run, census on: a challenge, the team screen, Create-a-Skater with an accepted edit, Import Skater, the replay editor's Take Photo, My Replays, the photo viewer) and `native_tour_boot.toml` (the intro movies). Read the result with `census_report.py <run> --audit-only` ([native-only.md](native-only.md)) | - |
 | `gen_cas_portrait.py` | Writes `scenarios/cas_portrait.toml` (Create-a-Skater hat on/off, team portrait shots); `--only on\|off` for a check across a reboot (the saved photo); `--watch` for the in-session refresh (shots every 2 s after each exit) | - |
-| `win_live.ps1` | Starts the staged Windows build in live mode from PowerShell (WSL kills a Windows process it started) and prints the run folder; `-Extra '--cvar=v'` | PowerShell |
 | `scenario_cvar_ab.sh` | A/B a cvar over whole scenario runs (N per value, alternating), printing frame times, per-thread CPU and a log prefix's summed counters: `tools/harness/scenario_cvar_ab.sh <windows\|odin2> <scenario> <cvar> <a> <b> [runs] [prefix] [-- args]` | - |
 | `live_cvar_ab.sh`, `reel_thumbs.py` | Flip a cvar in a live session and sample fps; extract saved reels' thumbnails | - |
 

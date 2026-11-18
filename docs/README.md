@@ -14,6 +14,7 @@ upstream as possible.
 | Page | What it covers |
 |---|---|
 | [plan.md](plan.md) | The goals (fix properly, own the game code, own the runtime), the phases, the target platform, how progress is measured |
+| [dev-setup.md](dev-setup.md) | Development hosts (Linux, Windows + WSL, Windows, macOS), per-machine settings, the device |
 | [workflow.md](workflow.md) | The steps for every investigation, fix, change or feature, and the doc check that enforces them |
 | [known-issues.md](known-issues.md) | Issues found in this fork, each starting with what you see on screen |
 | [roadmap.md](roadmap.md) | The tracker: now and next, in order; the RE items in one line each; direction and milestones |
