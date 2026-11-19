@@ -10,6 +10,10 @@ Moved from the roadmap's "Done recently" on 2026-11-18.
   session inside WSL with no wrapper (`tools/harness/rs.sh`, the `device`
   target); `tools/harness/adb`, an `adb` for WSL hosts that runs Windows'
   `adb.exe` with local paths converted.
+- 2026-11-18: **uncapped perf runs:** flags after `--` win over a scenario's
+  `[cvars]` (an uncapped A/B through `perf_reel` had stayed at 30 fps),
+  `--uncapped` on `device`/`windows`/`ab`/`live`, and the summary names the
+  cap a run was paced to (`result.json` `fps_cap`).
 - 2026-11-17 (later): **the replacement standard** (reverse-engineered
   code over named structs; the generated trivial-function layer removed),
   FE / jobs / skinning / culling rewritten to it, `FrontEndStateBase`

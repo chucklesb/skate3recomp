@@ -18,4 +18,10 @@ void Install();
 // capped-frame time while loads run uncapped.
 double LiftedCapThisFrame();
 
+// The frame cap in effect for the frame being finished (fps; 0 = uncapped):
+// skate3_guest_fps_cap, or the display-derived cap when
+// skate3_guest_fps_cap_auto applies. Guest render thread, like the above;
+// the harness records it per run so a summary shows what a run was paced to.
+double FrameCapThisFrame();
+
 }  // namespace skate3::native_render

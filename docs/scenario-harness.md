@@ -409,8 +409,12 @@ when a shared segment's `ms_p99`, `busy_ms_p99` or 1% low got worse by more
 than 10%.
 
 Notes:
-- Runs at the same cap and settings compare. On a PC, run uncapped
-  (`-- --skate3_guest_fps_cap=0`) to see the real frame rate; `pace` is then 0.
+- Runs at the same cap and settings compare. To see the real frame rate,
+  run uncapped: `--uncapped` (`device`, `windows`, `ab`, `live`) passes
+  `--skate3_guest_fps_cap=0 --skate3_guest_fps_cap_auto=false`; `pace` is
+  then 0. Flags after `--` win over a scenario's `[cvars]`, and the summary
+  line names the cap the run was paced to (`uncapped`, `cap 30`;
+  `result.json` `fps_cap`).
 - Paused frames (the harness `pause` and `step`) are left out.
 
 ### Renderer stages and GPU passes (perf_reel)

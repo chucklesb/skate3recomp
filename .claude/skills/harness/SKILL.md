@@ -125,6 +125,46 @@ Notes:
 
 ## Performance
 
+**Before/after and A/B comparisons run uncapped.** At the 30 fps cap (most
+scenarios set it in `[cvars]`, and the user plays at 30 for battery and heat)
+the fps reads 30 on both sides and hides the difference. Pass `--uncapped`
+(`device`, `windows`, `ab`, `live`): it adds `--skate3_guest_fps_cap=0
+--skate3_guest_fps_cap_auto=false`, and flags after `--` win over a
+scenario's `[cvars]`. The summary line says what the run was paced to
+(`frame time (in game), uncapped: ...` or `cap 30`); check it before
+comparing.
+- **Report:** fps avg, 1% and 0.1% lows, p50/p99/max frame time, jitter,
+  hitches and busy p99: `tools/harness/frametime_report.py <base> <new>`
+  (A/B table; `--fail-pct 10` flags a regression). Consistency (p99, jitter,
+  hitches) counts as much as the average.
+- **Also at the cap, when the question is power or heat:** a capped run's fps
+  says nothing; compare busy time (`busy p99`; the profiler's ms per frame).
+  Work saved at 30 fps is battery and thermals.
+- **Uncapped, frame-counted steps change:** input holds and `wait frames`
+  last less wall time, so a scenario can play differently (the skater
+  rolls less far). Use reels (`perf_reel.toml`) or segments whose content
+  doesn't depend on frame counts for fps comparisons.
+- **The Odin 2's state is part of the measurement:**
+  - Note the performance and fan modes (`adb shell settings get system
+    performance_mode` / `fan_mode`; see "Odin 2 settings" below) and keep them
+    the same on both sides.
+  - Thermals: start each run cool, `$DROIDDECK_DIR/tools/droiddeckctl wait
+    cool --below 35 --timeout 600`, and log `droiddeckctl thermal` (battery
+    °C, CPU caps) with each run. Run A B B A (or more), never all of A then
+    all of B: a warm device throttles whichever runs second.
+  - Repeat; one run is an anecdote. Report the spread.
+- **Same everything else:** scenario, extras (enhanced shadows, PCSS),
+  resolution, build config (relwithdebinfo), backend.
+
+**Odin 2 settings** (Android system settings; writing one applies it at once
+through the system UI's tiles):
+- `performance_mode`: 0 Standard, 1 Performance, 2 High Performance (raises
+  the CPU clock floors; 2 pins every cluster at its max).
+- `fan_mode`: follows `performance_mode` while
+  `is_quick_set_performance_and_fan_enable=1`, so setting the performance mode
+  also changes the fan mode. Read both before and put both back after.
+- Change them only for a test that needs it, and restore the user's values.
+
 - **Benchmark:** `scenarios/perf_reel.toml` plays reels 2 and 4 with the CPU stage log and GPU timestamp buckets on.
 - **Where the numbers go:** each run's summary prints per-reel fps, CPU render/build ms and GPU native pass ms, and writes `perf.json`.
 - **Compare two runs:** `run_scenario.py perf <base-run> <new-run>`.

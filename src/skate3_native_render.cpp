@@ -300,6 +300,7 @@ bool LoadingNow(uint8_t* base) {
 // interval) so sleep jitter never accumulates; resyncs when the guest falls
 // more than one interval behind (loads, hitches).
 double g_lifted_cap = 0.0;  // see LiftedCapThisFrame
+double g_frame_cap = 0.0;   // see FrameCapThisFrame
 
 void PaceGuestFrameImpl(uint8_t* base) {
   double cap = REXCVAR_GET(skate3_guest_fps_cap);
@@ -312,6 +313,7 @@ void PaceGuestFrameImpl(uint8_t* base) {
       cap = auto_cap;
     }
   }
+  g_frame_cap = cap >= 1.0 ? cap : 0.0;
   static std::chrono::steady_clock::time_point s_next{};
   static bool s_loading = false;
   const bool loading = cap >= 1.0 && REXCVAR_GET(skate3_fast_loading) && LoadingNow(base);
@@ -1227,4 +1229,5 @@ extern "C" REX_FUNC(sub_827C1D38) {
 
 namespace skate3::native_render {
 double LiftedCapThisFrame() { return g_lifted_cap; }
+double FrameCapThisFrame() { return g_frame_cap; }
 }  // namespace skate3::native_render

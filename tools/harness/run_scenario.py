@@ -391,6 +391,18 @@ def scenario_flags(path: Path, backend: str = "vulkan") -> list[str]:
     return flags
 
 
+UNCAPPED_FLAGS = ("--skate3_guest_fps_cap=0", "--skate3_guest_fps_cap_auto=false")
+
+
+def cap_text(cap: dict | None) -> str:
+    """The frame cap a run's in-game frames were paced to (result.json fps_cap)."""
+    if not cap:
+        return "cap ?"
+    lo, hi = cap["min"], cap["max"]
+    one = lambda c: "uncapped" if c < 1 else f"cap {c:g}"
+    return one(lo) if lo == hi else f"{one(lo)} .. {one(hi)} (changed)"
+
+
 def summary(run: Path) -> int:
     result_path = run / "result.json"
     if not result_path.exists():
@@ -425,7 +437,8 @@ def summary(run: Path) -> int:
           f"{r['warnings']} warnings, {r['errors']} errors")
     ft = r.get("frametime_ingame") or r.get("frametime")
     if ft:
-        print(f"  frame time{' (in game)' if r.get('frametime_ingame') else ''}: "
+        print(f"  frame time{' (in game)' if r.get('frametime_ingame') else ''}"
+              f"{', ' + cap_text(r.get('fps_cap')) if 'fps_cap' in r else ''}: "
               f"{ft['fps_avg']:.1f} fps, 1% low {ft['fps_low_1pct']:.1f}, "
               f"p50 {ft['ms_p50']:.1f} / p99 {ft['ms_p99']:.1f} / max {ft['ms_max']:.1f} ms, "
               f"busy p99 {ft['busy_ms_p99']:.1f} ms, {ft['hitches_2x']} hitches "
@@ -1325,6 +1338,8 @@ def reels_cmd(dev: Device, pull: Path | None, install_windows: bool) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
+    UNCAPPED_HELP = ("no frame cap (performance runs): passes --skate3_guest_fps_cap=0 "
+                     "--skate3_guest_fps_cap_auto=false, which win over the scenario's [cvars]")
     # Game arguments go after `--`; everything argparse does not recognise
     # is passed to the game (parse_known_args below).
     p_local = sub.add_parser("local")
@@ -1332,6 +1347,7 @@ def main() -> int:
     p_local.add_argument("--exe", required=True, type=Path)
     p_local.add_argument("--out", type=Path, default=REPO / "out/harness-runs")
     p_odin = sub.add_parser("odin2", help="a DroidDeck device (also: device)")
+    p_odin.add_argument("--uncapped", action="store_true", help=UNCAPPED_HELP)
     p_odin.add_argument("scenario", type=Path)
     p_odin.add_argument("--no-deploy", action="store_true")
     p_odin.add_argument("--no-build", action="store_true",
@@ -1345,6 +1361,7 @@ def main() -> int:
                         help="session environment for this run (repeatable), e.g. "
                              "LD_PRELOAD=/root/renderdoc/librenderdoc.so")
     p_win = sub.add_parser("windows", help="run a scenario on this PC (Windows x64 build)")
+    p_win.add_argument("--uncapped", action="store_true", help=UNCAPPED_HELP)
     p_win.add_argument("scenario", type=Path)
     p_win.add_argument("--config", choices=CONFIGS, default="relwithdebinfo")
     p_win.add_argument("--backend", choices=BACKENDS, default="vulkan",
@@ -1361,6 +1378,7 @@ def main() -> int:
                        help="kill the game after this many seconds "
                             "(default: the scenario's timeout_s + 120)")
     p_ab = sub.add_parser("ab", help="run a scenario on the Odin 2 and on Windows, then compare")
+    p_ab.add_argument("--uncapped", action="store_true", help=UNCAPPED_HELP)
     p_ab.add_argument("scenario", type=Path)
     p_ab.add_argument("--config", choices=CONFIGS, default="relwithdebinfo")
     p_ab.add_argument("--backends", default="d3d12,vulkan",
@@ -1372,7 +1390,7 @@ def main() -> int:
     p_ab.add_argument("--force-deploy", action="store_true",
                      help="package and deploy even if the device already runs this build")
     p_ab.add_argument("--fps-cap", type=float, default=30.0,
-                      help="guest frame cap on every target (default 30; 0 = leave uncapped). "
+                      help="guest frame cap on every target (default 30; 0 = the scenario's own cap; --uncapped for none). "
                            "Scenario frame counts (input holds, waits) only compare at equal "
                            "frame rates; this PC runs ~150 fps, the Odin 2 ~30")
     p_ab.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
@@ -1381,6 +1399,7 @@ def main() -> int:
     p_ab.add_argument("--display", choices=tuple(DISPLAY_FLAGS), default="windowed",
                       help=DISPLAY_HELP)
     p_live = sub.add_parser("live")
+    p_live.add_argument("--uncapped", action="store_true", help=UNCAPPED_HELP)
     p_live.add_argument("--target", choices=("odin2", "windows"), default="odin2")
     p_live.add_argument("--no-build", action="store_true",
                         help="odin2: deploy the existing linux-aarch64 build without rebuilding it")
@@ -1440,6 +1459,8 @@ def main() -> int:
             for i, x in enumerate(argv)]
     a, unknown = ap.parse_known_args(argv)
     extra = [x for x in unknown if x != "--"]
+    if getattr(a, "uncapped", False):
+        extra = [*UNCAPPED_FLAGS, *extra]
     if extra and a.cmd not in ("local", "odin2", "live", "windows", "ab"):
         ap.error(f"unrecognized arguments: {' '.join(extra)}")
 
@@ -1524,7 +1545,7 @@ def main() -> int:
         if bad:
             die(f"unknown backend(s) {', '.join(bad)} (choose from {', '.join(BACKENDS)})")
         scenario, out = a.scenario.resolve(), a.out.resolve()
-        if a.fps_cap > 0:
+        if a.fps_cap > 0 and not a.uncapped:
             # Before the user's own flags, so an explicit flag after `--` wins.
             extra = [f"--skate3_guest_fps_cap={a.fps_cap:g}",
                      "--skate3_guest_fps_cap_auto=false", *extra]

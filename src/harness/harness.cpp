@@ -283,6 +283,9 @@ struct Run {
     int16_t step = 0;
   };
   std::vector<FrameRow> frame_rows;
+  // The frame cap the run was paced to (FrameCapThisFrame; 0 = uncapped), its
+  // lowest and highest value over in-game frames; -1 until the first one.
+  double fps_cap_min = -1.0, fps_cap_max = -1.0;
   float pend_swap = 0.0f, pend_harness = 0.0f;
   uint32_t last_skater = 0;
   float last_pos[3] = {};
@@ -612,6 +615,13 @@ std::string ResultJson(Run& r, int code, std::string_view status, std::string_vi
     }
     os << "  \"frametime\": " << FrameSummaryJson(all) << ",\n";
     os << "  \"frametime_ingame\": " << FrameSummaryJson(ingame) << ",\n";
+    // The cap the in-game frames were paced to (0 = uncapped; null if none).
+    if (r.fps_cap_min >= 0.0) {
+      os << "  \"fps_cap\": {\"min\": " << r.fps_cap_min << ", \"max\": " << r.fps_cap_max
+         << "},\n";
+    } else {
+      os << "  \"fps_cap\": null,\n";
+    }
     if (!r.profile_json.empty()) {
       os << "  " << r.profile_json << ",\n";
     }
@@ -2524,7 +2534,15 @@ void Prepare() {
     if (r->scenario->boot_demo) {
       rex::cvar::SetFlagByName("skate3_demo_path", "true");
     }
+    // A flag given on the command line (`run_scenario.py ... -- --name=v`)
+    // wins over the scenario's [cvars], so one scenario can run under other
+    // settings (e.g. uncapped for performance A/Bs).
     for (const auto& [k, v] : r->scenario->cvars) {
+      if (rex::cvar::GetFlagSource(k) == rex::cvar::Source::kCommandLine) {
+        REXLOG_INFO("harness: scenario cvar {} = {} overridden by the command line ({})", k, v,
+                    rex::cvar::GetFlagByName(k));
+        continue;
+      }
       if (!rex::cvar::SetFlagByName(k, v)) {
         REXLOG_WARN("harness: scenario cvar {} = {} was rejected", k, v);
       }
@@ -2828,6 +2846,11 @@ void OnFrame(uint8_t* base) {
     r->last_frame_time = now;
     const double lifted = skate3::native_render::LiftedCapThisFrame();
     r->paced_frame += lifted > 0.0 ? std::clamp(dt * lifted, 0.0, 1.0) : 1.0;
+    if (r->state.fe_depth == 1 && r->state.fe_top == 0) {
+      const double cap = skate3::native_render::FrameCapThisFrame();
+      r->fps_cap_min = r->fps_cap_min < 0.0 ? cap : std::min(r->fps_cap_min, cap);
+      r->fps_cap_max = std::max(r->fps_cap_max, cap);
+    }
     s.frame = r->frame;
     s.t = std::chrono::duration<double>(now - r->t0).count();
     s.fps = dt > 0.0 ? (r->state.fps * 0.9 + (1.0 / dt) * 0.1) : r->state.fps;
