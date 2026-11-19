@@ -218,6 +218,20 @@ def main() -> int:
                 raise SystemExit(f"the session did not stop (phase {phase})")
             time.sleep(1)
 
+    # The taps below go to whatever is on screen: bring DroidDeck to the
+    # front first (another Android app may be open).
+    out = adb("shell", "am", "start", "-W", "-n", "com.droiddeck.launcher/.MainActivity", check=False)
+    if "Status: ok" not in out:
+        raise SystemExit(f"couldn't bring DroidDeck to the front: {out.strip()}")
+    top = ""
+    for _ in range(20):
+        top = adb("shell", "dumpsys activity activities | grep -m1 topResumedActivity", check=False)
+        if "com.droiddeck.launcher/" in top:
+            break
+        time.sleep(0.25)
+    else:
+        raise SystemExit(f"DroidDeck isn't in front: {top.strip()}")
+
     back_to_main()
     old = installed(a.name)
     log(f"installed as '{a.name}': {old or 'none'}")
