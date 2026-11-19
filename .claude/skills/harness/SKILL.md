@@ -55,6 +55,9 @@ a path or tool is missing, the fix is usually a line in `.claude/local.env`
   - Game flags go after `--`.
   - No manual rebuild needed: changed sources are built automatically before deploying.
 - `live [--no-deploy]` starts the game in live mode (inbox + Ctrl+Shift+R recording).
+- **The installed DroidDeck app in live mode** (what the user plays, not the harness copy in `/root/skate3-harness`): the inbox is in the game's data dir (`/root/.local/share/skate3/harness`), so `send` works with any app dir. Find the app with `adb shell "su -c 'cat <linuxfs>/opt/appimages/user/*/name'"` (`<linuxfs>` = `/data/data/com.droiddeck.launcher/files/linuxfs`; testing = "Skate3Recomp Testing", the GitHub release = "skate3recomp", which also has `github-tag`), then:
+  `$DROIDDECK_DIR/tools/droiddeckctl run /usr/local/bin/droiddeck-appimage-run /opt/appimages/user/<id> --skate3_harness=true --skate3_demo_path=true --skate3_demo_path_signed_in=true`
+  (`run` brings DroidDeck to the front itself). The demo path skips the movie, logo, language select and title with no presses; then `send wait gameplay=true timeout_s=240`. Installed versions: `strings <linuxfs>/opt/appimages/user/<id>/app/usr/bin/skate3 | grep -m1 "Skate 3 \[v"`. Update the testing app with `tools/release/build-testing.sh --install`.
 - `send <verb> key=value ...` sends one live command and prints the JSON reply. Examples:
   - `send query what=state`
   - `send screenshot tag=x count=5 every_frames=2`
