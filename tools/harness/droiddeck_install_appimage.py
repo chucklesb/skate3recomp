@@ -219,7 +219,10 @@ def main() -> int:
             time.sleep(1)
 
     # The taps below go to whatever is on screen: bring DroidDeck to the
-    # front first (another Android app may be open).
+    # front first (another Android app may be open), and close the
+    # notification / quick-settings shade, which covers DroidDeck without
+    # changing the top activity (2026-11-18: taps opened its Internet panel).
+    adb("shell", "cmd", "statusbar", "collapse", check=False)
     out = adb("shell", "am", "start", "-W", "-n", "com.droiddeck.launcher/.MainActivity", check=False)
     if "Status: ok" not in out:
         raise SystemExit(f"couldn't bring DroidDeck to the front: {out.strip()}")
