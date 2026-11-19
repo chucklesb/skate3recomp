@@ -307,9 +307,70 @@ def deploy(dev: Device, config: str, force: bool = False) -> None:
     DEPLOYED_CONFIG.write_text(config + "\n")
 
 
+# Device modes for test runs (the Odin 2's Android system settings): the
+# performance mode sets the CPU clock floors and the fan mode the cooling, so
+# both are part of every measurement. performance_mode: 0 Standard,
+# 1 Performance, 2 High Performance. fan_mode: 0 Off, 1 Quiet, 4 Smart
+# (smart_fan_mode_switch=1), 5 Sport; which fan modes a performance mode
+# offers: Standard Off/Quiet, Performance Quiet/Smart/Sport, High Performance
+# Smart/Sport/Customize. Setting performance_mode also rewrites fan_mode, so
+# the fan is set second. SKATE3_DEVICE_MODES=keep leaves them alone (devices
+# without these settings are skipped automatically).
+TEST_DEVICE_MODES = (("performance_mode", "1"), ("fan_mode", "5"))
+PERF_NAMES = {"0": "Standard", "1": "Performance", "2": "High Performance"}
+FAN_NAMES = {"0": "Off", "1": "Quiet", "4": "Smart", "5": "Sport"}
+DEVICE_MODES_FILE = REPO / "out/harness/device-modes.json"
+
+
+def device_modes(dev: Device) -> dict:
+    """The performance and fan modes as Android reports them ({} where the
+    device has no such settings)."""
+    modes = {}
+    for key in ("performance_mode", "fan_mode", "smart_fan_mode_switch"):
+        try:
+            v = dev.adb_shell(f"settings get system {key}", timeout=20).strip()
+        except (RuntimeError, subprocess.TimeoutExpired):
+            v = "null"
+        if v != "null":
+            modes[key] = v
+    return modes
+
+
+def modes_text(m: dict) -> str:
+    perf, fan = m.get("performance_mode"), m.get("fan_mode")
+    return (f"performance {PERF_NAMES.get(perf, perf)} ({perf}), "
+            f"fan {FAN_NAMES.get(fan, fan)} ({fan})")
+
+
+def ensure_test_modes(dev: Device) -> dict:
+    """Sets the device to the test modes (Performance, fan Sport) before a
+    run, logs any change, and returns the modes in effect."""
+    before = device_modes(dev)
+    if "performance_mode" not in before:
+        return before
+    if os.environ.get("SKATE3_DEVICE_MODES", "") == "keep":
+        log(f"device modes kept (SKATE3_DEVICE_MODES=keep): {modes_text(before)}")
+        return before
+    want = dict(TEST_DEVICE_MODES)
+    if all(before.get(k) == v for k, v in want.items()):
+        return before
+    for key, value in TEST_DEVICE_MODES:
+        dev.adb_shell(f"settings put system {key} {value}", timeout=20)
+        time.sleep(1)  # the system UI applies each one (and rewrites the fan)
+    after = device_modes(dev)
+    log(f"device modes: {modes_text(before)} -> {modes_text(after)}")
+    if any(after.get(k) != v for k, v in want.items()):
+        die(f"couldn't set the test device modes; now {modes_text(after)}")
+    return after
+
+
 def launch(dev: Device, args: list[str], env: list[str] | None = None) -> None:
     if dev.phase()[1]:
         dev.stop()
+    modes = ensure_test_modes(dev)
+    if modes:
+        DEVICE_MODES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        DEVICE_MODES_FILE.write_text(json.dumps(modes) + "\n")
     # Session environment applies to the next session, so it is set only now,
     # after any deploy's desktop session has come and gone.
     dev.set_session_env(env or [])
@@ -433,6 +494,8 @@ def summary(run: Path) -> int:
     print(f"{run.name}: {r['status']} (code {r['code']}) - {r['reason']}")
     if "build_config" in r:
         print(f"  build v{r['version']} {r['platform']} {r['build_config']}")
+    if (run / "device_modes.json").exists():
+        print(f"  device: {modes_text(json.loads((run / 'device_modes.json').read_text()))}")
     print(f"  {r['frames']} frames, {r['seconds']:.1f} s, {r['screenshots']} screenshots, "
           f"{r['warnings']} warnings, {r['errors']} errors")
     ft = r.get("frametime_ingame") or r.get("frametime")
@@ -875,6 +938,8 @@ def run_odin2(dev: Device, scenario: Path, extra: list[str], env: list[str],
     log(f"running {scenario.name}")
     wait_for_exit(dev, scenario_timeout(scenario) + 120)
     run = fetch(dev, out_root)
+    if DEVICE_MODES_FILE.exists():  # the modes the run started under
+        (run / "device_modes.json").write_text(DEVICE_MODES_FILE.read_text())
     log(f"run folder: {run}")
     return run
 

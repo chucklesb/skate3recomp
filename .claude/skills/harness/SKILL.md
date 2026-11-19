@@ -145,9 +145,8 @@ comparing.
   rolls less far). Use reels (`perf_reel.toml`) or segments whose content
   doesn't depend on frame counts for fps comparisons.
 - **The Odin 2's state is part of the measurement:**
-  - Note the performance and fan modes (`adb shell settings get system
-    performance_mode` / `fan_mode`; see "Odin 2 settings" below) and keep them
-    the same on both sides.
+  - The harness sets Performance / Sport before every run (see "Odin 2
+    modes" below); check the summary's `device:` line on both sides.
   - Thermals: start each run cool, `$DROIDDECK_DIR/tools/droiddeckctl wait
     cool --below 35 --timeout 600`, and log `droiddeckctl thermal` (battery
     °C, CPU caps) with each run. Run A B B A (or more), never all of A then
@@ -156,14 +155,23 @@ comparing.
 - **Same everything else:** scenario, extras (enhanced shadows, PCSS),
   resolution, build config (relwithdebinfo), backend.
 
-**Odin 2 settings** (Android system settings; writing one applies it at once
-through the system UI's tiles):
-- `performance_mode`: 0 Standard, 1 Performance, 2 High Performance (raises
-  the CPU clock floors; 2 pins every cluster at its max).
-- `fan_mode`: follows `performance_mode` while
-  `is_quick_set_performance_and_fan_enable=1`, so setting the performance mode
-  also changes the fan mode. Read both before and put both back after.
-- Change them only for a test that needs it, and restore the user's values.
+**Odin 2 modes.** Every device run and `live` session sets the test modes
+first: performance **Performance** and fan **Sport** (the user's choice;
+`ensure_test_modes` in run_scenario.py logs any change, the run folder gets
+`device_modes.json`, the summary prints `device: ...`). They are left set
+afterwards. `SKATE3_DEVICE_MODES=keep` in the environment of `rs.sh` skips
+this for a test of another mode. By hand (Android system settings, applied at
+once; set the performance mode first, it rewrites the fan mode):
+
+| `performance_mode` | `fan_mode` choices |
+|---|---|
+| 0 Standard | 0 Off, 1 Quiet |
+| 1 Performance (test default) | 1 Quiet, 4 Smart (+ `smart_fan_mode_switch=1`), 5 Sport (test default) |
+| 2 High Performance (every CPU cluster pinned at max) | 4 Smart, 5 Sport, Customize (value not mapped yet) |
+
+`adb shell settings get|put system performance_mode|fan_mode`; the fan's
+state is in `/sys/class/gpio5_pwm2/{duty,speed}` (root). The quick-settings
+tile labels refresh only when the shade opens.
 
 - **Benchmark:** `scenarios/perf_reel.toml` plays reels 2 and 4 with the CPU stage log and GPU timestamp buckets on.
 - **Where the numbers go:** each run's summary prints per-reel fps, CPU render/build ms and GPU native pass ms, and writes `perf.json`.

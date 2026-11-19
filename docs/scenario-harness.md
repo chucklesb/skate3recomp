@@ -416,6 +416,11 @@ Notes:
   line names the cap the run was paced to (`uncapped`, `cap 30`;
   `result.json` `fps_cap`).
 - Paused frames (the harness `pause` and `step`) are left out.
+- On the device, every run and `live` session first sets the performance
+  mode to Performance and the fan to Sport (the Odin 2's Android settings
+  `performance_mode` = 1, `fan_mode` = 5), so runs compare; the run folder's
+  `device_modes.json` and the summary's `device:` line record them.
+  `SKATE3_DEVICE_MODES=keep` leaves the device's own modes.
 
 ### Renderer stages and GPU passes (perf_reel)
 
