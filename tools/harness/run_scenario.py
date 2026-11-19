@@ -128,7 +128,41 @@ class Device:
     def stop(self) -> None:
         self.ctl_json("stop", timeout=180)
 
+    def screen_state(self) -> dict:
+        """Wakefulness (Awake, Dozing, Asleep), whether the lock screen shows,
+        and whether the lock has a credential (PIN, pattern, password)."""
+        power = self.adb_shell("dumpsys power | grep -m1 mWakefulness=", timeout=30)
+        win = self.adb_shell("dumpsys window | grep isKeyguardShowing= || true", timeout=30)
+        cred = self.adb_shell("dumpsys lock_settings | grep -m1 CredentialType || true", timeout=30)
+        m = re.search(r"mWakefulness=(\w+)", power)
+        ctype = cred.split(":", 1)[1].strip() if ":" in cred else ""
+        return {"wakefulness": m.group(1) if m else "?",
+                "keyguard": "isKeyguardShowing=true" in win,
+                "credential": ctype not in ("", "None", "-1")}
+
+    def ensure_awake(self) -> None:
+        """Wakes the device and dismisses a swipe lock screen before a session
+        starts: a sleeping device suspends the DroidDeck session (and hides its
+        windows), so a run would hang. A lock with a credential is never
+        bypassed: the run stops and asks for it to be unlocked."""
+        st = self.screen_state()
+        if st["wakefulness"] == "Awake" and not st["keyguard"]:
+            return
+        if st["keyguard"] and st["credential"]:
+            die("the device is locked with a PIN, pattern or password; unlock it and run again")
+        self.ctl_json("wake", timeout=30)
+        for _ in range(20):
+            now = self.screen_state()
+            if now["wakefulness"] == "Awake" and not now["keyguard"]:
+                log(f"woke the device ({st['wakefulness']}"
+                    f"{', lock screen' if st['keyguard'] else ''} -> Awake, unlocked)")
+                return
+            time.sleep(0.25)
+        die(f"couldn't wake the device: {now['wakefulness']}, "
+            f"lock screen {'up' if now['keyguard'] else 'gone'}")
+
     def start_desktop(self) -> None:
+        self.ensure_awake()
         d = self.ctl_json("start", "desktop", "--wait", timeout=240)
         if d.get("ok", False):
             return
@@ -151,6 +185,7 @@ class Device:
     def run(self, program: str, *args: str) -> None:
         # `run` sometimes reports ACTIVITY_START_FAILED although the session
         # started; the caller verifies through the guest.
+        self.ensure_awake()
         self.ctl_json("run", program, *args, timeout=180)
 
     def dismiss_session_ended(self) -> bool:

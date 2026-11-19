@@ -110,6 +110,36 @@ def focused_window() -> str:
     return out.strip().removeprefix("mCurrentFocus=")
 
 
+def screen_state() -> tuple[str, bool, bool]:
+    """(wakefulness, lock screen showing, lock has a credential)."""
+    power = adb("shell", "dumpsys power | grep -m1 mWakefulness=", check=False)
+    win = adb("shell", "dumpsys window | grep isKeyguardShowing= || true", check=False)
+    cred = adb("shell", "dumpsys lock_settings | grep -m1 CredentialType || true", check=False)
+    m = re.search(r"mWakefulness=(\w+)", power)
+    ctype = cred.split(":", 1)[1].strip() if ":" in cred else ""
+    return (m.group(1) if m else "?", "isKeyguardShowing=true" in win,
+            ctype not in ("", "None", "-1"))
+
+
+def ensure_awake() -> None:
+    """Wakes the device and dismisses a swipe lock screen (droiddeckctl wake);
+    a sleeping device hides DroidDeck's windows from the UI dump. A lock with a
+    credential is never bypassed."""
+    wake, keyguard, cred = screen_state()
+    if wake == "Awake" and not keyguard:
+        return
+    if keyguard and cred:
+        raise SystemExit("the device is locked with a PIN, pattern or password; unlock it")
+    ddctl("wake", check=False)
+    for _ in range(20):
+        now = screen_state()
+        if now[0] == "Awake" and not now[1]:
+            log(f"woke the device ({wake}{', lock screen' if keyguard else ''} -> Awake, unlocked)")
+            return
+        time.sleep(0.25)
+    raise SystemExit(f"couldn't wake the device: {now[0]}, lock screen {'up' if now[1] else 'gone'}")
+
+
 def require_droiddeck_focus() -> None:
     """Refuses to go on unless a DroidDeck window has input focus. A raw
     `input tap` lands on whatever is on top: the top *activity* can be
@@ -118,7 +148,10 @@ def require_droiddeck_focus() -> None:
     panel). The shade may be the user's own, so it is never closed here."""
     win = focused_window()
     if "com.droiddeck.launcher" not in win:
-        what = "the quick-settings shade" if "NotificationShade" in win else win or "nothing"
+        if "NotificationShade" in win:
+            what = "the lock screen" if screen_state()[1] else "the quick-settings shade"
+        else:
+            what = win or "nothing"
         raise SystemExit(f"DroidDeck doesn't have input focus ({what} does); not tapping. "
                          "Close it on the device (or ask the user to) and run again.")
 
@@ -242,6 +275,7 @@ def main() -> int:
                 raise SystemExit(f"the session did not stop (phase {phase})")
             time.sleep(1)
 
+    ensure_awake()
     # The taps below go to whatever is on screen: bring DroidDeck to the
     # front first (another Android app may be open); every tap then checks
     # that DroidDeck has input focus (require_droiddeck_focus).
