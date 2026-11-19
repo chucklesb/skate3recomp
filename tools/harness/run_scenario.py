@@ -313,12 +313,13 @@ def deploy(dev: Device, config: str, force: bool = False) -> None:
 # 1 Performance, 2 High Performance. fan_mode: 0 Off, 1 Quiet, 4 Smart
 # (smart_fan_mode_switch=1), 5 Sport; which fan modes a performance mode
 # offers: Standard Off/Quiet, Performance Quiet/Smart/Sport, High Performance
-# Smart/Sport/Customize. Setting performance_mode also rewrites fan_mode, so
+# Smart/Sport/Customize (6; its slider is fan_speed, the PWM duty out of
+# 50000, max 35000). Setting performance_mode also rewrites fan_mode, so
 # the fan is set second. SKATE3_DEVICE_MODES=keep leaves them alone (devices
 # without these settings are skipped automatically).
 TEST_DEVICE_MODES = (("performance_mode", "1"), ("fan_mode", "5"))
 PERF_NAMES = {"0": "Standard", "1": "Performance", "2": "High Performance"}
-FAN_NAMES = {"0": "Off", "1": "Quiet", "4": "Smart", "5": "Sport"}
+FAN_NAMES = {"0": "Off", "1": "Quiet", "4": "Smart", "5": "Sport", "6": "Customize"}
 DEVICE_MODES_FILE = REPO / "out/harness/device-modes.json"
 
 
