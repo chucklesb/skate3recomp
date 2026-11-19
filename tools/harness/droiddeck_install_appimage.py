@@ -104,8 +104,29 @@ def find(ns: list[dict], pred, what: str) -> dict:
     raise SystemExit(f"no {what} on screen")
 
 
+def focused_window() -> str:
+    """The window that has input focus (dumpsys window mCurrentFocus)."""
+    out = adb("shell", "dumpsys window | grep -m1 mCurrentFocus", check=False)
+    return out.strip().removeprefix("mCurrentFocus=")
+
+
+def require_droiddeck_focus() -> None:
+    """Refuses to go on unless a DroidDeck window has input focus. A raw
+    `input tap` lands on whatever is on top: the top *activity* can be
+    DroidDeck while the quick-settings shade or a system dialog covers it
+    (2026-11-18: a tap meant for DroidDeck opened the shade's Internet
+    panel). The shade may be the user's own, so it is never closed here."""
+    win = focused_window()
+    if "com.droiddeck.launcher" not in win:
+        what = "the quick-settings shade" if "NotificationShade" in win else win or "nothing"
+        raise SystemExit(f"DroidDeck doesn't have input focus ({what} does); not tapping. "
+                         "Close it on the device (or ask the user to) and run again.")
+
+
 def tap(n: dict) -> None:
-    """Taps a node's centre (screen coordinates of display 0)."""
+    """Taps a node's centre (screen coordinates of display 0), only while
+    DroidDeck has input focus."""
+    require_droiddeck_focus()
     x0, y0, x1, y1 = n["bounds"]
     adb("shell", "input", "tap", str((x0 + x1) // 2), str((y0 + y1) // 2))
 
@@ -126,6 +147,7 @@ def back_to_main(tries: int = 8) -> list[dict]:
         if not any(n["label"] in ("Choose an AppImage", "Add an app") or
                    n["label"].startswith("Remove ") and n["label"].endswith("?") for n in ns):
             return ns
+        require_droiddeck_focus()
         adb("shell", "input", "keyevent", "KEYCODE_BACK")
         time.sleep(0.4)
     raise SystemExit("couldn't close DroidDeck's dialogs with Back")
@@ -153,11 +175,13 @@ def filter_picker(ns: list[dict], text: str) -> list[dict]:
     wait_for(lambda ns: any(n.get("focused") and 350 < n["bounds"][1] < 380 for n in ns),
              "the filter field's focus")
     # The field's label doesn't report its text: clear generously.
+    require_droiddeck_focus()
     adb("shell", "input", "keyevent", "KEYCODE_MOVE_END", *(["KEYCODE_DEL"] * 48))
     adb("shell", "input", "text", re.sub(r"[^A-Za-z0-9._]", "", text))
     # In landscape the keyboard goes full screen (extract mode) and covers
     # the whole display, while the UI dump still lists the app's nodes under
     # it: a tap would hit a key. One Back hides it.
+    require_droiddeck_focus()
     adb("shell", "input", "keyevent", "KEYCODE_BACK")
     time.sleep(0.3)
     return nodes()
@@ -219,10 +243,8 @@ def main() -> int:
             time.sleep(1)
 
     # The taps below go to whatever is on screen: bring DroidDeck to the
-    # front first (another Android app may be open), and close the
-    # notification / quick-settings shade, which covers DroidDeck without
-    # changing the top activity (2026-11-18: taps opened its Internet panel).
-    adb("shell", "cmd", "statusbar", "collapse", check=False)
+    # front first (another Android app may be open); every tap then checks
+    # that DroidDeck has input focus (require_droiddeck_focus).
     out = adb("shell", "am", "start", "-W", "-n", "com.droiddeck.launcher/.MainActivity", check=False)
     if "Status: ok" not in out:
         raise SystemExit(f"couldn't bring DroidDeck to the front: {out.strip()}")
@@ -234,6 +256,7 @@ def main() -> int:
         time.sleep(0.25)
     else:
         raise SystemExit(f"DroidDeck isn't in front: {top.strip()}")
+    require_droiddeck_focus()
 
     back_to_main()
     old = installed(a.name)

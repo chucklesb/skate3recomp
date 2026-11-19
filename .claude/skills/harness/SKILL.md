@@ -239,6 +239,7 @@ Scripted inputs are poor at these: the skater isn't on the board, or rides off s
 
 - Tell the user before any run that takes over the device.
 - Never `stop` a session mid-run.
+- **Before any raw input on the device** (`adb shell input tap|keyevent|text|swipe`, which go to whatever has focus): check `adb shell "dumpsys window | grep -m1 mCurrentFocus"` names `com.droiddeck.launcher`. The top activity (`topResumedActivity`) isn't enough: the quick-settings shade (`NotificationShade`) or a system dialog can cover DroidDeck while it stays the top activity, and a tap then lands in the shade (2026-11-18: it opened the Internet panel). If something else has focus, stop and tell the user. Never close the shade or press Back to clear it: it may be the user's, opened on purpose. `droiddeck_install_appimage.py` checks this before every tap and key.
 - Ask before installing anything into the DroidDeck guest.
 - If a run hangs, `$DROIDDECK_DIR/tools/droiddeckctl state` shows the session phase.
 - The user may have their own rules for their device (for example, that you may end sessions without asking); follow those.
