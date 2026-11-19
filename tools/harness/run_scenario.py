@@ -314,7 +314,7 @@ def deploy(dev: Device, config: str, force: bool = False) -> None:
 # (smart_fan_mode_switch=1), 5 Sport; which fan modes a performance mode
 # offers: Standard Off/Quiet, Performance Quiet/Smart/Sport, High Performance
 # Smart/Sport/Customize (6; its slider is fan_speed, the PWM duty out of
-# 50000, max 35000). Setting performance_mode also rewrites fan_mode, so
+# 50000, 25000-35000: its minimum is Sport's level). Setting performance_mode also rewrites fan_mode, so
 # the fan is set second. SKATE3_DEVICE_MODES=keep leaves them alone (devices
 # without these settings are skipped automatically).
 TEST_DEVICE_MODES = (("performance_mode", "1"), ("fan_mode", "5"))

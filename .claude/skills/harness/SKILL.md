@@ -167,7 +167,7 @@ once; set the performance mode first, it rewrites the fan mode):
 |---|---|
 | 0 Standard | 0 Off, 1 Quiet |
 | 1 Performance (test default) | 1 Quiet, 4 Smart (+ `smart_fan_mode_switch=1`), 5 Sport (test default) |
-| 2 High Performance (every CPU cluster pinned at max) | 4 Smart, 5 Sport, 6 Customize (slider = `fan_speed`, the PWM duty out of 50000; max 35000) |
+| 2 High Performance (every CPU cluster pinned at max) | 4 Smart, 5 Sport, 6 Customize (slider = `fan_speed`, the PWM duty out of 50000, 25000-35000; the minimum equals Sport) |
 
 `adb shell settings get|put system performance_mode|fan_mode`; the fan's
 state is in `/sys/class/gpio5_pwm2/{duty,speed}` (root). The quick-settings
