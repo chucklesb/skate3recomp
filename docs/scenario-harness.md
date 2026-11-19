@@ -329,6 +329,7 @@ the next investigation can reuse them.
 
 | Tool | What it does | Needs |
 |---|---|---|
+| `adb` | WSL hosts: `adb` that runs Windows' `adb.exe` and converts local paths with `wslpath -w` (push, pull, install); link it onto the PATH ([dev-setup.md](dev-setup.md#the-device)) | Windows SDK `adb.exe` |
 | `imgdiff.py` | SSIM / changed-pixel comparison of two shots (used by `ab` and `stills_renderers`) | Pillow |
 | `shots.py strip` | Crops, scales and labels shots side by side: zoomed pixel comparisons (`--box`, `--pixel`) and before/after pictures for docs | Pillow |
 | `shots.py stats` | Mean colour of one region per shot and how much it differs from the first shot: measures what a toggle does to one surface (`--box`) | Pillow |

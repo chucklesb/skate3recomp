@@ -58,6 +58,25 @@ The reference device is the AYN Odin 2. Connect it with USB debugging on;
 on WSL hosts attach it to Windows and use Windows' `adb.exe` (one adb server
 owns the USB device).
 
+**WSL hosts: no Linux adb.** Uninstall WSL's own adb (`apt remove adb`, and
+no `platform-tools` with a Linux `adb` on the PATH). With
+`networkingMode = mirrored` a Linux adb server on port 5037 also takes Windows'
+clients, and neither side sees the device. For typing adb commands, link
+[`tools/harness/adb`](../tools/harness/adb) onto the PATH as `adb`
+(`ln -s "$PWD/tools/harness/adb" ~/.local/bin/adb`). It runs Windows'
+`adb.exe` and converts local paths (push sources, pull destinations,
+install files) with `wslpath -w`; `shell` arguments pass through untouched.
+Put the SDK's `platform-tools` (`/mnt/c/Users/<you>/AppData/Local/Android/Sdk/platform-tools`)
+ahead of the Windows PATH so `adb.exe` and `fastboot.exe` are the SDK's: a
+different adb version, such as the one bundled with scrcpy, kills the running
+server when it connects. The harness itself uses `ADB` from `.claude/local.env`
+and converts its own paths.
+
+Alternative: attach the device to WSL with usbipd-win and use a Linux adb.
+That needs no `.exe` or path conversion, but Windows tools (scrcpy,
+`odin2_record.ps1`) lose the device while it's attached, and it has to be
+attached again after every replug or reboot.
+
 **Root is optional.** With root (`adb shell su`), the harness reads the
 game's files on the device in under a second; without it, it opens a
 DroidDeck session to read them (about 20 s). `SKATE3_ADB_ROOT=0` forces the

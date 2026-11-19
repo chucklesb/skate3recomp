@@ -8,7 +8,8 @@ Moved from the roadmap's "Done recently" on 2026-11-18.
   host-neutral: settings in `.claude/local.env`, see
   [dev-setup.md](../dev-setup.md)); the harness runs from a Claude Code
   session inside WSL with no wrapper (`tools/harness/rs.sh`, the `device`
-  target).
+  target); `tools/harness/adb`, an `adb` for WSL hosts that runs Windows'
+  `adb.exe` with local paths converted.
 - 2026-11-17 (later): **the replacement standard** (reverse-engineered
   code over named structs; the generated trivial-function layer removed),
   FE / jobs / skinning / culling rewritten to it, `FrontEndStateBase`

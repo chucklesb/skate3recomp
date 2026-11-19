@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# adb for WSL hosts whose device is attached to Windows: runs Windows'
+# adb.exe (the one server that owns the USB device) and turns local paths
+# into Windows paths. Linked onto PATH as `adb` (docs/dev-setup.md).
+#
+#   adb devices
+#   adb push out/harness/x.AppImage /data/local/tmp/
+#   adb pull /sdcard/Download/shot.png shots/
+#   adb install build/app.apk
+#
+# Which adb.exe: $ADB_EXE, else ADB=*.exe from the repo's .claude/local.env,
+# else an adb.exe on PATH under a platform-tools directory (not scrcpy's
+# bundled copy: a client of another version kills the running server), else
+# the SDK's default location. The server port and serial variables
+# (ANDROID_ADB_SERVER_PORT, ANDROID_SERIAL) are passed through WSLENV.
+#
+# Translated: push sources, the pull destination (the current directory when
+# none is given), install/install-multiple/sideload/restore files, backup -f.
+# Everything else, `shell` arguments included, is passed through untouched.
+# Line endings: CR is stripped from devices/get-state/get-serialno/version
+# output so `$(adb get-state)` compares as expected; other output is raw.
+set -euo pipefail
+
+find_exe() {
+    if [[ -n ${ADB_EXE:-} ]]; then echo "$ADB_EXE"; return; fi
+    local repo env_adb p
+    repo=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)
+    if [[ -f $repo/.claude/local.env ]]; then
+        env_adb=$(set +u; . "$repo/.claude/local.env" >/dev/null 2>&1; echo "${ADB:-}")
+        if [[ $env_adb == *.exe && -x $env_adb ]]; then echo "$env_adb"; return; fi
+    fi
+    while IFS= read -r p; do
+        if [[ $p == */platform-tools/adb.exe ]]; then echo "$p"; return; fi
+    done < <(type -ap adb.exe)
+    for p in /mnt/c/Users/*/AppData/Local/Android/Sdk/platform-tools/adb.exe; do
+        if [[ -x $p ]]; then echo "$p"; return; fi
+    done
+    echo "adb: no Windows adb.exe found; set ADB_EXE" >&2
+    exit 127
+}
+
+exe=$(find_exe)
+
+# Port and serial from local.env too, unless already set.
+if [[ -z ${ANDROID_ADB_SERVER_PORT:-} && -z ${ADB_EXE:-} ]]; then
+    repo=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)
+    if [[ -f $repo/.claude/local.env ]]; then
+        port=$(set +u; . "$repo/.claude/local.env" >/dev/null 2>&1; echo "${ANDROID_ADB_SERVER_PORT:-}")
+        if [[ -n $port ]]; then export ANDROID_ADB_SERVER_PORT=$port; fi
+    fi
+fi
+for v in ANDROID_ADB_SERVER_PORT ANDROID_SERIAL; do
+    if [[ -n ${!v:-} && :${WSLENV:-}: != *:$v:* ]]; then
+        export WSLENV=$v${WSLENV:+:$WSLENV}
+    fi
+done
+
+# A local path in Windows form; Windows-looking paths are left alone.
+win() {
+    case $1 in
+        [A-Za-z]:[\\/]* | \\\\*) printf '%s' "$1" ;;
+        *) wslpath -w "$(realpath -m -- "$1")" ;;
+    esac
+}
+
+args=("$@")
+n=${#args[@]}
+out=()
+i=0
+# Global options before the command.
+while (( i < n )); do
+    case ${args[i]} in
+        -s|-t|-H|-P|-L) out+=("${args[i]}" "${args[i+1]:-}"); (( i += 2 )) ;;
+        -*) out+=("${args[i]}"); (( i += 1 )) ;;
+        *) break ;;
+    esac
+done
+cmd=${args[i]:-}
+if (( i < n )); then out+=("$cmd"); (( i += 1 )); fi
+rest=("${args[@]:i}")
+
+# Split the command's arguments into options and positionals; -z takes a value.
+opts=(); pos=()
+split() {
+    local k=0 m=${#rest[@]}
+    while (( k < m )); do
+        case ${rest[k]} in
+            -z) opts+=("${rest[k]}" "${rest[k+1]:-}"); (( k += 2 )) ;;
+            -*) opts+=("${rest[k]}"); (( k += 1 )) ;;
+            *) pos+=("${rest[k]}"); (( k += 1 )) ;;
+        esac
+    done
+}
+
+case $cmd in
+    push)
+        split
+        last=$(( ${#pos[@]} - 1 ))
+        for (( k = 0; k < last; k++ )); do pos[k]=$(win "${pos[k]}"); done
+        out+=("${opts[@]}" "${pos[@]}") ;;
+    pull)
+        split
+        if (( ${#pos[@]} >= 2 )); then
+            last=$(( ${#pos[@]} - 1 )); pos[last]=$(win "${pos[last]}")
+        elif (( ${#pos[@]} == 1 )); then
+            pos+=("$(win "$PWD")")
+        fi
+        out+=("${opts[@]}" "${pos[@]}") ;;
+    install|install-multiple|install-multi-package|sideload|restore)
+        for a in "${rest[@]}"; do
+            if [[ $a != -* && -e $a ]]; then out+=("$(win "$a")"); else out+=("$a"); fi
+        done ;;
+    backup)
+        for (( k = 0; k < ${#rest[@]}; k++ )); do
+            if [[ ${rest[k]} == -f ]] && (( k + 1 < ${#rest[@]} )); then
+                out+=(-f "$(win "${rest[k+1]}")"); (( k += 1 ))
+            else
+                out+=("${rest[k]}")
+            fi
+        done ;;
+    devices|get-state|get-serialno|get-devpath|version)
+        out+=("${rest[@]}")
+        set +e
+        "$exe" "${out[@]}" | tr -d '\r'
+        code=${PIPESTATUS[0]}
+        exit "$code" ;;
+    *)
+        out+=("${rest[@]}") ;;
+esac
+
+exec "$exe" "${out[@]}"
